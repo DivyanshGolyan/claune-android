@@ -1,0 +1,18 @@
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.compose.compiler) apply false
+    alias(libs.plugins.ktlint) apply false
+}
+
+tasks.register("qualityCheck") {
+    group = "verification"
+    description = "Runs the prototype code quality gates."
+    dependsOn(":app:ktlintCheck", ":app:lintDebug")
+}
+
+tasks.register("formatCode") {
+    group = "formatting"
+    description = "Formats Kotlin sources with ktlint."
+    dependsOn(":app:ktlintFormat")
+}

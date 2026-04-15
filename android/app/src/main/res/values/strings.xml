@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Claune Android</string>
+    <string name="accessibility_service_label">Claune Android Accessibility</string>
+    <string name="notification_title">Claune Android session</string>
+    <string name="notification_channel_name">Active agent session</string>
+    <string name="notification_channel_description">Keeps the prototype runtime alive while a session is active.</string>
+    <string name="stop_session">Stop</string>
+</resources>
+
