@@ -7,11 +7,13 @@ The goal is not distribution. The goal is to build something fast, inspectable, 
 The current direction is:
 
 - Kotlin-first Android app and services
-- thin custom agent runtime instead of a generic coding-agent harness
+- Koog-backed agent loop inside an app-owned runtime shell
+- Kotlin host runtime with a JS script execution layer
 - AccessibilityService-based phone control
 - voice-first interaction
 - cloud-backed LLM reasoning from the phone
-- one active session and one tool call per turn in v1
+- one active session in v1
+- one configured model tool in v1: `execute_script`
 - Android 12 demo-device posture for the current prototype scaffold
 
 Repository layout:

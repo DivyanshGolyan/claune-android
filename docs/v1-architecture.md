@@ -8,15 +8,17 @@ V1 should be:
 
 - on-device in execution
 - voice-first but not voice-only
-- tool-driven
-- supervised for risky actions
 - replayable and inspectable
+- centered on one active user session
+- powered by a Koog agent loop
+- driven through one model-facing tool: `execute_script`
 
 V1 should not be:
 
 - a general-purpose autonomous assistant
 - a multi-agent system
 - a background automation platform
+- a production-grade safety architecture
 
 This document is intentionally prototype-first. It is written for a demoable side project, not for a distribution-ready product.
 
@@ -25,8 +27,12 @@ This document is intentionally prototype-first. It is written for a demoable sid
 The system has three major layers:
 
 1. Android app and service layer
-2. agent runtime layer
-3. phone control layer
+2. agent loop layer
+3. tool execution layer
+
+The first and third layers are app-owned.
+
+The second layer uses Koog.
 
 ## High-Level Architecture
 
@@ -34,9 +40,10 @@ The system has three major layers:
 User
   -> Compose UI
   -> SessionCoordinator
-  -> AgentLoop
-  -> LLM Client
-  -> Tool Executor
+  -> KoogAgentLoop
+  -> execute_script
+  -> JS Runtime
+  -> Host Bindings
   -> Accessibility Service
   -> Android UI State
 
@@ -47,19 +54,30 @@ Persisted alongside the loop:
 
 ## Core Runtime Contract
 
-The runtime should process one active session at a time.
+The runtime processes one active session at a time.
 
 The key runtime objects are:
 
 - `Session`
 - `Turn`
 - `UiSnapshot`
-- `ToolCall`
-- `ToolResult`
-- `ApprovalRequest`
+- `ModelStep`
+- `ScriptExecution`
+- `HostCallEvent`
 - `RunLogEvent`
 
-The runtime should execute at most one model-selected tool call per turn.
+The model-facing tool surface is intentionally tiny:
+
+- one configured tool: `execute_script`
+
+Each inference step may return:
+
+- `message_to_user`
+- `execute_script`
+- `completion`
+- `blocked`
+
+The script itself may perform multiple host API calls before returning.
 
 ## State Model
 
@@ -75,6 +93,7 @@ Suggested fields:
 - `goal`
 - `lastKnownApp`
 - `lastSnapshotId`
+- `lastTurnId`
 - `requiresUserAttention`
 
 ### Turn
@@ -88,9 +107,8 @@ Suggested fields:
 - `index`
 - `userInput`
 - `snapshotId`
-- `modelRequest`
-- `modelResponse`
-- `toolCallId`
+- `modelStepId`
+- `scriptExecutionId`
 - `resultSummary`
 - `status`
 
@@ -110,31 +128,53 @@ Suggested fields:
 - `actionableElements`
 - `screenshotPath`
 
-### ToolCall
+### ModelStep
+
+Represents the structured output returned by the agent loop for a single inference step.
 
 Suggested fields:
 
-- `toolCallId`
+- `modelStepId`
 - `sessionId`
 - `turnId`
-- `toolName`
-- `argumentsJson`
+- `kind`
+- `messageText`
+- `scriptSource`
+- `structuredPayloadJson`
 - `status`
 - `startedAt`
 - `finishedAt`
 
-### ApprovalRequest
+### ScriptExecution
+
+Represents one `execute_script` run.
 
 Suggested fields:
 
-- `approvalId`
+- `scriptExecutionId`
 - `sessionId`
 - `turnId`
-- `reason`
-- `riskLevel`
-- `presentedAction`
-- `decision`
-- `decidedAt`
+- `language`
+- `source`
+- `status`
+- `resultJson`
+- `startedAt`
+- `finishedAt`
+
+### HostCallEvent
+
+Represents one host API call made by a running script.
+
+Suggested fields:
+
+- `hostCallId`
+- `scriptExecutionId`
+- `sessionId`
+- `name`
+- `argumentsJson`
+- `resultJson`
+- `startedAt`
+- `finishedAt`
 
 ## Service Boundary
 
@@ -143,19 +183,18 @@ Suggested fields:
 Owns:
 
 - onboarding
-- sign-in
 - voice and text input
 - session display
-- approval prompts
 - execution timeline
+- replay view
 
 ### Foreground service
 
 Owns:
 
 - active session runtime
-- network calls to the LLM
-- tool execution coordination
+- Koog agent execution
+- script execution coordination
 - durable session progress
 
 ### Accessibility service
@@ -201,19 +240,19 @@ interface PhoneActuator {
 }
 ```
 
-### `ModelGateway`
+### `AgentLoop`
 
 ```kotlin
-interface ModelGateway {
-    suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput
+interface AgentLoop {
+    suspend fun nextStep(input: AgentTurnInput): AgentTurnOutput
 }
 ```
 
-### `ApprovalGateway`
+### `ScriptRuntime`
 
 ```kotlin
-interface ApprovalGateway {
-    suspend fun requestApproval(request: ApprovalRequestData): ApprovalDecision
+interface ScriptRuntime {
+    suspend fun execute(request: ScriptExecutionRequest): ScriptExecutionResult
 }
 ```
 
@@ -238,7 +277,7 @@ It should not include:
 
 - raw Android objects
 - every low-level property
-- data that the model cannot use
+- data that the model or script cannot use
 
 ### Element identity strategy
 
@@ -284,116 +323,14 @@ Example:
 }
 ```
 
-## Tool API
+## Model Step Contract
 
-Keep v1 tools small and explicit.
+The model should not emit arbitrary free-form text plus arbitrary tool calls in the same step.
 
-### Read tools
-
-- `observe_phone`
-
-### Action tools
-
-- `tap_element`
-- `type_into_element`
-- `scroll_container`
-- `press_back`
-- `press_home`
-- `wait_for_state`
-
-### User interaction tools
-
-- `speak_to_user`
-
-Approvals are runtime policy, not model-selected tools.
-
-## V1 Tool Definitions
-
-### `observe_phone`
-
-Purpose:
-
-- Capture a fresh `UiSnapshot`
-
-Returns:
-
-- normalized screen state
-
-### `tap_element`
-
-Arguments:
-
-- `elementId`
-
-Rules:
-
-- only valid on currently visible and actionable elements
-
-### `type_into_element`
-
-Arguments:
-
-- `elementId`
-- `text`
-
-Rules:
-
-- only valid on editable targets
-
-### `scroll_container`
-
-Arguments:
-
-- `elementId`
-- `direction`
-
-### `wait_for_state`
-
-Arguments:
-
-- `condition`
-- `timeoutMs`
-
-Purpose:
-
-- absorb UI latency without forcing the model to guess timing
-
-Allowed `condition` values in v1:
-
-- `package_changed`
-- `element_appeared`
-- `element_disappeared`
-- `text_visible`
-- `text_hidden`
-
-## Agent Loop
-
-The runtime loop should be intentionally simple.
-
-```text
-1. Capture latest snapshot
-2. Build model input from:
-   - user goal
-   - current snapshot
-   - recent action history
-   - pending constraints
-3. Ask model for next step
-4. Validate output
-5. If approval required, prompt user
-6. Execute exactly one tool call
-7. Persist events
-8. Re-observe and continue
-9. Stop on success, user cancellation, or unrecoverable failure
-```
-
-## Model Output Constraints
-
-The model should not be allowed to emit arbitrary text and arbitrary tools in the same step.
-
-Use a strict output shape such as:
+Use a strict output shape:
 
 - `message_to_user`
-- `tool_call`
+- `execute_script`
 - `completion`
 - `blocked`
 
@@ -404,65 +341,152 @@ Reasons:
 - easier retry behavior
 - easier debugging
 
-The model should never choose whether an action needs approval. That is a runtime decision.
+`execute_script` is the only configured model tool in v1.
+
+The script body is the unit of action. The script can call multiple host APIs before returning.
+
+## Script Tool Contract
+
+### `execute_script`
+
+Purpose:
+
+- run one model-authored JS script against the current host API surface
+
+Suggested arguments:
+
+- `script`
+- `summary`
+
+Suggested return shape:
+
+- `ok`
+- `summary`
+- `data`
+- `hostCalls`
+- `error`
+
+Important runtime rules:
+
+- scripts execute against explicit host bindings only
+- scripts do not receive raw Android objects
+- scripts do not mutate app state except through host APIs
+- every host API call is logged
+
+## Host API Surface
+
+Keep the v1 host API small and explicit.
+
+Initial host capabilities:
+
+- `observePhone()`
+- `tapElement(elementId)`
+- `typeIntoElement(elementId, text)`
+- `scrollContainer(elementId, direction)`
+- `pressBack()`
+- `pressHome()`
+- `waitForState(condition, timeoutMs)`
+- `speakToUser(text)`
+
+These are not model-facing tools. They are script-facing host bindings.
+
+## Agent Loop
+
+The runtime loop should be intentionally simple.
+
+```text
+1. Capture latest snapshot
+2. Build model input from:
+   - user goal
+   - current snapshot
+   - recent session history
+   - recent script results
+   - pending runtime constraints
+3. Ask Koog-backed agent loop for next step
+4. Validate structured output
+5. If output is message_to_user, render and continue or stop
+6. If output is execute_script, run the script in the JS runtime
+7. Persist model step, script execution, and host-call events
+8. Re-observe and continue
+9. Stop on success, user cancellation, or unrecoverable failure
+```
+
+## Koog Integration
+
+Koog is used for:
+
+- managing the agent loop
+- handling session-scoped history
+- explicit history compression
+- structured tool-calling flow
+
+The app still owns:
+
+- Android services
+- session persistence model
+- script runtime
+- host bindings
+- interruption semantics
+
+For v1, the Koog integration should stay simple:
+
+- one active agent session
+- one active foreground runtime
+- explicit compaction trigger policy owned by the app
+
+## Context Management
+
+Use Koog chat memory and history compression, but keep the trigger policy app-owned.
+
+The app should decide when to compact based on:
+
+- current prompt size
+- message count
+- script execution history size
+- model limits for the chosen provider
+
+Practical v1 rule:
+
+- compact only at turn boundaries
+- compact before the next inference step when the current session budget is too large
 
 ## Validation Layer
 
-Every model-produced tool call must pass local validation before execution.
+Every model-produced `execute_script` step must pass local validation before execution.
 
 Checks should include:
 
-- required arguments present
-- referenced element exists in latest snapshot
-- action allowed for the element type
-- action allowed under current permission state
-- action not blocked by policy
+- required fields present
+- script payload is non-empty
+- script size is within a local limit
+- runtime is in an executable state
+- required services are connected
+
+Every host API call must also pass local validation at execution time.
+
+Checks should include:
+
+- referenced element exists in the latest snapshot
+- action is allowed for the element type
+- action is supported in the current device state
 
 If validation fails:
 
-- do not execute
-- return a structured failure to the runtime
-- allow the model one recovery attempt before escalating to the user
+- do not execute the invalid action
+- return a structured failure to the running script or session
+- let the next model step recover with fresh state
 
-## Safety And Approvals
+## Safety Posture
 
-All risky actions should go through a policy layer.
+This prototype does not need a full approval system yet.
 
-### Low risk
+For v1:
 
-Examples:
+- do not add heavy approval plumbing
+- do block impossible or invalid host calls locally
+- do surface explicit errors instead of guessing
 
-- scroll
-- navigate back
-- open a settings subpage
-
-Policy:
-
-- auto-execute
-
-### Medium risk
-
-Examples:
-
-- typing into a form
-- opening an external app
-
-Policy:
-
-- execute if within active user session and not policy-blocked
-
-### High risk
-
-Examples:
-
-- final submit
-- payment
-- delete
-- grant system permission
-
-Policy:
-
-- always require explicit approval
+Approval workflows can be added later if the demo requires them.
 
 ## Failure Handling
 
@@ -472,17 +496,19 @@ Failure classes:
 
 - target missing
 - stale snapshot
-- action rejected by system
+- host action rejected by system
 - app changed unexpectedly
-- model chose wrong next step
+- model chose a bad script
+- script runtime error
 - network failure
 - session interrupted
 
 Recovery strategy:
 
 1. re-observe
-2. retry once with fresh state
-3. ask user if ambiguity remains
+2. retry once with fresh state if safe
+3. continue the loop with the structured failure
+4. stop and surface the issue if recovery stalls
 
 ## Logging And Replay
 
@@ -492,10 +518,10 @@ Persist:
 
 - user inputs
 - snapshots
-- model requests and responses
-- tool calls
-- approvals
-- action results
+- model steps
+- script sources
+- script results
+- host API calls
 - terminal session outcome
 
 This is essential for debugging and evaluation.
@@ -508,13 +534,12 @@ For the prototype:
 
 ## V1 User Experience
 
-The initial app should have five screens:
+The initial app should have four screens:
 
 1. Onboarding and permission setup
 2. Main assistant screen
 3. Live execution screen
-4. Approval prompt sheet
-5. History and replay screen
+4. History and replay screen
 
 ## Suggested Repo Layout
 
@@ -528,11 +553,10 @@ claune-android/
     app/
     app-ui/
     app-runtime/
-    app-tools/
+    app-scripting/
     app-accessibility/
     app-voice/
     app-data/
-    app-security/
     app-llm/
 ```
 
@@ -579,50 +603,48 @@ Exit criteria:
 
 - can inspect current screen as structured state
 
-### Milestone 3: Manual tool execution
+### Milestone 3: Host API and script runtime
 
 Build:
 
-- tap
-- type
-- scroll
-- back
-- wait
+- JS runtime embedding
+- host API bindings for observe, tap, type, scroll, back, and wait
+- debug UI for manual script execution
 
 Exit criteria:
 
-- app can execute tools reliably from a debug UI without the model
+- app can execute scripts reliably from a debug UI without the model
 
-### Milestone 4: Single-step model loop
+### Milestone 4: Single-step Koog loop
 
 Build:
 
-- OpenAI client integration
+- Koog integration
 - one-turn prompt builder
-- tool-call validation
-- single-step execution
+- structured step output
+- `execute_script` wiring
 
 Exit criteria:
 
-- model can inspect a snapshot and choose one valid next action
+- model can inspect a snapshot and return either a message or one valid script execution step
 
-### Milestone 5: Full supervised session
+### Milestone 5: Full session loop
 
 Build:
 
 - repeated loop
-- approval prompts
 - voice input
 - TTS output
 - history and replay
+- explicit compaction trigger policy
 
 Exit criteria:
 
-- user can complete narrow tasks with supervision
+- user can complete narrow tasks with a replayable session
 
 ## Open Questions To Resolve Early
 
 - relay backend vs development-only local key
 - minimum Android API level
+- which embedded JS engine to use
 - whether screenshots are stored for replay by default
-- exact consent model for action logging and analytics
