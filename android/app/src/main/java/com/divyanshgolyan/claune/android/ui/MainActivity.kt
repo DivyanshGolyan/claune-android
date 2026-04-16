@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -30,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +51,8 @@ import com.divyanshgolyan.claune.android.app.clauneContainer
 import com.divyanshgolyan.claune.android.data.preferences.PrototypeSettings
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
+import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest
+import com.divyanshgolyan.claune.android.scripting.ScriptExecutionResult
 import com.divyanshgolyan.claune.android.service.ClauneAgentService
 import kotlinx.coroutines.launch
 
@@ -63,13 +67,27 @@ class MainActivity : ComponentActivity() {
                 val settings by container.settingsStore.settings.collectAsStateWithLifecycle(
                     initialValue = PrototypeSettings(),
                 )
+                LaunchedEffect(settings.demoPhoneEnabled) {
+                    container.setDemoPhoneEnabled(settings.demoPhoneEnabled)
+                }
                 ClauneApp(
                     sessionState = sessionState,
                     settings = settings,
                     onStartSession = { startAgentService(it) },
                     onStopSession = { stopAgentService() },
+                    onRunScript = { script ->
+                        container.scriptRuntime.execute(
+                            ScriptExecutionRequest(
+                                script = script,
+                                source = "script_lab",
+                            ),
+                        )
+                    },
                     onToggleScreenshots = { enabled ->
                         container.settingsStore.setScreenshotsEnabled(enabled)
+                    },
+                    onToggleDemoPhone = { enabled ->
+                        container.settingsStore.setDemoPhoneEnabled(enabled)
                     },
                 )
             }
@@ -94,7 +112,9 @@ private fun ClauneApp(
     settings: PrototypeSettings,
     onStartSession: (String) -> Unit,
     onStopSession: () -> Unit,
+    onRunScript: suspend (String) -> ScriptExecutionResult,
     onToggleScreenshots: suspend (Boolean) -> Unit,
+    onToggleDemoPhone: suspend (Boolean) -> Unit,
 ) {
     var goal by rememberSaveable { mutableStateOf("Open Settings and inspect the Wi-Fi page") }
     val coroutineScope = rememberCoroutineScope()
@@ -142,7 +162,7 @@ private fun ClauneApp(
                         Text(
                             text =
                             "Prototype-first Android agent shell with one active session, " +
-                                "one tool call per turn, and accessibility-driven phone control.",
+                                "a Koog-ready runtime shell, and script-driven phone control.",
                             style = MaterialTheme.typography.bodyLarge,
                             color = Color(0xFFD8C2B0),
                         )
@@ -150,11 +170,17 @@ private fun ClauneApp(
                 }
 
                 item {
-                    StatusRail(sessionState = sessionState)
+                    StatusRail(
+                        sessionState = sessionState,
+                        demoPhoneEnabled = settings.demoPhoneEnabled,
+                    )
                 }
 
                 item {
-                    CurrentStatusCard(sessionState = sessionState)
+                    CurrentStatusCard(
+                        sessionState = sessionState,
+                        demoPhoneEnabled = settings.demoPhoneEnabled,
+                    )
                 }
 
                 item {
@@ -175,6 +201,18 @@ private fun ClauneApp(
                                 onToggleScreenshots(enabled)
                             }
                         },
+                        onToggleDemoPhone = { enabled ->
+                            coroutineScope.launch {
+                                onToggleDemoPhone(enabled)
+                            }
+                        },
+                    )
+                }
+
+                item {
+                    ScriptLabCard(
+                        demoPhoneEnabled = settings.demoPhoneEnabled,
+                        onRunScript = onRunScript,
                     )
                 }
 
@@ -203,7 +241,7 @@ private fun ClauneApp(
 }
 
 @Composable
-private fun CurrentStatusCard(sessionState: SessionUiState) {
+private fun CurrentStatusCard(sessionState: SessionUiState, demoPhoneEnabled: Boolean) {
     Card(
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
@@ -234,7 +272,13 @@ private fun CurrentStatusCard(sessionState: SessionUiState) {
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color(0xFFF6E9DB),
             )
-            if (!sessionState.accessibilityConnected) {
+            if (demoPhoneEnabled) {
+                Text(
+                    text = "Demo phone mode is active. Scripts and loop steps run against the built-in fake device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFD8C2B0),
+                )
+            } else if (!sessionState.accessibilityConnected) {
                 Text(
                     text = "Accessibility is still off. The first run will only prove service + notification wiring.",
                     style = MaterialTheme.typography.bodySmall,
@@ -246,7 +290,7 @@ private fun CurrentStatusCard(sessionState: SessionUiState) {
 }
 
 @Composable
-private fun StatusRail(sessionState: SessionUiState) {
+private fun StatusRail(sessionState: SessionUiState, demoPhoneEnabled: Boolean) {
     Card(
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xCC201610)),
@@ -268,6 +312,13 @@ private fun StatusRail(sessionState: SessionUiState) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 StatusChip("Session: ${sessionState.status.name.lowercase()}")
+                StatusChip(
+                    if (demoPhoneEnabled) {
+                        "Phone mode: demo"
+                    } else {
+                        "Phone mode: live"
+                    },
+                )
                 StatusChip(
                     if (sessionState.accessibilityConnected) {
                         "Accessibility linked"
@@ -328,7 +379,7 @@ private fun GoalComposer(goal: String, onGoalChanged: (String) -> Unit, isRunnin
 }
 
 @Composable
-private fun SettingsCard(settings: PrototypeSettings, onToggleScreenshots: (Boolean) -> Unit) {
+private fun SettingsCard(settings: PrototypeSettings, onToggleScreenshots: (Boolean) -> Unit, onToggleDemoPhone: (Boolean) -> Unit) {
     Card(
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xCC201610)),
@@ -367,6 +418,28 @@ private fun SettingsCard(settings: PrototypeSettings, onToggleScreenshots: (Bool
                     onCheckedChange = onToggleScreenshots,
                 )
             }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Demo phone mode",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color(0xFFF6E9DB),
+                    )
+                    Text(
+                        text = "Routes scripts and the loop into a deterministic fake phone so you can test without hardware.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFD8C2B0),
+                    )
+                }
+                Switch(
+                    checked = settings.demoPhoneEnabled,
+                    onCheckedChange = onToggleDemoPhone,
+                )
+            }
         }
     }
 }
@@ -392,11 +465,150 @@ private fun ArchitectureCard() {
             Text(
                 text =
                 "Day one stays in a single app module. The code is split into packages " +
-                    "for ui, service, runtime, accessibility, llm, and data so it can be " +
+                    "for ui, service, runtime, scripting, accessibility, llm, and data so it can be " +
                     "extracted later without slowing down the prototype.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color(0xFFD8C2B0),
             )
+        }
+    }
+}
+
+@Composable
+private fun ScriptLabCard(demoPhoneEnabled: Boolean, onRunScript: suspend (String) -> ScriptExecutionResult) {
+    var script by rememberSaveable(demoPhoneEnabled) {
+        mutableStateOf(
+            if (demoPhoneEnabled) {
+                DEFAULT_DEMO_SCRIPT_SAMPLE
+            } else {
+                DEFAULT_SCRIPT_SAMPLE
+            },
+        )
+    }
+    var isRunning by remember { mutableStateOf(false) }
+    var latestResult by remember { mutableStateOf<ScriptExecutionResult?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    Card(
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xCC201610)),
+    ) {
+        Column(
+            modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                text = "Script Lab",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color(0xFFF6E9DB),
+            )
+            Text(
+                text =
+                "Run JS directly against the embedded runtime. Available host APIs: " +
+                    "claune.observePhone(), claune.tapElement(id), claune.typeIntoElement(id, text), " +
+                    "claune.scrollContainer(id, direction), claune.pressBack(), claune.pressHome(), " +
+                    "claune.waitForState(type, value, timeoutMs)." +
+                    if (demoPhoneEnabled) {
+                        " Demo mode is on, so taps and navigation hit the built-in fake phone."
+                    } else {
+                        " Live mode is on, so host calls depend on the real accessibility bridge."
+                    },
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFD8C2B0),
+            )
+            OutlinedTextField(
+                value = script,
+                onValueChange = { script = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Script") },
+                minLines = 8,
+                shape = RoundedCornerShape(18.dp),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = {
+                        coroutineScope.launch {
+                            isRunning = true
+                            latestResult = onRunScript(script)
+                            isRunning = false
+                        }
+                    },
+                    enabled = script.isNotBlank() && !isRunning,
+                ) {
+                    if (isRunning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.height(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFFF6E9DB),
+                        )
+                    } else {
+                        Text("Run script")
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        script =
+                            if (demoPhoneEnabled) {
+                                DEFAULT_DEMO_SCRIPT_SAMPLE
+                            } else {
+                                DEFAULT_SCRIPT_SAMPLE
+                            }
+                    },
+                    enabled = !isRunning,
+                ) {
+                    Text("Reset sample")
+                }
+            }
+            latestResult?.let { result ->
+                Card(
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (result.ok) Color(0xCC1F3520) else Color(0xCC4B1E16),
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = if (result.ok) "Latest result: success" else "Latest result: failed",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Color(0xFFF6E9DB),
+                        )
+                        Text(
+                            text = result.summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFFF6E9DB),
+                        )
+                        Text(
+                            text = "Host calls: ${result.hostCalls.size}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFD8C2B0),
+                        )
+                        result.data?.let { data ->
+                            Text(
+                                text = data.toString(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFD8C2B0),
+                            )
+                        }
+                        result.error?.let { error ->
+                            Text(
+                                text = error,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFFFD2C7),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -425,3 +637,34 @@ private fun StatusChip(text: String) {
         enabled = false,
     )
 }
+
+private const val DEFAULT_SCRIPT_SAMPLE =
+    """
+const snapshot = claune.observePhone();
+return {
+  foregroundPackage: snapshot.foregroundPackage,
+  actionableCount: snapshot.actionableElements.length,
+  firstElement: snapshot.actionableElements[0]?.label ?? null,
+};
+"""
+
+private const val DEFAULT_DEMO_SCRIPT_SAMPLE =
+    """
+let snapshot = claune.observePhone();
+const settingsButton = snapshot.actionableElements.find((element) => element.label === "Settings");
+const openSettings = claune.tapElement(settingsButton.id);
+const settingsReady = claune.waitForState("package", "com.android.settings", 1000);
+
+snapshot = claune.observePhone();
+const networkRow = snapshot.actionableElements.find((element) => element.label === "Network & internet");
+const openWifi = claune.tapElement(networkRow.id);
+const wifiReady = claune.waitForState("text", "Saved networks", 1000);
+
+return {
+  openSettings,
+  settingsReady,
+  openWifi,
+  wifiReady,
+  finalScreen: claune.observePhone().visibleText,
+};
+"""
