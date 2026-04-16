@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -145,6 +146,7 @@ private fun ClauneApp(
                 Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
+                    .testTag("main_feed")
                     .padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
@@ -414,6 +416,7 @@ private fun SettingsCard(settings: PrototypeSettings, onToggleScreenshots: (Bool
                     )
                 }
                 Switch(
+                    modifier = Modifier.testTag("screenshots_switch"),
                     checked = settings.screenshotsEnabled,
                     onCheckedChange = onToggleScreenshots,
                 )
@@ -436,6 +439,7 @@ private fun SettingsCard(settings: PrototypeSettings, onToggleScreenshots: (Bool
                     )
                 }
                 Switch(
+                    modifier = Modifier.testTag("demo_phone_switch"),
                     checked = settings.demoPhoneEnabled,
                     onCheckedChange = onToggleDemoPhone,
                 )
@@ -522,7 +526,10 @@ private fun ScriptLabCard(demoPhoneEnabled: Boolean, onRunScript: suspend (Strin
             OutlinedTextField(
                 value = script,
                 onValueChange = { script = it },
-                modifier = Modifier.fillMaxWidth(),
+                modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .testTag("script_lab_input"),
                 label = { Text("Script") },
                 minLines = 8,
                 shape = RoundedCornerShape(18.dp),
@@ -533,6 +540,7 @@ private fun ScriptLabCard(demoPhoneEnabled: Boolean, onRunScript: suspend (Strin
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
+                    modifier = Modifier.testTag("script_lab_run_button"),
                     onClick = {
                         coroutineScope.launch {
                             isRunning = true
@@ -568,6 +576,7 @@ private fun ScriptLabCard(demoPhoneEnabled: Boolean, onRunScript: suspend (Strin
             }
             latestResult?.let { result ->
                 Card(
+                    modifier = Modifier.testTag("script_lab_result"),
                     shape = RoundedCornerShape(22.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = if (result.ok) Color(0xCC1F3520) else Color(0xCC4B1E16),
@@ -650,17 +659,14 @@ return {
 
 private const val DEFAULT_DEMO_SCRIPT_SAMPLE =
     """
-let snapshot = claune.observePhone();
-const settingsButton = snapshot.actionableElements.find((element) => element.label === "Settings");
-const openSettings = claune.tapElement(settingsButton.id);
+const launcherSnapshot = claune.observePhone();
+const openSettings = claune.tapElement("demo|launcher|settings");
 const settingsReady = claune.waitForState("package", "com.android.settings", 1000);
-
-snapshot = claune.observePhone();
-const networkRow = snapshot.actionableElements.find((element) => element.label === "Network & internet");
-const openWifi = claune.tapElement(networkRow.id);
+const openWifi = claune.tapElement("demo|settings|network_internet");
 const wifiReady = claune.waitForState("text", "Saved networks", 1000);
 
 return {
+  launcherPackage: launcherSnapshot.foregroundPackage,
   openSettings,
   settingsReady,
   openWifi,
