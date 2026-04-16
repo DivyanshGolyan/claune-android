@@ -193,7 +193,6 @@ class QuickJsScriptRuntime(
                 hostCalls = host.hostCalls(),
             )
         } finally {
-            global.release()
             context.destroy()
         }
     }
