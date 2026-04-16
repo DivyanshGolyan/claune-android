@@ -57,14 +57,12 @@ sealed interface ActionResult {
 data class ModelTurnInput(val goal: String, val snapshot: UiSnapshot, val recentEvents: List<String>)
 
 sealed interface ModelTurnOutput {
-    data class Message(val messageToUser: String, val toolCall: PrototypeToolCall?) : ModelTurnOutput
+    data class Message(val messageToUser: String) : ModelTurnOutput
 
     data class Completion(val summary: String) : ModelTurnOutput
 
     data class Blocked(val reason: String) : ModelTurnOutput
 }
-
-data class PrototypeToolCall(val toolName: String, val arguments: Map<String, String> = emptyMap())
 
 interface PhoneObserver {
     suspend fun captureSnapshot(): UiSnapshot

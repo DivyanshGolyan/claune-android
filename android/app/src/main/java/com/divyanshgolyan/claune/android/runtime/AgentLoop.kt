@@ -28,14 +28,7 @@ class AgentLoop(
 
         when (modelOutput) {
             is ModelTurnOutput.Message -> {
-                val line =
-                    buildString {
-                        append(modelOutput.messageToUser)
-                        modelOutput.toolCall?.let { call ->
-                            append(" Next tool candidate: ${call.toolName}.")
-                        }
-                    }
-                sessionCoordinator.blockSession(line)
+                sessionCoordinator.blockSession(modelOutput.messageToUser)
             }
 
             is ModelTurnOutput.Completion -> {
