@@ -30,6 +30,12 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
         service = null
     }
 
+    fun isConnected(): Boolean = service != null
+
+    fun refreshConnectionState() {
+        sessionCoordinator.setAccessibilityConnected(isConnected())
+    }
+
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString()
         if (!packageName.isNullOrBlank()) {
@@ -39,7 +45,12 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
 
     override suspend fun captureSnapshot(): UiSnapshot {
         val activeService = service
-        val root = activeService?.rootInActiveWindow
+        val root =
+            activeService?.rootInActiveWindow
+                ?: activeService
+                    ?.windows
+                    ?.firstOrNull { it.isActive || it.isFocused }
+                    ?.root
         if (activeService == null || root == null) {
             return UiSnapshot(
                 snapshotId = "snapshot-${System.currentTimeMillis()}",
@@ -58,14 +69,20 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
                 .ifBlank { "unknown" }
         val elements = mutableListOf<UiElement>()
         val visibleText = linkedSetOf<String>()
-        flattenNode(root, packageName, elements, visibleText)
+        flattenNode(
+            node = root,
+            packageName = packageName,
+            elements = elements,
+            visibleText = visibleText,
+            path = emptyList(),
+        )
 
         return UiSnapshot(
             snapshotId = "snapshot-${System.currentTimeMillis()}",
             capturedAt = Instant.now(),
             foregroundPackage = packageName,
             visibleText = visibleText.toList(),
-            actionableElements = elements.take(24),
+            actionableElements = elements.take(40),
             focusedElementId = elements.firstOrNull { it.focused }?.id,
         )
     }
@@ -161,11 +178,11 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
         packageName: String,
         elements: MutableList<UiElement>,
         visibleText: MutableSet<String>,
+        path: List<Int>,
     ) {
-        val label =
-            listOf(node.text, node.contentDescription)
-                .mapNotNull { it?.toString()?.trim() }
-                .firstOrNull { it.isNotEmpty() }
+        val ownText = node.text?.toString()?.trim().orEmpty().ifBlank { null }
+        val ownContentDescription = node.contentDescription?.toString()?.trim().orEmpty().ifBlank { null }
+        val label = deriveElementLabel(node)
 
         if (!label.isNullOrBlank()) {
             visibleText += label
@@ -173,22 +190,39 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
 
         val clickable = node.isClickable
         val editable = node.isEditable
-        if (clickable || editable) {
+        val scrollable = node.isScrollable
+        if (clickable || editable || scrollable) {
+            val ref = buildElementRef(path)
             elements +=
                 UiElement(
-                    id = buildElementId(packageName, node, label),
+                    id = buildElementId(packageName, node, path, label),
+                    ref = ref,
                     role = inferRole(node),
                     label = label.orEmpty(),
+                    text = ownText,
+                    contentDescription = ownContentDescription,
+                    resourceId = node.viewIdResourceName,
+                    className = node.className?.toString(),
                     clickable = clickable,
                     editable = editable,
                     focused = node.isFocused,
+                    enabled = node.isEnabled,
+                    checked = node.isChecked,
+                    selected = node.isSelected,
+                    scrollable = scrollable,
                     bounds = node.boundsRect(),
                 )
         }
 
         for (index in 0 until node.childCount) {
             node.getChild(index)?.let { child ->
-                flattenNode(child, packageName, elements, visibleText)
+                flattenNode(
+                    node = child,
+                    packageName = packageName,
+                    elements = elements,
+                    visibleText = visibleText,
+                    path = path + index,
+                )
             }
         }
     }
@@ -199,22 +233,29 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
     }
 
     private fun findNodeByElementId(node: AccessibilityNodeInfo, elementId: String): AccessibilityNodeInfo? {
-        val label =
-            listOf(node.text, node.contentDescription)
-                .mapNotNull { it?.toString()?.trim() }
-                .firstOrNull { it.isNotEmpty() }
-        val packageName =
-            node.packageName
-                ?.toString()
-                .orEmpty()
-                .ifBlank { "unknown" }
-        if (buildElementId(packageName, node, label) == elementId) {
+        val packageName = node.packageName?.toString().orEmpty().ifBlank { "unknown" }
+        return findNodeByElementId(
+            node = node,
+            packageName = packageName,
+            elementId = elementId,
+            path = emptyList(),
+        )
+    }
+
+    private fun findNodeByElementId(
+        node: AccessibilityNodeInfo,
+        packageName: String,
+        elementId: String,
+        path: List<Int>,
+    ): AccessibilityNodeInfo? {
+        val label = deriveElementLabel(node)
+        if (buildElementId(packageName, node, path, label) == elementId) {
             return node
         }
 
         for (index in 0 until node.childCount) {
             val child = node.getChild(index) ?: continue
-            val match = findNodeByElementId(child, elementId)
+            val match = findNodeByElementId(child, packageName, elementId, path + index)
             if (match != null) {
                 return match
             }
@@ -223,13 +264,14 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
         return null
     }
 
-    private fun buildElementId(packageName: String, node: AccessibilityNodeInfo, label: String?): String {
+    private fun buildElementId(packageName: String, node: AccessibilityNodeInfo, path: List<Int>, label: String?): String {
         val parts =
             listOfNotNull(
                 packageName,
                 node.className?.toString(),
                 node.viewIdResourceName,
                 label,
+                path.joinToString(separator = "_"),
             )
         return parts
             .joinToString(separator = "|")
@@ -237,11 +279,49 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
             .replace(" ", "_")
     }
 
+    private fun buildElementRef(path: List<Int>): String = "e${path.joinToString(separator = "_").ifBlank { "0" }}"
+
+    private fun deriveElementLabel(node: AccessibilityNodeInfo): String? {
+        val candidates = linkedSetOf<String>()
+        collectVisibleText(node, candidates, limit = DESCENDANT_TEXT_LIMIT)
+        return candidates.firstOrNull { it.isNotBlank() }
+    }
+
+    private fun collectVisibleText(node: AccessibilityNodeInfo, collector: MutableSet<String>, limit: Int) {
+        if (collector.size >= limit) {
+            return
+        }
+
+        val ownValues =
+            listOf(node.text, node.contentDescription)
+                .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotBlank) }
+
+        ownValues.forEach { value ->
+            if (collector.size < limit) {
+                collector += value
+            }
+        }
+
+        for (index in 0 until node.childCount) {
+            if (collector.size >= limit) {
+                return
+            }
+            node.getChild(index)?.let { child ->
+                collectVisibleText(child, collector, limit)
+            }
+        }
+    }
+
     private fun inferRole(node: AccessibilityNodeInfo): String = when {
         node.isEditable -> "input"
         node.className?.contains("Button") == true -> "button"
         node.className?.contains("Switch") == true -> "switch"
+        node.isScrollable -> "list"
         else -> "control"
+    }
+
+    private companion object {
+        private const val DESCENDANT_TEXT_LIMIT = 4
     }
 }
 
