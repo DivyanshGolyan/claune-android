@@ -23,15 +23,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,9 +46,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.divyanshgolyan.claune.android.app.clauneContainer
-import com.divyanshgolyan.claune.android.data.preferences.PrototypeSettings
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
+import com.divyanshgolyan.claune.android.scripting.ClauneHostContract
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionResult
 import com.divyanshgolyan.claune.android.service.ClauneAgentService
@@ -65,15 +62,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             ClauneTheme {
                 val sessionState by container.sessionCoordinator.uiState.collectAsStateWithLifecycle()
-                val settings by container.settingsStore.settings.collectAsStateWithLifecycle(
-                    initialValue = PrototypeSettings(),
-                )
-                LaunchedEffect(settings.demoPhoneEnabled) {
-                    container.setDemoPhoneEnabled(settings.demoPhoneEnabled)
-                }
                 ClauneApp(
                     sessionState = sessionState,
-                    settings = settings,
                     onStartSession = { startAgentService(it) },
                     onStopSession = { stopAgentService() },
                     onRunScript = { script ->
@@ -84,15 +74,14 @@ class MainActivity : ComponentActivity() {
                             ),
                         )
                     },
-                    onToggleScreenshots = { enabled ->
-                        container.settingsStore.setScreenshotsEnabled(enabled)
-                    },
-                    onToggleDemoPhone = { enabled ->
-                        container.settingsStore.setDemoPhoneEnabled(enabled)
-                    },
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        clauneContainer().accessibilityBridge.refreshConnectionState()
     }
 
     private fun startAgentService(goal: String) {
@@ -110,15 +99,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun ClauneApp(
     sessionState: SessionUiState,
-    settings: PrototypeSettings,
     onStartSession: (String) -> Unit,
     onStopSession: () -> Unit,
     onRunScript: suspend (String) -> ScriptExecutionResult,
-    onToggleScreenshots: suspend (Boolean) -> Unit,
-    onToggleDemoPhone: suspend (Boolean) -> Unit,
 ) {
     var goal by rememberSaveable { mutableStateOf("Open Settings and inspect the Wi-Fi page") }
-    val coroutineScope = rememberCoroutineScope()
     val gradient =
         remember {
             Brush.linearGradient(
@@ -162,64 +147,30 @@ private fun ClauneApp(
                             color = Color(0xFFF6E9DB),
                         )
                         Text(
-                            text =
-                            "Prototype-first Android agent shell with one active session, " +
-                                "a Koog-ready runtime shell, and script-driven phone control.",
-                            style = MaterialTheme.typography.bodyLarge,
+                            text = "Testing console for the current session loop and embedded script runtime.",
+                            style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFFD8C2B0),
                         )
                     }
                 }
 
                 item {
-                    StatusRail(
+                    TestingConsoleCard(
                         sessionState = sessionState,
-                        demoPhoneEnabled = settings.demoPhoneEnabled,
-                    )
-                }
-
-                item {
-                    CurrentStatusCard(
-                        sessionState = sessionState,
-                        demoPhoneEnabled = settings.demoPhoneEnabled,
-                    )
-                }
-
-                item {
-                    GoalComposer(
                         goal = goal,
                         onGoalChanged = { goal = it },
-                        isRunning = sessionState.status == SessionStatus.Running,
+                        isServiceActive = sessionState.foregroundServiceRunning,
                         onStart = { onStartSession(goal) },
                         onStop = onStopSession,
                     )
                 }
 
                 item {
-                    SettingsCard(
-                        settings = settings,
-                        onToggleScreenshots = { enabled ->
-                            coroutineScope.launch {
-                                onToggleScreenshots(enabled)
-                            }
-                        },
-                        onToggleDemoPhone = { enabled ->
-                            coroutineScope.launch {
-                                onToggleDemoPhone(enabled)
-                            }
-                        },
-                    )
+                    CurrentStatusCard(sessionState = sessionState)
                 }
 
                 item {
-                    ScriptLabCard(
-                        demoPhoneEnabled = settings.demoPhoneEnabled,
-                        onRunScript = onRunScript,
-                    )
-                }
-
-                item {
-                    ArchitectureCard()
+                    ScriptLabCard(onRunScript = onRunScript)
                 }
 
                 item {
@@ -230,7 +181,7 @@ private fun ClauneApp(
                     )
                 }
 
-                items(sessionState.timeline) { event ->
+                items(sessionState.timeline.takeLast(6).asReversed()) { event ->
                     EventCard(event)
                 }
 
@@ -243,7 +194,7 @@ private fun ClauneApp(
 }
 
 @Composable
-private fun CurrentStatusCard(sessionState: SessionUiState, demoPhoneEnabled: Boolean) {
+private fun CurrentStatusCard(sessionState: SessionUiState) {
     Card(
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
@@ -274,13 +225,7 @@ private fun CurrentStatusCard(sessionState: SessionUiState, demoPhoneEnabled: Bo
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color(0xFFF6E9DB),
             )
-            if (demoPhoneEnabled) {
-                Text(
-                    text = "Demo phone mode is active. Scripts and loop steps run against the built-in fake device.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFD8C2B0),
-                )
-            } else if (!sessionState.accessibilityConnected) {
+            if (!sessionState.accessibilityConnected) {
                 Text(
                     text = "Accessibility is still off. The first run will only prove service + notification wiring.",
                     style = MaterialTheme.typography.bodySmall,
@@ -292,7 +237,17 @@ private fun CurrentStatusCard(sessionState: SessionUiState, demoPhoneEnabled: Bo
 }
 
 @Composable
-private fun StatusRail(sessionState: SessionUiState, demoPhoneEnabled: Boolean) {
+private fun TestingConsoleCard(
+    sessionState: SessionUiState,
+    goal: String,
+    onGoalChanged: (String) -> Unit,
+    isServiceActive: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val canStart = goal.isNotBlank() && !isServiceActive
+    val canStop = isServiceActive
+
     Card(
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xCC201610)),
@@ -305,74 +260,54 @@ private fun StatusRail(sessionState: SessionUiState, demoPhoneEnabled: Boolean) 
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                text = "Live state",
+                text = "Testing controls",
                 style = MaterialTheme.typography.titleMedium,
                 color = Color(0xFFF6E9DB),
             )
-
-            Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                StatusChip("Session: ${sessionState.status.name.lowercase()}")
-                StatusChip(
-                    if (demoPhoneEnabled) {
-                        "Phone mode: demo"
-                    } else {
-                        "Phone mode: live"
-                    },
-                )
-                StatusChip(
-                    if (sessionState.accessibilityConnected) {
-                        "Accessibility linked"
-                    } else {
-                        "Accessibility not linked"
-                    },
-                )
-                StatusChip(
-                    if (sessionState.foregroundServiceRunning) {
-                        "Foreground service live"
-                    } else {
-                        "Foreground service idle"
-                    },
-                )
-                StatusChip("Latest app: ${sessionState.lastKnownApp ?: "unknown"}")
-            }
-        }
-    }
-}
-
-@Composable
-private fun GoalComposer(goal: String, onGoalChanged: (String) -> Unit, isRunning: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xCCF6E9DB)),
-    ) {
-        Column(
-            modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text(
-                text = "Session kickoff",
-                style = MaterialTheme.typography.titleMedium,
-                color = Color(0xFF22140E),
+            CompactStatusLine(
+                label = "Session",
+                value = sessionState.status.name.lowercase(),
+            )
+            CompactStatusLine(
+                label = "Accessibility",
+                value = if (sessionState.accessibilityConnected) "linked" else "not linked",
+            )
+            CompactStatusLine(
+                label = "Foreground service",
+                value = if (sessionState.foregroundServiceRunning) "live" else "idle",
+            )
+            CompactStatusLine(
+                label = "Latest app",
+                value = sessionState.lastKnownApp ?: "unknown",
             )
             OutlinedTextField(
                 value = goal,
                 onValueChange = onGoalChanged,
-                modifier = Modifier.fillMaxWidth(),
+                modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .testTag("goal_input"),
                 label = { Text("Goal") },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                minLines = 3,
+                minLines = 2,
                 shape = RoundedCornerShape(18.dp),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onStart, enabled = goal.isNotBlank() && !isRunning) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Button(
+                    modifier = Modifier.testTag("start_session_button"),
+                    onClick = onStart,
+                    enabled = canStart,
+                ) {
                     Text("Start session")
                 }
-                OutlinedButton(onClick = onStop, enabled = isRunning) {
+                OutlinedButton(
+                    modifier = Modifier.testTag("stop_session_button"),
+                    onClick = onStop,
+                    enabled = canStop,
+                ) {
                     Text("Stop")
                 }
             }
@@ -381,114 +316,24 @@ private fun GoalComposer(goal: String, onGoalChanged: (String) -> Unit, isRunnin
 }
 
 @Composable
-private fun SettingsCard(settings: PrototypeSettings, onToggleScreenshots: (Boolean) -> Unit, onToggleDemoPhone: (Boolean) -> Unit) {
-    Card(
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xCC201610)),
-    ) {
-        Column(
-            modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text(
-                text = "Prototype switches",
-                style = MaterialTheme.typography.titleMedium,
-                color = Color(0xFFF6E9DB),
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Store screenshots",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color(0xFFF6E9DB),
-                    )
-                    Text(
-                        text = "Off by default to match the replay guidance in the v1 architecture doc.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFD8C2B0),
-                    )
-                }
-                Switch(
-                    modifier = Modifier.testTag("screenshots_switch"),
-                    checked = settings.screenshotsEnabled,
-                    onCheckedChange = onToggleScreenshots,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Demo phone mode",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color(0xFFF6E9DB),
-                    )
-                    Text(
-                        text = "Routes scripts and the loop into a deterministic fake phone so you can test without hardware.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFD8C2B0),
-                    )
-                }
-                Switch(
-                    modifier = Modifier.testTag("demo_phone_switch"),
-                    checked = settings.demoPhoneEnabled,
-                    onCheckedChange = onToggleDemoPhone,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ArchitectureCard() {
-    Card(
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xCC201610)),
-    ) {
-        Column(
-            modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = "Initial module posture",
-                style = MaterialTheme.typography.titleMedium,
-                color = Color(0xFFF6E9DB),
-            )
-            Text(
-                text =
-                "Day one stays in a single app module. The code is split into packages " +
-                    "for ui, service, runtime, scripting, accessibility, llm, and data so it can be " +
-                    "extracted later without slowing down the prototype.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFD8C2B0),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ScriptLabCard(demoPhoneEnabled: Boolean, onRunScript: suspend (String) -> ScriptExecutionResult) {
-    var script by rememberSaveable(demoPhoneEnabled) {
-        mutableStateOf(
-            if (demoPhoneEnabled) {
-                DEFAULT_DEMO_SCRIPT_SAMPLE
-            } else {
-                DEFAULT_SCRIPT_SAMPLE
-            },
+private fun CompactStatusLine(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFFD8C2B0),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            color = Color(0xFFF6E9DB),
         )
     }
+}
+
+@Composable
+private fun ScriptLabCard(onRunScript: suspend (String) -> ScriptExecutionResult) {
+    var script by rememberSaveable { mutableStateOf(DEFAULT_SCRIPT_SAMPLE) }
     var isRunning by remember { mutableStateOf(false) }
     var latestResult by remember { mutableStateOf<ScriptExecutionResult?>(null) }
     val coroutineScope = rememberCoroutineScope()
@@ -510,16 +355,7 @@ private fun ScriptLabCard(demoPhoneEnabled: Boolean, onRunScript: suspend (Strin
                 color = Color(0xFFF6E9DB),
             )
             Text(
-                text =
-                "Run JS directly against the embedded runtime. Available host APIs: " +
-                    "claune.observePhone(), claune.tapElement(id), claune.typeIntoElement(id, text), " +
-                    "claune.scrollContainer(id, direction), claune.pressBack(), claune.pressHome(), " +
-                    "claune.waitForState(type, value, timeoutMs)." +
-                    if (demoPhoneEnabled) {
-                        " Demo mode is on, so taps and navigation hit the built-in fake phone."
-                    } else {
-                        " Live mode is on, so host calls depend on the real accessibility bridge."
-                    },
+                text = ClauneHostContract.scriptLabSummary,
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFFD8C2B0),
             )
@@ -531,7 +367,7 @@ private fun ScriptLabCard(demoPhoneEnabled: Boolean, onRunScript: suspend (Strin
                     .fillMaxWidth()
                     .testTag("script_lab_input"),
                 label = { Text("Script") },
-                minLines = 8,
+                minLines = 6,
                 shape = RoundedCornerShape(18.dp),
             )
             Row(
@@ -562,12 +398,7 @@ private fun ScriptLabCard(demoPhoneEnabled: Boolean, onRunScript: suspend (Strin
                 }
                 OutlinedButton(
                     onClick = {
-                        script =
-                            if (demoPhoneEnabled) {
-                                DEFAULT_DEMO_SCRIPT_SAMPLE
-                            } else {
-                                DEFAULT_SCRIPT_SAMPLE
-                            }
+                        script = DEFAULT_SCRIPT_SAMPLE
                     },
                     enabled = !isRunning,
                 ) {
@@ -637,16 +468,6 @@ private fun EventCard(event: String) {
     }
 }
 
-@Composable
-private fun StatusChip(text: String) {
-    FilterChip(
-        selected = false,
-        onClick = {},
-        label = { Text(text) },
-        enabled = false,
-    )
-}
-
 private const val DEFAULT_SCRIPT_SAMPLE =
     """
 const snapshot = claune.observePhone();
@@ -654,23 +475,6 @@ return {
   foregroundPackage: snapshot.foregroundPackage,
   actionableCount: snapshot.actionableElements.length,
   firstElement: snapshot.actionableElements[0]?.label ?? null,
-};
-"""
-
-private const val DEFAULT_DEMO_SCRIPT_SAMPLE =
-    """
-const launcherSnapshot = claune.observePhone();
-const openSettings = claune.tapElement("demo|launcher|settings");
-const settingsReady = claune.waitForState("package", "com.android.settings", 1000);
-const openWifi = claune.tapElement("demo|settings|network_internet");
-const wifiReady = claune.waitForState("text", "Saved networks", 1000);
-
-return {
-  launcherPackage: launcherSnapshot.foregroundPackage,
-  openSettings,
-  settingsReady,
-  openWifi,
-  wifiReady,
-  finalScreen: claune.observePhone().visibleText,
+  firstRef: snapshot.actionableElements[0]?.ref ?? null,
 };
 """

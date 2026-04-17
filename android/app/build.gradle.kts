@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -7,6 +8,16 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.ktlint)
 }
+
+val localProperties =
+    Properties().apply {
+        val file = rootProject.file("local.properties")
+        if (file.exists()) {
+            file.inputStream().use(::load)
+        }
+    }
+
+fun escapeBuildConfigString(value: String): String = value.replace("\\", "\\\\").replace("\"", "\\\"")
 
 android {
     namespace = "com.divyanshgolyan.claune.android"
@@ -23,6 +34,11 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        buildConfigField(
+            "String",
+            "ANTHROPIC_API_KEY",
+            "\"${escapeBuildConfigString(localProperties.getProperty("claune.anthropicApiKey", ""))}\"",
+        )
     }
 
     buildTypes {
@@ -41,11 +57,15 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/INDEX.LIST"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/io.netty.versions.properties"
         }
     }
 
@@ -83,10 +103,10 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.quickjs.wrapper.android)
+    implementation(libs.koog.agents)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

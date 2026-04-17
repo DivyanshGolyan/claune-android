@@ -54,6 +54,7 @@ class ScriptHostTest {
 
         assertEquals("com.android.settings", payload.foregroundPackage)
         assertEquals(1, payload.actionableElements.size)
+        assertEquals("el-1", payload.actionableElements.first().ref)
         assertEquals(1, logStore.recentSnapshots().size)
     }
 
@@ -129,6 +130,61 @@ class ScriptHostTest {
     }
 
     @Test
+    fun `tapSelector matches element by text and avoids positional guessing`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped selector match."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "about-phone", ref = "e0", label = "About phone", text = "About phone"),
+                                element(id = "wifi", ref = "e1", label = "Wi-Fi", text = "Wi-Fi"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.tapSelector("""{"text":"Wi-Fi"}""")
+
+        assertTrue(result.ok)
+        assertEquals("wifi", actuator.lastTapped?.elementId)
+    }
+
+    @Test
+    fun `waitForSelector succeeds when later snapshot exposes matching ref`() = runTest {
+        var currentTime = Instant.parse("2026-04-16T00:00:00Z")
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(elements = listOf(element(id = "about-phone", ref = "e0", label = "About phone"))),
+                        snapshot(elements = listOf(element(id = "wifi", ref = "e1", label = "Wi-Fi", text = "Wi-Fi"))),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+                now = { currentTime },
+                sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
+            )
+
+        val result = host.waitForSelector("""{"text":"Wi-Fi"}""", timeoutMs = 600)
+
+        assertTrue(result.ok)
+        assertTrue(result.message.contains("Matched selector"))
+    }
+
+    @Test
     fun `scrollContainer blocks unsupported horizontal direction`() = runTest {
         val host =
             ScriptHost(
@@ -145,24 +201,25 @@ class ScriptHostTest {
         assertEquals("Unsupported scroll direction 'sideways'.", result.message)
     }
 
-    private fun snapshot(packageName: String = "com.example.app"): UiSnapshot = UiSnapshot(
+    private fun snapshot(packageName: String = "com.example.app", elements: List<UiElement> = listOf(element())): UiSnapshot = UiSnapshot(
         snapshotId = "snapshot",
         capturedAt = Instant.parse("2026-04-16T00:00:00Z"),
         foregroundPackage = packageName,
         visibleText = listOf("Alpha"),
-        actionableElements =
-        listOf(
-            UiElement(
-                id = "el-1",
-                role = "button",
-                label = "Action",
-                clickable = true,
-                editable = false,
-                focused = false,
-                bounds = listOf(0, 0, 100, 100),
-            ),
-        ),
+        actionableElements = elements,
         focusedElementId = null,
+    )
+
+    private fun element(id: String = "el-1", ref: String = id, label: String = "Action", text: String? = null): UiElement = UiElement(
+        id = id,
+        ref = ref,
+        role = "button",
+        label = label,
+        text = text,
+        clickable = true,
+        editable = false,
+        focused = false,
+        bounds = listOf(0, 0, 100, 100),
     )
 }
 

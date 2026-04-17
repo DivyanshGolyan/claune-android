@@ -60,10 +60,37 @@ data class UiSnapshotPayload(
 @Serializable
 data class UiElementPayload(
     val id: String,
+    val ref: String,
     val role: String,
     val label: String,
+    val text: String? = null,
+    val contentDescription: String? = null,
+    val resourceId: String? = null,
+    val className: String? = null,
     val clickable: Boolean,
     val editable: Boolean,
     val focused: Boolean,
+    val enabled: Boolean = true,
+    val checked: Boolean = false,
+    val selected: Boolean = false,
+    val scrollable: Boolean = false,
     val bounds: List<Int>,
+)
+
+@Serializable
+data class ElementSelectorPayload(
+    val ref: String? = null,
+    val text: String? = null,
+    val textExact: Boolean = false,
+    val contentDescription: String? = null,
+    val resourceId: String? = null,
+    val role: String? = null,
+    val clickable: Boolean? = null,
+    val editable: Boolean? = null,
+    val focused: Boolean? = null,
+    val enabled: Boolean? = null,
+    val checked: Boolean? = null,
+    val selected: Boolean? = null,
+    val scrollable: Boolean? = null,
+    val first: Boolean = false,
 )

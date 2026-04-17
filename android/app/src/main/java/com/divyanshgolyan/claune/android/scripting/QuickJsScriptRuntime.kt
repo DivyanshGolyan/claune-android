@@ -45,7 +45,14 @@ class QuickJsScriptRuntime(
         sessionCoordinator.logEvent("Running script from ${request.source}.")
 
         val result =
-            runCatching {
+            ScriptSourceValidator.firstUnsupportedFeature(request.script)?.let { unsupported ->
+                ScriptExecutionResult(
+                    ok = false,
+                    summary = "Script uses unsupported syntax.",
+                    error = unsupported.error,
+                    hostCalls = emptyList(),
+                )
+            } ?: runCatching {
                 executeScript(request, host)
             }.getOrElse { throwable ->
                 ScriptExecutionResult(
@@ -104,6 +111,30 @@ class QuickJsScriptRuntime(
                 },
             )
             global.setProperty(
+                "__clauneTapRefJson",
+                JSCallFunction { args: Array<out Any?> ->
+                    val ref = args.firstOrNull()?.toString().orEmpty()
+                    runBlocking {
+                        ScriptJson.codec.encodeToString(
+                            HostCallOutcome.serializer(),
+                            host.tapRef(ref),
+                        )
+                    }
+                },
+            )
+            global.setProperty(
+                "__clauneTapSelectorJson",
+                JSCallFunction { args: Array<out Any?> ->
+                    val selectorJson = args.firstOrNull()?.toString().orEmpty()
+                    runBlocking {
+                        ScriptJson.codec.encodeToString(
+                            HostCallOutcome.serializer(),
+                            host.tapSelector(selectorJson),
+                        )
+                    }
+                },
+            )
+            global.setProperty(
                 "__clauneTypeIntoElementJson",
                 JSCallFunction { args: Array<out Any?> ->
                     val elementId = args.getOrNull(0)?.toString().orEmpty()
@@ -112,6 +143,19 @@ class QuickJsScriptRuntime(
                         ScriptJson.codec.encodeToString(
                             HostCallOutcome.serializer(),
                             host.typeIntoElement(elementId, text),
+                        )
+                    }
+                },
+            )
+            global.setProperty(
+                "__clauneTypeIntoSelectorJson",
+                JSCallFunction { args: Array<out Any?> ->
+                    val selectorJson = args.getOrNull(0)?.toString().orEmpty()
+                    val text = args.getOrNull(1)?.toString().orEmpty()
+                    runBlocking {
+                        ScriptJson.codec.encodeToString(
+                            HostCallOutcome.serializer(),
+                            host.typeIntoSelector(selectorJson, text),
                         )
                     }
                 },
@@ -165,13 +209,23 @@ class QuickJsScriptRuntime(
                     }
                 },
             )
+            global.setProperty(
+                "__clauneWaitForSelectorJson",
+                JSCallFunction { args: Array<out Any?> ->
+                    val selectorJson = args.getOrNull(0)?.toString().orEmpty()
+                    val timeoutMs = args.getOrNull(1)?.toString()?.toLongOrNull() ?: 0L
+                    runBlocking {
+                        ScriptJson.codec.encodeToString(
+                            HostCallOutcome.serializer(),
+                            host.waitForSelector(selectorJson, timeoutMs),
+                        )
+                    }
+                },
+            )
 
-            context.evaluate(CLAUNE_BOOTSTRAP)
+            context.evaluate(ClauneHostContract.bootstrapJavascript)
 
-            val resultJson =
-                context.evaluate(
-                    wrapUserScript(request.script),
-                ) as? String
+            val resultJson = context.evaluate(wrapUserScript(request.script)) as? String
 
             val parsedData = resultJson?.let(ScriptJson.codec::parseToJsonElement) ?: JsonNull
             val summary =
@@ -210,33 +264,6 @@ class QuickJsScriptRuntime(
     private companion object {
         private val QUICK_JS_LOADED = AtomicBoolean(false)
 
-        private val CLAUNE_BOOTSTRAP =
-            """
-            globalThis.claune = Object.freeze({
-              observePhone() {
-                return JSON.parse(__clauneObservePhoneJson());
-              },
-              tapElement(elementId) {
-                return JSON.parse(__clauneTapElementJson(String(elementId)));
-              },
-              typeIntoElement(elementId, text) {
-                return JSON.parse(__clauneTypeIntoElementJson(String(elementId), String(text)));
-              },
-              scrollContainer(elementId, direction) {
-                return JSON.parse(__clauneScrollContainerJson(String(elementId), String(direction)));
-              },
-              pressBack() {
-                return JSON.parse(__claunePressBackJson());
-              },
-              pressHome() {
-                return JSON.parse(__claunePressHomeJson());
-              },
-              waitForState(type, value, timeoutMs) {
-                return JSON.parse(__clauneWaitForStateJson(String(type), String(value), Number(timeoutMs ?? 0)));
-              }
-            });
-            """.trimIndent()
-
         private fun ensureQuickJsLoaded() {
             if (QUICK_JS_LOADED.compareAndSet(false, true)) {
                 QuickJSLoader.init()
@@ -244,3 +271,40 @@ class QuickJsScriptRuntime(
         }
     }
 }
+
+internal object ScriptSourceValidator {
+    fun firstUnsupportedFeature(script: String): UnsupportedScriptFeature? = unsupportedFeatures.firstOrNull { feature ->
+        feature.pattern.containsMatchIn(script)
+    }
+
+    private val unsupportedFeatures =
+        listOf(
+            UnsupportedScriptFeature(
+                name = "await",
+                pattern = Regex("""(^|[^\w$])await\s+"""),
+                error = "unsupported_syntax: top-level await is not supported; claune APIs are synchronous plain function calls",
+            ),
+            UnsupportedScriptFeature(
+                name = "async",
+                pattern = Regex("""(^|[^\w$])async\s+"""),
+                error = "unsupported_syntax: async functions are not supported; write synchronous scripts only",
+            ),
+            UnsupportedScriptFeature(
+                name = "promise",
+                pattern = Regex("""(^|[^\w$])Promise(\b|\.)"""),
+                error = "unsupported_syntax: Promise syntax is not supported in Claune scripts",
+            ),
+            UnsupportedScriptFeature(
+                name = "console",
+                pattern = Regex("""(^|[^\w$])console\."""),
+                error = "unsupported_api: console is not available in Claune scripts; return compact data instead",
+            ),
+            UnsupportedScriptFeature(
+                name = "module",
+                pattern = Regex("""(^|\n)\s*(import|export)\b"""),
+                error = "unsupported_syntax: import/export modules are not supported in Claune scripts",
+            ),
+        )
+}
+
+internal data class UnsupportedScriptFeature(val name: String, val pattern: Regex, val error: String)

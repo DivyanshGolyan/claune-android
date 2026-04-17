@@ -31,11 +31,20 @@ data class UiSnapshot(
 
 data class UiElement(
     val id: String,
+    val ref: String = id,
     val role: String,
     val label: String,
+    val text: String? = null,
+    val contentDescription: String? = null,
+    val resourceId: String? = null,
+    val className: String? = null,
     val clickable: Boolean,
     val editable: Boolean,
     val focused: Boolean,
+    val enabled: Boolean = true,
+    val checked: Boolean = false,
+    val selected: Boolean = false,
+    val scrollable: Boolean = false,
     val bounds: List<Int>,
 )
 
@@ -54,7 +63,7 @@ sealed interface ActionResult {
     data class Blocked(val reason: String) : ActionResult
 }
 
-data class ModelTurnInput(val goal: String, val snapshot: UiSnapshot, val recentEvents: List<String>)
+data class ModelTurnInput(val sessionId: String, val goal: String, val snapshot: UiSnapshot, val recentEvents: List<String>)
 
 sealed interface ModelTurnOutput {
     data class Message(val messageToUser: String) : ModelTurnOutput

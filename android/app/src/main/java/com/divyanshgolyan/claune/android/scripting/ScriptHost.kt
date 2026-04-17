@@ -11,6 +11,7 @@ import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import java.time.Instant
 import kotlinx.coroutines.delay
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -43,6 +44,50 @@ class ScriptHost(
         phoneActuator.tap(ElementRef(elementId)).toOutcome()
     }
 
+    suspend fun tapRef(ref: String): HostCallOutcome = recordCall(
+        name = "tapRef",
+        arguments = buildJsonObject { put("ref", ref) },
+    ) {
+        val snapshot = phoneObserver.captureSnapshot()
+        recordSnapshot(snapshot)
+        val element = snapshot.actionableElements.firstOrNull { it.ref == ref }
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "Ref '$ref' was not found in the current snapshot.",
+            )
+        phoneActuator.tap(ElementRef(element.id)).toOutcome(
+            data =
+            buildJsonObject {
+                put("matchedRef", element.ref)
+                put("matchedElementId", element.id)
+                put("matchedLabel", element.label)
+            },
+        )
+    }
+
+    suspend fun tapSelector(selectorJson: String): HostCallOutcome = recordCall(
+        name = "tapSelector",
+        arguments = buildJsonObject { put("selector", selectorJson) },
+    ) {
+        val selector = decodeSelector(selectorJson)
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "Invalid selector JSON.",
+            )
+        val snapshot = phoneObserver.captureSnapshot()
+        recordSnapshot(snapshot)
+        val element = selectElement(snapshot, selector)
+            ?: return@recordCall selectorFailure(selector, snapshot)
+        phoneActuator.tap(ElementRef(element.id)).toOutcome(
+            data =
+            buildJsonObject {
+                put("matchedRef", element.ref)
+                put("matchedElementId", element.id)
+                put("matchedLabel", element.label)
+            },
+        )
+    }
+
     suspend fun typeIntoElement(elementId: String, text: String): HostCallOutcome = recordCall(
         name = "typeIntoElement",
         arguments =
@@ -52,6 +97,33 @@ class ScriptHost(
         },
     ) {
         phoneActuator.type(ElementRef(elementId), text).toOutcome()
+    }
+
+    suspend fun typeIntoSelector(selectorJson: String, text: String): HostCallOutcome = recordCall(
+        name = "typeIntoSelector",
+        arguments =
+        buildJsonObject {
+            put("selector", selectorJson)
+            put("text", text)
+        },
+    ) {
+        val selector = decodeSelector(selectorJson)
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "Invalid selector JSON.",
+            )
+        val snapshot = phoneObserver.captureSnapshot()
+        recordSnapshot(snapshot)
+        val element = selectElement(snapshot, selector)
+            ?: return@recordCall selectorFailure(selector, snapshot)
+        phoneActuator.type(ElementRef(element.id), text).toOutcome(
+            data =
+            buildJsonObject {
+                put("matchedRef", element.ref)
+                put("matchedElementId", element.id)
+                put("matchedLabel", element.label)
+            },
+        )
     }
 
     suspend fun scrollContainer(elementId: String, direction: String): HostCallOutcome = recordCall(
@@ -96,6 +168,22 @@ class ScriptHost(
         waitForStateInternal(type, value, timeoutMs)
     }
 
+    suspend fun waitForSelector(selectorJson: String, timeoutMs: Long): HostCallOutcome = recordCall(
+        name = "waitForSelector",
+        arguments =
+        buildJsonObject {
+            put("selector", selectorJson)
+            put("timeoutMs", timeoutMs)
+        },
+    ) {
+        val selector = decodeSelector(selectorJson)
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "Invalid selector JSON.",
+            )
+        waitForSelectorInternal(selector, timeoutMs)
+    }
+
     private suspend fun waitForStateInternal(type: String, value: String, timeoutMs: Long): HostCallOutcome {
         val deadline = now().plusMillis(timeoutMs.coerceAtLeast(0L))
         while (true) {
@@ -133,6 +221,76 @@ class ScriptHost(
         }
     }
 
+    private suspend fun waitForSelectorInternal(selector: ElementSelectorPayload, timeoutMs: Long): HostCallOutcome {
+        val deadline = now().plusMillis(timeoutMs.coerceAtLeast(0L))
+        while (true) {
+            val snapshot = phoneObserver.captureSnapshot()
+            recordSnapshot(snapshot)
+            val matches = snapshot.actionableElements.filter { it.matches(selector) }
+
+            if (matches.size == 1 || (selector.first && matches.isNotEmpty())) {
+                val matched = matches.first()
+                return HostCallOutcome(
+                    ok = true,
+                    message = "Matched selector for '${matched.label.ifBlank { matched.id }}'.",
+                    data =
+                    buildJsonObject {
+                        put("matchedRef", matched.ref)
+                        put("matchedElementId", matched.id)
+                        put("matchedLabel", matched.label)
+                    },
+                )
+            }
+
+            if (matches.size > 1 && !selector.first) {
+                return HostCallOutcome(
+                    ok = false,
+                    message = "Selector matched multiple elements. Refine the selector or set first=true.",
+                )
+            }
+
+            if (now().isAfter(deadline)) {
+                return HostCallOutcome(
+                    ok = false,
+                    message = "Timed out waiting for selector after ${timeoutMs.coerceAtLeast(0L)}ms.",
+                )
+            }
+
+            sleeper(POLL_INTERVAL_MS)
+        }
+    }
+
+    private fun decodeSelector(selectorJson: String): ElementSelectorPayload? = runCatching {
+        ScriptJson.codec.decodeFromString(ElementSelectorPayload.serializer(), selectorJson)
+    }.getOrNull()?.takeIf { it.hasCriteria() }
+
+    private fun selectElement(snapshot: UiSnapshot, selector: ElementSelectorPayload): UiElement? {
+        val matches = snapshot.actionableElements.filter { it.matches(selector) }
+        return when {
+            matches.isEmpty() -> null
+            matches.size == 1 -> matches.first()
+            selector.first -> matches.first()
+            else -> null
+        }
+    }
+
+    private fun selectorFailure(selector: ElementSelectorPayload, snapshot: UiSnapshot): HostCallOutcome {
+        val matches = snapshot.actionableElements.filter { it.matches(selector) }
+        return when {
+            matches.isEmpty() ->
+                HostCallOutcome(
+                    ok = false,
+                    message = "Selector did not match any actionable element on the current screen.",
+                )
+
+            else ->
+                HostCallOutcome(
+                    ok = false,
+                    message = "Selector matched multiple elements. Refine the selector or set first=true.",
+                )
+        }
+    }
+
     private suspend fun recordCall(name: String, arguments: JsonObject, block: suspend () -> HostCallOutcome): HostCallOutcome {
         val startedAt = now()
         val result = block()
@@ -167,11 +325,6 @@ class ScriptHost(
         logStore.recordSnapshot(snapshot)
     }
 
-    private fun ActionResult.toOutcome(): HostCallOutcome = when (this) {
-        is ActionResult.Success -> HostCallOutcome(ok = true, message = message)
-        is ActionResult.Blocked -> HostCallOutcome(ok = false, message = reason)
-    }
-
     private fun String.toScrollDirection(): ScrollDirection? = when (lowercase()) {
         "up" -> ScrollDirection.Up
         "down" -> ScrollDirection.Down
@@ -189,17 +342,73 @@ class ScriptHost(
         focusedElementId = focusedElementId,
     )
 
-    private fun UiElement.toPayload(): UiElementPayload = UiElementPayload(
-        id = id,
-        role = role,
-        label = label,
-        clickable = clickable,
-        editable = editable,
-        focused = focused,
-        bounds = bounds,
-    )
-
     private companion object {
         private const val POLL_INTERVAL_MS = 250L
     }
+}
+
+private fun ElementSelectorPayload.hasCriteria(): Boolean = listOf(
+    ref,
+    text,
+    contentDescription,
+    resourceId,
+    role,
+).any { !it.isNullOrBlank() } ||
+    listOf(clickable, editable, focused, enabled, checked, selected, scrollable).any { it != null }
+
+private fun UiElement.matches(selector: ElementSelectorPayload): Boolean {
+    if (selector.ref != null && selector.ref != ref) {
+        return false
+    }
+
+    if (selector.text != null) {
+        val candidates = listOfNotNull(label, text, contentDescription)
+        val target = selector.text
+        val matchesText =
+            candidates.any { candidate ->
+                if (selector.textExact) {
+                    candidate == target
+                } else {
+                    candidate.contains(target, ignoreCase = true)
+                }
+            }
+        if (!matchesText) {
+            return false
+        }
+    }
+
+    if (selector.contentDescription != null &&
+        !(contentDescription?.contains(selector.contentDescription, ignoreCase = true) == true)
+    ) {
+        return false
+    }
+
+    if (selector.resourceId != null && !(resourceId?.contains(selector.resourceId, ignoreCase = true) == true)) {
+        return false
+    }
+
+    if (selector.role != null && selector.role != role) {
+        return false
+    }
+
+    val stateFilters =
+        listOf(
+            selector.clickable to clickable,
+            selector.editable to editable,
+            selector.focused to focused,
+            selector.enabled to enabled,
+            selector.checked to checked,
+            selector.selected to selected,
+            selector.scrollable to scrollable,
+        )
+    if (stateFilters.any { (expected, actual) -> expected != null && expected != actual }) {
+        return false
+    }
+
+    return true
+}
+
+private fun ActionResult.toOutcome(data: JsonObject? = null): HostCallOutcome = when (this) {
+    is ActionResult.Success -> HostCallOutcome(ok = true, message = message, data = data)
+    is ActionResult.Blocked -> HostCallOutcome(ok = false, message = reason, data = data)
 }

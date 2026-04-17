@@ -21,7 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class ClauneAgentService : Service() {
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
