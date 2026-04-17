@@ -1,8 +1,5 @@
 package com.divyanshgolyan.claune.android.data.local
 
-import ai.koog.prompt.message.Message
-import ai.koog.prompt.message.RequestMetaInfo
-import ai.koog.prompt.message.ResponseMetaInfo
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import com.divyanshgolyan.claune.android.runtime.UiElement
@@ -10,11 +7,23 @@ import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
 import java.nio.file.Files
 import java.time.Instant as JavaInstant
-import kotlin.time.Instant as KotlinInstant
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import pi.agent.core.AgentEvent
+import pi.agent.core.AgentToolResult
+import pi.ai.core.AssistantMessage
+import pi.ai.core.StopReason
+import pi.ai.core.TextContent
+import pi.ai.core.ToolCall
+import pi.ai.core.ToolResultMessage
+import pi.ai.core.Usage
+import pi.ai.core.UsageCost
+import pi.ai.core.UserMessage
+import pi.ai.core.UserMessageContent
 
 class AgentRunArtifactStoreTest {
     @Test
@@ -30,7 +39,7 @@ class AgentRunArtifactStoreTest {
                     startedAt = "2026-04-17T09:59:00Z",
                     model = "claude-haiku-4-5",
                     maxIterations = 100,
-                    promptVersion = "koog-anthropic-v1",
+                    promptVersion = "pi-agent-anthropic-v1",
                 ),
             )
             store.recordState(
@@ -48,24 +57,32 @@ class AgentRunArtifactStoreTest {
             store.writeSystemPrompt("session-1", "system prompt")
             store.writeModelInput("session-1", "formatted prompt")
             store.writeFinalOutput("session-1", """{"kind":"blocked","reason":"Timed out"}""")
-            store.writeKoogHistory("session-1", history())
+            store.writeAgentMessages("session-1", history())
+            store.writeAgentEvents("session-1", events())
 
             val metadata =
                 ScriptJson.codec.decodeFromString(
                     RunArtifactMetadata.serializer(),
                     root.resolve("session-1/metadata.json").readText(),
                 )
-            val serializedHistory =
+            val serializedMessages =
                 ScriptJson.codec.decodeFromString(
-                    ListSerializer(SerializedKoogMessage.serializer()),
-                    root.resolve("session-1/koog-history.json").readText(),
+                    ListSerializer(SerializedAgentMessage.serializer()),
+                    root.resolve("session-1/agent-messages.json").readText(),
+                )
+            val serializedEvents =
+                ScriptJson.codec.decodeFromString(
+                    ListSerializer(SerializedAgentEvent.serializer()),
+                    root.resolve("session-1/agent-events.json").readText(),
                 )
 
             assertEquals(SessionStatus.Blocked.name, metadata.status)
             assertEquals("Timed out reaching Wi-Fi.", metadata.latestSummary)
             assertTrue(metadata.finishedAt != null)
-            assertEquals(4, serializedHistory.size)
-            assertEquals("user", serializedHistory.first().type)
+            assertEquals(4, serializedMessages.size)
+            assertEquals("user", serializedMessages.first().type)
+            assertEquals(3, serializedEvents.size)
+            assertEquals("agent_start", serializedEvents.first().type)
             assertTrue(root.resolve("session-1/snapshots.json").exists())
             assertEquals("formatted prompt", root.resolve("session-1/model-input.txt").readText())
         } finally {
@@ -74,13 +91,15 @@ class AgentRunArtifactStoreTest {
     }
 
     @Test
-    fun `koog history serializer preserves tool call payloads`() {
-        val serialized = history().map(KoogHistorySerializer::serialize)
+    fun `agent transcript serializer preserves tool call payloads`() {
+        val serialized = history().map(AgentTranscriptSerializer::serializeMessage)
 
-        assertEquals("tool_call", serialized[1].type)
+        assertEquals("assistant", serialized[1].type)
         val payload = serialized[1].payload
-        assertEquals("execute_script", payload["tool"]?.toString()?.trim('"'))
-        assertTrue(payload.toString().contains("claune.observePhone"))
+        val firstBlock = payload["content"].toString()
+        assertTrue(firstBlock.contains("tool_call"))
+        assertTrue(firstBlock.contains("execute_script"))
+        assertTrue(firstBlock.contains("claune.observePhone"))
     }
 
     private fun snapshot(): UiSnapshot = UiSnapshot(
@@ -102,24 +121,73 @@ class AgentRunArtifactStoreTest {
         focusedElementId = null,
     )
 
-    private fun history(): List<Message> {
-        val requestMeta = RequestMetaInfo(KotlinInstant.parse("2026-04-17T10:00:00Z"))
-        val responseMeta = ResponseMetaInfo(KotlinInstant.parse("2026-04-17T10:00:01Z"))
-        return listOf(
-            Message.User("Open Wi-Fi settings", requestMeta),
-            Message.Tool.Call(
-                "tool-call-1",
-                "execute_script",
-                """{"script":"const screen = claune.observePhone(); return screen;"}""",
-                responseMeta,
+    private fun history(): List<pi.ai.core.Message> = listOf(
+        UserMessage(
+            content = UserMessageContent.Text("Open Wi-Fi settings"),
+            timestamp = JavaInstant.parse("2026-04-17T10:00:00Z").toEpochMilli(),
+        ),
+        AssistantMessage(
+            content =
+            mutableListOf(
+                ToolCall(
+                    id = "tool-call-1",
+                    name = "execute_script",
+                    arguments =
+                    buildJsonObject {
+                        put("script", "const screen = claune.observePhone(); return screen;")
+                    },
+                ),
             ),
-            Message.Tool.Result(
-                "tool-call-1",
-                "execute_script",
-                """{"ok":true,"summary":"Observed settings","postActionSnapshot":{"snapshotId":"snapshot-1"}}""",
-                requestMeta,
+            api = "anthropic-messages",
+            provider = "anthropic",
+            model = "claude-haiku-4-5",
+            usage = Usage(1, 2, 3, 4, 10, UsageCost()),
+            stopReason = StopReason.TOOL_USE,
+            timestamp = JavaInstant.parse("2026-04-17T10:00:01Z").toEpochMilli(),
+        ),
+        ToolResultMessage(
+            toolCallId = "tool-call-1",
+            toolName = "execute_script",
+            content =
+            listOf(
+                TextContent(
+                    """{"ok":true,"summary":"Observed settings","postActionSnapshot":{"snapshotId":"snapshot-1"}}""",
+                ),
             ),
-            Message.Assistant("""{"kind":"blocked","reason":"Timed out"}""", responseMeta),
-        )
-    }
+            isError = false,
+            timestamp = JavaInstant.parse("2026-04-17T10:00:02Z").toEpochMilli(),
+        ),
+        AssistantMessage(
+            content = mutableListOf(TextContent("""{"kind":"blocked","reason":"Timed out"}""")),
+            api = "anthropic-messages",
+            provider = "anthropic",
+            model = "claude-haiku-4-5",
+            usage = Usage(5, 6, 0, 0, 11, UsageCost()),
+            stopReason = StopReason.STOP,
+            timestamp = JavaInstant.parse("2026-04-17T10:00:03Z").toEpochMilli(),
+        ),
+    )
+
+    private fun events(): List<SerializedAgentEvent> = listOf(
+        AgentTranscriptSerializer.serializeEvent(AgentEvent.AgentStart),
+        AgentTranscriptSerializer.serializeEvent(
+            AgentEvent.ToolExecutionStart(
+                toolCallId = "tool-call-1",
+                toolName = "execute_script",
+                args = buildJsonObject { put("script", "const screen = claune.observePhone();") },
+            ),
+        ),
+        AgentTranscriptSerializer.serializeEvent(
+            AgentEvent.ToolExecutionEnd(
+                toolCallId = "tool-call-1",
+                toolName = "execute_script",
+                result =
+                AgentToolResult(
+                    content = listOf(TextContent("""{"ok":true}""")),
+                    details = buildJsonObject { put("ok", true) },
+                ),
+                isError = false,
+            ),
+        ),
+    )
 }

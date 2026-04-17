@@ -20,11 +20,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class KoogModelGatewayTest {
+class PiAgentModelGatewayTest {
     @Test
     fun `prompt formatter includes goal events and actionable elements`() {
         val prompt =
-            KoogPromptFormatter.format(
+            PiAgentPromptFormatter.format(
                 ModelTurnInput(
                     sessionId = "session-1",
                     goal = "Open Wi-Fi settings",
@@ -41,19 +41,22 @@ class KoogModelGatewayTest {
 
     @Test
     fun `system prompt embeds generated claune host contract`() {
-        val prompt = KoogModelGateway.systemPromptForTests()
+        val prompt = PiAgentModelGateway.systemPromptForTests()
 
         assertTrue(prompt.contains("TypeScript contract for the global `claune` object"))
         assertTrue(prompt.contains("interface ClauneHost"))
         assertTrue(prompt.contains("tapSelector(selector: ElementSelector): HostSuccessOutcome;"))
+        assertTrue(prompt.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
         assertTrue(prompt.contains("The TypeScript contract above is the source of truth"))
+        assertTrue(prompt.contains("For any task that changes app or device state"))
+        assertTrue(!prompt.contains("For mutation goals"))
     }
 
     @Test
     fun `result parser maps completion blocked and message responses`() {
-        val completion = KoogResultParser.parse("""{"kind":"completion","summary":"Done."}""")
-        val blocked = KoogResultParser.parse("""{"kind":"blocked","reason":"Could not proceed."}""")
-        val message = KoogResultParser.parse("""{"kind":"message","messageToUser":"Need input."}""")
+        val completion = PiAgentResultParser.parse("""{"kind":"completion","summary":"Done."}""")
+        val blocked = PiAgentResultParser.parse("""{"kind":"blocked","reason":"Could not proceed."}""")
+        val message = PiAgentResultParser.parse("""{"kind":"message","messageToUser":"Need input."}""")
 
         assertEquals(com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Completion("Done."), completion)
         assertEquals(com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Blocked("Could not proceed."), blocked)
@@ -62,8 +65,8 @@ class KoogModelGatewayTest {
 
     @Test
     fun `result parser blocks malformed output`() {
-        val malformed = KoogResultParser.parse("""not-json""")
-        val unsupported = KoogResultParser.parse("""{"kind":"tool","summary":"nope"}""")
+        val malformed = PiAgentResultParser.parse("""not-json""")
+        val unsupported = PiAgentResultParser.parse("""{"kind":"tool","summary":"nope"}""")
 
         assertEquals(
             com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Blocked(
@@ -82,7 +85,7 @@ class KoogModelGatewayTest {
     @Test
     fun `result parser extracts trailing json object from prose response`() {
         val parsed =
-            KoogResultParser.parse(
+            PiAgentResultParser.parse(
                 """
                 Perfect, I finished the task successfully.
 
@@ -104,7 +107,7 @@ class KoogModelGatewayTest {
             startSession("Inspect Wi-Fi")
         }
         val toolSet =
-            ExecuteScriptToolSet(
+            ExecuteScriptAgentTool(
                 scriptRuntime = FakeScriptRuntime(
                     ScriptExecutionResult(
                         ok = true,
@@ -113,10 +116,17 @@ class KoogModelGatewayTest {
                     ),
                 ),
                 phoneObserver = FakePhoneObserver(snapshot(snapshotId = "after-script")),
-                sessionCoordinator = coordinator,
             )
 
-        val encoded = toolSet.executeScript("return { ok: true };")
+        val encoded =
+            toolSet.execute(
+                toolCallId = "tool-call-1",
+                params = "return { ok: true };",
+                signal = null,
+                onUpdate = null,
+            ).content.single().let { textBlock ->
+                (textBlock as pi.ai.core.TextContent).text
+            }
         val payload = ScriptJson.codec.decodeFromString<ExecuteScriptToolResult>(encoded)
 
         assertTrue(payload.ok)

@@ -1,8 +1,5 @@
 package com.divyanshgolyan.claune.android.data.local
 
-import ai.koog.prompt.message.Message
-import ai.koog.prompt.message.RequestMetaInfo
-import ai.koog.prompt.message.ResponseMetaInfo
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
@@ -17,8 +14,22 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import pi.agent.core.AgentEvent
+import pi.ai.core.AssistantMessage
+import pi.ai.core.ImageContent
+import pi.ai.core.Message
+import pi.ai.core.TextContent
+import pi.ai.core.ThinkingContent
+import pi.ai.core.ToolCall
+import pi.ai.core.ToolResultMessage
+import pi.ai.core.UserMessage
+import pi.ai.core.UserMessageContent
 
 interface AgentRunArtifactStore {
     fun startRun(metadata: RunArtifactMetadata)
@@ -37,7 +48,9 @@ interface AgentRunArtifactStore {
 
     fun writeFinalOutput(runId: String, finalOutput: String)
 
-    fun writeKoogHistory(runId: String, history: List<Message>)
+    fun writeAgentMessages(runId: String, messages: List<Message>)
+
+    fun writeAgentEvents(runId: String, events: List<SerializedAgentEvent>)
 }
 
 class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -> Instant = { Instant.now() }) : AgentRunArtifactStore {
@@ -124,11 +137,20 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
     }
 
     @Synchronized
-    override fun writeKoogHistory(runId: String, history: List<Message>) {
+    override fun writeAgentMessages(runId: String, messages: List<Message>) {
         writeJson(
-            runDirectory(runId).resolve(KOOG_HISTORY_FILE_NAME),
-            ListSerializer(SerializedKoogMessage.serializer()),
-            history.map(KoogHistorySerializer::serialize),
+            runDirectory(runId).resolve(AGENT_MESSAGES_FILE_NAME),
+            ListSerializer(SerializedAgentMessage.serializer()),
+            messages.map(AgentTranscriptSerializer::serializeMessage),
+        )
+    }
+
+    @Synchronized
+    override fun writeAgentEvents(runId: String, events: List<SerializedAgentEvent>) {
+        writeJson(
+            runDirectory(runId).resolve(AGENT_EVENTS_FILE_NAME),
+            ListSerializer(SerializedAgentEvent.serializer()),
+            events,
         )
     }
 
@@ -176,7 +198,8 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
         private const val SYSTEM_PROMPT_FILE_NAME = "system-prompt.txt"
         private const val MODEL_INPUT_FILE_NAME = "model-input.txt"
         private const val FINAL_OUTPUT_FILE_NAME = "final-output.txt"
-        private const val KOOG_HISTORY_FILE_NAME = "koog-history.json"
+        private const val AGENT_MESSAGES_FILE_NAME = "agent-messages.json"
+        private const val AGENT_EVENTS_FILE_NAME = "agent-events.json"
     }
 }
 
@@ -227,6 +250,7 @@ data class RunArtifactMetadata(
     val model: String,
     val maxIterations: Int,
     val promptVersion: String,
+    val harness: String = "pi-agent-core",
     val latestSummary: String? = null,
     val lastKnownApp: String? = null,
     val accessibilityConnected: Boolean = false,
@@ -246,41 +270,232 @@ data class RunStateRecord(
 )
 
 @Serializable
-data class SerializedKoogMessage(val type: String, val payload: JsonObject)
+data class SerializedAgentMessage(val type: String, val payload: JsonObject)
 
-object KoogHistorySerializer {
-    private val json = ScriptJson.codec
+@Serializable
+data class SerializedAgentEvent(val type: String, val payload: JsonObject)
 
-    fun serialize(message: Message): SerializedKoogMessage = when (message) {
-        is Message.User -> SerializedKoogMessage("user", json.encodeToJsonElement(Message.User.serializer(), message).jsonObject)
-        is Message.Assistant ->
-            SerializedKoogMessage(
-                "assistant",
-                json.encodeToJsonElement(Message.Assistant.serializer(), message).jsonObject,
-            )
-
-        is Message.System -> SerializedKoogMessage("system", json.encodeToJsonElement(Message.System.serializer(), message).jsonObject)
-        is Message.Tool.Call ->
-            SerializedKoogMessage(
-                "tool_call",
-                json.encodeToJsonElement(Message.Tool.Call.serializer(), message).jsonObject,
-            )
-
-        is Message.Tool.Result ->
-            SerializedKoogMessage(
-                "tool_result",
-                json.encodeToJsonElement(Message.Tool.Result.serializer(), message).jsonObject,
-            )
-
-        is Message.Reasoning ->
-            SerializedKoogMessage(
-                "reasoning",
-                json.encodeToJsonElement(Message.Reasoning.serializer(), message).jsonObject,
+object AgentTranscriptSerializer {
+    fun serializeMessage(message: Message): SerializedAgentMessage = when (message) {
+        is UserMessage -> SerializedAgentMessage("user", serializeUserMessage(message))
+        is AssistantMessage -> SerializedAgentMessage("assistant", serializeAssistantMessage(message))
+        is ToolResultMessage -> SerializedAgentMessage("tool_result", serializeToolResultMessage(message))
+        else ->
+            SerializedAgentMessage(
+                "unknown",
+                buildJsonObject {
+                    put("role", JsonPrimitive(message.role))
+                    put("timestamp", JsonPrimitive(message.timestamp))
+                },
             )
     }
 
-    private fun serializeMetaInfo(metaInfo: ai.koog.prompt.message.MessageMetaInfo): JsonObject = when (metaInfo) {
-        is RequestMetaInfo -> ScriptJson.codec.encodeToJsonElement(RequestMetaInfo.serializer(), metaInfo).jsonObject
-        is ResponseMetaInfo -> ScriptJson.codec.encodeToJsonElement(ResponseMetaInfo.serializer(), metaInfo).jsonObject
+    fun serializeEvent(event: AgentEvent): SerializedAgentEvent = when (event) {
+        AgentEvent.AgentStart -> SerializedAgentEvent("agent_start", buildJsonObject {})
+        is AgentEvent.AgentEnd ->
+            SerializedAgentEvent(
+                "agent_end",
+                buildJsonObject {
+                    put("messageCount", JsonPrimitive(event.messages.size))
+                },
+            )
+        AgentEvent.TurnStart -> SerializedAgentEvent("turn_start", buildJsonObject {})
+        is AgentEvent.TurnEnd ->
+            SerializedAgentEvent(
+                "turn_end",
+                buildJsonObject {
+                    put("toolResultCount", JsonPrimitive(event.toolResults.size))
+                    put("message", serializeMessage(event.message).payload)
+                },
+            )
+        is AgentEvent.MessageStart ->
+            SerializedAgentEvent(
+                "message_start",
+                buildJsonObject {
+                    put("message", serializeMessage(event.message).payload)
+                },
+            )
+        is AgentEvent.MessageUpdate ->
+            SerializedAgentEvent(
+                "message_update",
+                buildJsonObject {
+                    put("message", serializeMessage(event.message).payload)
+                    put("assistantEventType", JsonPrimitive(event.assistantMessageEvent::class.simpleName ?: "unknown"))
+                },
+            )
+        is AgentEvent.MessageEnd ->
+            SerializedAgentEvent(
+                "message_end",
+                buildJsonObject {
+                    put("message", serializeMessage(event.message).payload)
+                },
+            )
+        is AgentEvent.ToolExecutionStart ->
+            SerializedAgentEvent(
+                "tool_execution_start",
+                buildJsonObject {
+                    put("toolCallId", JsonPrimitive(event.toolCallId))
+                    put("toolName", JsonPrimitive(event.toolName))
+                    put("arguments", event.args)
+                },
+            )
+        is AgentEvent.ToolExecutionUpdate ->
+            SerializedAgentEvent(
+                "tool_execution_update",
+                buildJsonObject {
+                    put("toolCallId", JsonPrimitive(event.toolCallId))
+                    put("toolName", JsonPrimitive(event.toolName))
+                    put("arguments", event.args)
+                    put("partialResult", serializeAgentToolResult(event.partialResult))
+                },
+            )
+        is AgentEvent.ToolExecutionEnd ->
+            SerializedAgentEvent(
+                "tool_execution_end",
+                buildJsonObject {
+                    put("toolCallId", JsonPrimitive(event.toolCallId))
+                    put("toolName", JsonPrimitive(event.toolName))
+                    put("isError", JsonPrimitive(event.isError))
+                    put("result", serializeAgentToolResult(event.result))
+                },
+            )
+    }
+
+    private fun serializeUserMessage(message: UserMessage): JsonObject = buildJsonObject {
+        put("role", JsonPrimitive(message.role))
+        put("timestamp", JsonPrimitive(message.timestamp))
+        put("content", serializeUserContent(message.content))
+    }
+
+    private fun serializeAssistantMessage(message: AssistantMessage): JsonObject = buildJsonObject {
+        put("role", JsonPrimitive(message.role))
+        put("timestamp", JsonPrimitive(message.timestamp))
+        put("api", JsonPrimitive(message.api))
+        put("provider", JsonPrimitive(message.provider))
+        put("model", JsonPrimitive(message.model))
+        put("stopReason", JsonPrimitive(message.stopReason.name))
+        message.errorMessage?.let { put("errorMessage", JsonPrimitive(it)) }
+        message.responseId?.let { put("responseId", JsonPrimitive(it)) }
+        put("usage", serializeUsage(message.usage))
+        put(
+            "content",
+            buildJsonArray {
+                message.content.forEach { block ->
+                    add(serializeAssistantContentBlock(block))
+                }
+            },
+        )
+    }
+
+    private fun serializeToolResultMessage(message: ToolResultMessage): JsonObject = buildJsonObject {
+        put("role", JsonPrimitive(message.role))
+        put("timestamp", JsonPrimitive(message.timestamp))
+        put("toolCallId", JsonPrimitive(message.toolCallId))
+        put("toolName", JsonPrimitive(message.toolName))
+        put("isError", JsonPrimitive(message.isError))
+        message.details?.let { put("details", it) }
+        put(
+            "content",
+            buildJsonArray {
+                message.content.forEach { part ->
+                    add(serializeToolResultContentPart(part))
+                }
+            },
+        )
+    }
+
+    private fun serializeUserContent(content: UserMessageContent): JsonElement = when (content) {
+        is UserMessageContent.Text ->
+            buildJsonObject {
+                put("type", JsonPrimitive("text"))
+                put("value", JsonPrimitive(content.value))
+            }
+        is UserMessageContent.Structured ->
+            JsonArray(content.parts.map(::serializeUserContentPart))
+    }
+
+    private fun serializeUserContentPart(part: pi.ai.core.UserContentPart): JsonObject = when (part) {
+        is TextContent ->
+            buildJsonObject {
+                put("type", JsonPrimitive("text"))
+                put("text", JsonPrimitive(part.text))
+                part.textSignature?.let { put("textSignature", JsonPrimitive(it)) }
+            }
+        is ImageContent ->
+            buildJsonObject {
+                put("type", JsonPrimitive("image"))
+                put("mimeType", JsonPrimitive(part.mimeType))
+                put("data", JsonPrimitive(part.data))
+            }
+    }
+
+    private fun serializeAssistantContentBlock(block: pi.ai.core.AssistantContentBlock): JsonObject = when (block) {
+        is TextContent ->
+            buildJsonObject {
+                put("type", JsonPrimitive("text"))
+                put("text", JsonPrimitive(block.text))
+                block.textSignature?.let { put("textSignature", JsonPrimitive(it)) }
+            }
+        is ThinkingContent ->
+            buildJsonObject {
+                put("type", JsonPrimitive("thinking"))
+                put("thinking", JsonPrimitive(block.thinking))
+                block.thinkingSignature?.let { put("thinkingSignature", JsonPrimitive(it)) }
+                put("redacted", JsonPrimitive(block.redacted))
+            }
+        is ToolCall ->
+            buildJsonObject {
+                put("type", JsonPrimitive("tool_call"))
+                put("id", JsonPrimitive(block.id))
+                put("name", JsonPrimitive(block.name))
+                put("arguments", block.arguments)
+                block.thoughtSignature?.let { put("thoughtSignature", JsonPrimitive(it)) }
+            }
+        else -> buildJsonObject { put("type", JsonPrimitive("unknown")) }
+    }
+
+    private fun serializeToolResultContentPart(part: pi.ai.core.ToolResultContentPart): JsonObject = when (part) {
+        is TextContent ->
+            buildJsonObject {
+                put("type", JsonPrimitive("text"))
+                put("text", JsonPrimitive(part.text))
+                part.textSignature?.let { put("textSignature", JsonPrimitive(it)) }
+            }
+        is ImageContent ->
+            buildJsonObject {
+                put("type", JsonPrimitive("image"))
+                put("mimeType", JsonPrimitive(part.mimeType))
+                put("data", JsonPrimitive(part.data))
+            }
+    }
+
+    private fun serializeUsage(usage: pi.ai.core.Usage): JsonObject = buildJsonObject {
+        put("input", JsonPrimitive(usage.input))
+        put("output", JsonPrimitive(usage.output))
+        put("cacheRead", JsonPrimitive(usage.cacheRead))
+        put("cacheWrite", JsonPrimitive(usage.cacheWrite))
+        put("totalTokens", JsonPrimitive(usage.totalTokens))
+        put(
+            "cost",
+            buildJsonObject {
+                put("input", JsonPrimitive(usage.cost.input))
+                put("output", JsonPrimitive(usage.cost.output))
+                put("cacheRead", JsonPrimitive(usage.cost.cacheRead))
+                put("cacheWrite", JsonPrimitive(usage.cost.cacheWrite))
+                put("total", JsonPrimitive(usage.cost.total))
+            },
+        )
+    }
+
+    private fun serializeAgentToolResult(result: pi.agent.core.AgentToolResult<*>): JsonObject = buildJsonObject {
+        put(
+            "content",
+            buildJsonArray {
+                result.content.forEach { part ->
+                    add(serializeToolResultContentPart(part))
+                }
+            },
+        )
+        (result.details as? JsonElement)?.let { put("details", it) }
     }
 }

@@ -8,7 +8,7 @@ import com.divyanshgolyan.claune.android.data.local.ArtifactSessionLogStore
 import com.divyanshgolyan.claune.android.data.local.FileAgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
-import com.divyanshgolyan.claune.android.llm.KoogModelGateway
+import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
 import com.divyanshgolyan.claune.android.runtime.AgentLoop
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.scripting.QuickJsScriptRuntime
@@ -40,7 +40,7 @@ class ClauneContainer(application: Application) {
             logStore = logStore,
         )
     val modelGateway =
-        KoogModelGateway(
+        PiAgentModelGateway(
             apiKey = BuildConfig.ANTHROPIC_API_KEY,
             scriptRuntime = scriptRuntime,
             phoneObserver = accessibilityBridge,

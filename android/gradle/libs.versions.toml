@@ -1,6 +1,9 @@
 [versions]
 agp = "8.13.2"
 kotlin = "2.3.0"
+kover = "0.9.1"
+detekt = "1.23.8"
+dokka = "2.2.0"
 kotlinx-serialization = "1.9.0"
 compose-bom = "2026.03.00"
 activity-compose = "1.13.0"
@@ -9,8 +12,10 @@ core-ktx = "1.17.0"
 datastore = "1.2.1"
 coroutines = "1.10.2"
 quickjs-wrapper = "3.2.3"
-koog = "0.7.1"
 junit4 = "4.13.2"
+junit5 = "5.12.2"
+junit-platform = "1.12.2"
+okhttp = "5.3.0"
 androidx-test-ext-junit = "1.3.0"
 androidx-test-espresso = "3.7.0"
 ktlint-gradle = "14.0.1"
@@ -27,12 +32,16 @@ androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling
 androidx-compose-foundation = { module = "androidx.compose.foundation:foundation" }
 androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 quickjs-wrapper-android = { module = "wang.harlon.quickjs:wrapper-android", version.ref = "quickjs-wrapper" }
-koog-agents = { module = "ai.koog:koog-agents", version.ref = "koog" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit5" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit-platform" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+mockwebserver3 = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
@@ -41,6 +50,10 @@ androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core",
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+dokka = { id = "org.jetbrains.dokka", version.ref = "dokka" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }

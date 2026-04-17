@@ -1,13 +1,8 @@
 package com.divyanshgolyan.claune.android.llm
 
-import ai.koog.agents.core.agent.AIAgent
-import ai.koog.agents.core.agent.session.AIAgentRunSession
-import ai.koog.agents.core.tools.ToolRegistry
-import ai.koog.agents.core.tools.annotations.LLMDescription
-import ai.koog.agents.core.tools.annotations.Tool
-import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
-import ai.koog.prompt.executor.llms.all.simpleAnthropicExecutor
 import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
+import com.divyanshgolyan.claune.android.data.local.AgentTranscriptSerializer
+import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
@@ -20,18 +15,35 @@ import com.divyanshgolyan.claune.android.scripting.UiSnapshotPayload
 import com.divyanshgolyan.claune.android.scripting.toPayload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import pi.agent.core.Agent
+import pi.agent.core.AgentEvent
+import pi.agent.core.AgentOptions
+import pi.agent.core.AgentThinkingLevel
+import pi.agent.core.AgentTool
+import pi.agent.core.AgentToolResult
+import pi.agent.core.BeforeToolCallContext
+import pi.agent.core.BeforeToolCallResult
+import pi.ai.core.ANTHROPIC_PROVIDER
+import pi.ai.core.CacheRetention
+import pi.ai.core.Message
+import pi.ai.core.Model
+import pi.ai.core.TextContent
+import pi.ai.core.getModel
 
 interface ModelGateway {
     suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput
 }
 
-class KoogModelGateway(
+class PiAgentModelGateway(
     private val apiKey: String,
     private val scriptRuntime: ScriptRuntime,
     private val phoneObserver: PhoneObserver,
@@ -39,9 +51,9 @@ class KoogModelGateway(
     private val artifactStore: AgentRunArtifactStore,
 ) : ModelGateway {
     override suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput {
-        val prompt = KoogPromptFormatter.format(input)
+        val prompt = PiAgentPromptFormatter.format(input)
         runCatching {
-            artifactStore.writeSystemPrompt(input.sessionId, KOOG_SYSTEM_PROMPT.trimIndent())
+            artifactStore.writeSystemPrompt(input.sessionId, PI_AGENT_SYSTEM_PROMPT.trimIndent())
             artifactStore.writeModelInput(input.sessionId, prompt)
         }
 
@@ -58,60 +70,103 @@ class KoogModelGateway(
             )
         }
 
-        sessionCoordinator.logEvent("Koog agent started.")
+        val eventTrace = mutableListOf<SerializedAgentEvent>()
+        val toolBudget = ToolBudget(MAX_ITERATIONS)
+        val agent = createAgent(input.sessionId, toolBudget)
+        val unsubscribe =
+            agent.subscribe { event, _ ->
+                eventTrace += AgentTranscriptSerializer.serializeEvent(event)
+                logAgentEvent(event)
+            }
 
-        val agent = createAgent()
-        var session: AIAgentRunSession<String, String, *>? = null
+        sessionCoordinator.logEvent("Agent started.")
+
         val result =
             try {
-                session = agent.createSession(input.sessionId)
-                val output = session.run(prompt)
-                sessionCoordinator.logEvent("Koog agent finished.")
-                runCatching { artifactStore.writeFinalOutput(input.sessionId, output) }
-                output
+                agent.prompt(prompt)
+                val finalOutput = finalAssistantText(agent.state.messages)
+                runCatching { artifactStore.writeFinalOutput(input.sessionId, finalOutput) }
+                val assistantError = finalAssistantError(agent.state.messages)
+                if (!assistantError.isNullOrBlank()) {
+                    ModelTurnOutput.Blocked("Model request failed. $assistantError")
+                } else {
+                    PiAgentResultParser.parse(finalOutput)
+                }
             } catch (cancelled: CancellationException) {
+                agent.abort()
                 throw cancelled
             } catch (throwable: Throwable) {
                 sessionCoordinator.logEvent(
-                    "Koog agent failed. ${throwable.message ?: throwable::class.simpleName ?: "Unknown failure."}",
+                    "Agent failed. ${throwable.message ?: throwable::class.simpleName ?: "Unknown failure."}",
                 )
-                return ModelTurnOutput.Blocked(
+                ModelTurnOutput.Blocked(
                     "Model request failed. ${throwable.message ?: throwable::class.simpleName ?: "Unknown failure."}",
                 )
             } finally {
+                unsubscribe()
                 withContext(NonCancellable) {
-                    session?.let { runSession ->
-                        runCatching {
-                            artifactStore.writeKoogHistory(input.sessionId, runSession.context().getHistory())
-                        }
+                    runCatching {
+                        artifactStore.writeAgentMessages(input.sessionId, agent.state.messages.filterIsInstance<Message>())
                     }
-                    agent.close()
+                    runCatching { artifactStore.writeAgentEvents(input.sessionId, eventTrace) }
                 }
             }
 
-        return KoogResultParser.parse(result)
+        return result
     }
 
-    private fun createAgent(): AIAgent<String, String> {
-        val tools = ExecuteScriptToolSet(scriptRuntime, phoneObserver, sessionCoordinator)
-        return AIAgent(
-            promptExecutor = simpleAnthropicExecutor(apiKey),
-            systemPrompt = KOOG_SYSTEM_PROMPT,
-            llmModel = AnthropicModels.Haiku_4_5,
-            temperature = 0.1,
-            toolRegistry = ToolRegistry.builder().tools(tools).build(),
-            maxIterations = MAX_ITERATIONS,
-        )
+    private fun createAgent(sessionId: String, toolBudget: ToolBudget): Agent = Agent(
+        AgentOptions(
+            initialState =
+            pi.agent.core.InitialAgentState(
+                systemPrompt = PI_AGENT_SYSTEM_PROMPT,
+                model = model(),
+                thinkingLevel = AgentThinkingLevel.OFF,
+                tools = listOf(ExecuteScriptAgentTool(scriptRuntime, phoneObserver)),
+            ),
+            getApiKey = { apiKey },
+            sessionId = sessionId,
+            cacheRetention = CacheRetention.SHORT,
+            toolExecution = pi.agent.core.ToolExecutionMode.SEQUENTIAL,
+            beforeToolCall = { context, _ -> toolBudget.beforeToolCall(context) },
+        ),
+    )
+
+    private fun model(): Model<String> = requireNotNull(getModel(ANTHROPIC_PROVIDER, MODEL_NAME)) {
+        "Anthropic model $MODEL_NAME is not registered in pi-ai-core."
     }
+
+    private fun logAgentEvent(event: AgentEvent) {
+        when (event) {
+            AgentEvent.AgentStart -> sessionCoordinator.logEvent("Agent loop started.")
+            is AgentEvent.AgentEnd -> sessionCoordinator.logEvent("Agent loop finished.")
+            AgentEvent.TurnStart -> sessionCoordinator.logEvent("Agent turn started.")
+            is AgentEvent.ToolExecutionStart ->
+                sessionCoordinator.logEvent("Agent tool ${event.toolName} starting.")
+            is AgentEvent.ToolExecutionEnd ->
+                sessionCoordinator.logEvent(
+                    "Agent tool ${event.toolName} finished${if (event.isError) " with an error." else "."}",
+                )
+            else -> Unit
+        }
+    }
+
+    private fun finalAssistantText(messages: List<Any>): String {
+        val assistant = messages.filterIsInstance<pi.ai.core.AssistantMessage>().lastOrNull() ?: return ""
+        return assistant.content.filterIsInstance<TextContent>().joinToString(separator = "\n") { it.text }
+    }
+
+    private fun finalAssistantError(messages: List<Any>): String? =
+        messages.filterIsInstance<pi.ai.core.AssistantMessage>().lastOrNull()?.errorMessage
 
     companion object {
         const val MODEL_NAME = "claude-haiku-4-5"
         const val MAX_ITERATIONS = 100
-        const val PROMPT_VERSION = "koog-anthropic-v3"
+        const val PROMPT_VERSION = "pi-agent-anthropic-v1"
 
-        internal fun systemPromptForTests(): String = KOOG_SYSTEM_PROMPT
+        internal fun systemPromptForTests(): String = PI_AGENT_SYSTEM_PROMPT
 
-        private val KOOG_SYSTEM_PROMPT: String =
+        private val PI_AGENT_SYSTEM_PROMPT: String =
             buildString {
                 val rules =
                     listOf(
@@ -130,15 +185,21 @@ class KoogModelGateway(
                         "Never select elements by array index. Use selector matches, refs, ids, resource ids, or labels from the snapshot.",
                         "Prefer tapSelector({ text: \"...\" }) when text is distinctive, and tapRef(ref) " +
                             "when you already have a fresh ref from the current snapshot.",
+                        "Use typeIntoFocused(text) when the current screen already has a focused editable field. " +
+                            "Otherwise, select a specific editable element first and then type into it.",
                         "Prefer the fewest scripts possible. A single script may observe, take multiple actions, wait for state changes, " +
                             "and return a compact summary.",
                         "Keep scripts focused but not tiny; avoid spending iterations on trivial one-action probes " +
                             "when the next step is already clear.",
+                        "If the current screen is confusing, off-plan, or repeated assumptions fail, re-establish a known state " +
+                            "before continuing instead of persisting with a broken plan.",
+                        "Prefer visible, directly actionable controls over indirect routes when both are available.",
+                        "Distinguish between selecting content and triggering an action attached to that content.",
                         "Do not hardcode launcher package names; vendor launchers vary. After pressHome(), " +
                             "capture a fresh snapshot and tap the launcher icon you need.",
-                        "For mutation goals, capture a baseline before changing anything and verify an observable delta afterward.",
-                        "Never claim success from pre-existing state. If the goal is to add, remove, change, send, or submit something, " +
-                            "verify what changed because of your action.",
+                        "For any task that changes app or device state, capture the relevant baseline before acting " +
+                            "and verify an observable delta afterward.",
+                        "Never claim success from pre-existing state. Verify what changed because of your actions.",
                         "If a launch, wait, or selector assumption fails, re-observe and adapt instead of repeating the same assumption.",
                         "If the goal is complete, stop using tools and return final JSON only.",
                         "If progress is impossible, stop using tools and return final JSON only.",
@@ -185,43 +246,83 @@ class KoogModelGateway(
     }
 }
 
-internal class ExecuteScriptToolSet(
-    private val scriptRuntime: ScriptRuntime,
-    private val phoneObserver: PhoneObserver,
-    private val sessionCoordinator: SessionCoordinator,
-) {
-    @Tool
-    @LLMDescription(
+private class ToolBudget(private val maxToolCalls: Int) {
+    private var usedToolCalls: Int = 0
+
+    fun beforeToolCall(context: BeforeToolCallContext): BeforeToolCallResult? {
+        if (usedToolCalls >= maxToolCalls) {
+            return BeforeToolCallResult(
+                block = true,
+                reason = "Tool budget exceeded after $maxToolCalls tool calls while handling the goal.",
+            )
+        }
+        usedToolCalls += 1
+        return null
+    }
+}
+
+internal class ExecuteScriptAgentTool(private val scriptRuntime: ScriptRuntime, private val phoneObserver: PhoneObserver) :
+    AgentTool<String> {
+    override val name: String = "execute_script"
+    override val label: String = "Execute Script"
+    override val description: String =
         "Execute a JavaScript snippet against the live Claune host runtime. " +
             "Use this tool for any phone interaction or phone-state recheck. " +
-            "Return value is JSON text with script result and a post-action snapshot.",
-    )
-    fun executeScript(
-        @LLMDescription(
-            "A complete JavaScript snippet that uses the claune host APIs to observe the phone, " +
-                "act on it, and return a compact result object.",
-        )
-        script: String,
-    ): String = runBlocking {
-        sessionCoordinator.logEvent("Koog tool execute_script starting.")
+            "Return value is JSON text with script result and a post-action snapshot."
+    override val parameters =
+        buildJsonObject {
+            put("type", JsonPrimitive("object"))
+            put(
+                "properties",
+                buildJsonObject {
+                    put(
+                        "script",
+                        buildJsonObject {
+                            put("type", JsonPrimitive("string"))
+                            put(
+                                "description",
+                                JsonPrimitive(
+                                    "A complete JavaScript snippet that uses the claune host APIs to observe the phone, " +
+                                        "act on it, and return a compact result object.",
+                                ),
+                            )
+                        },
+                    )
+                },
+            )
+            put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("script"))))
+        }
+
+    override fun validateArguments(arguments: kotlinx.serialization.json.JsonObject): String =
+        arguments["script"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?: error("Missing script")
+
+    override suspend fun execute(
+        toolCallId: String,
+        params: String,
+        signal: pi.ai.core.AbortSignal?,
+        onUpdate: pi.agent.core.AgentToolUpdateCallback<JsonElement>?,
+    ): AgentToolResult<JsonElement> {
         val result =
             scriptRuntime.execute(
                 ScriptExecutionRequest(
-                    script = script,
-                    source = "koog_agent",
+                    script = params,
+                    source = "pi_agent",
                 ),
             )
         val postActionSnapshot = phoneObserver.captureSnapshot().toPayload()
-        sessionCoordinator.logEvent("Koog tool execute_script finished. ${result.summary}")
-        ScriptJson.codec.encodeToString(
-            ExecuteScriptToolResult.serializer(),
+        val payload =
             ExecuteScriptToolResult(
                 ok = result.ok,
                 summary = result.summary,
                 error = result.error,
                 scriptData = result.data,
                 postActionSnapshot = postActionSnapshot,
-            ),
+            )
+        val encoded = ScriptJson.codec.encodeToString(ExecuteScriptToolResult.serializer(), payload)
+        return AgentToolResult(
+            content = listOf(TextContent(encoded)),
+            details = ScriptJson.codec.encodeToJsonElement(ExecuteScriptToolResult.serializer(), payload),
         )
     }
 }
@@ -243,7 +344,7 @@ internal data class FinalAgentResponse(
     val messageToUser: String? = null,
 )
 
-internal object KoogResultParser {
+internal object PiAgentResultParser {
     fun parse(raw: String): ModelTurnOutput {
         val payload = decodeFinalResponse(raw)
             ?: return ModelTurnOutput.Blocked(
@@ -312,7 +413,7 @@ internal object KoogResultParser {
     }
 }
 
-internal object KoogPromptFormatter {
+internal object PiAgentPromptFormatter {
     fun format(input: ModelTurnInput): String = buildString {
         appendLine("Goal:")
         appendLine(input.goal)

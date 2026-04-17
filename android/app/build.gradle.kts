@@ -106,7 +106,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.quickjs.wrapper.android)
-    implementation(libs.koog.agents)
+    implementation(project(":pi-agent-core"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -128,4 +128,8 @@ dependencies {
 
 tasks.named("check") {
     dependsOn("ktlintCheck", "lintDebug")
+}
+
+tasks.matching { it.name in setOf("assembleDebug", "installDebug") }.configureEach {
+    dependsOn("testDebugUnitTest")
 }

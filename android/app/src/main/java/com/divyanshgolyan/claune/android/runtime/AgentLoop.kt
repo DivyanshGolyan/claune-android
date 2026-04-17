@@ -3,8 +3,8 @@ package com.divyanshgolyan.claune.android.runtime
 import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.RunArtifactMetadata
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
-import com.divyanshgolyan.claune.android.llm.KoogModelGateway
 import com.divyanshgolyan.claune.android.llm.ModelGateway
+import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
 
 class AgentLoop(
     private val phoneObserver: PhoneObserver,
@@ -22,9 +22,9 @@ class AgentLoop(
                     runId = sessionId,
                     goal = goal,
                     startedAt = java.time.Instant.now().toString(),
-                    model = KoogModelGateway.MODEL_NAME,
-                    maxIterations = KoogModelGateway.MAX_ITERATIONS,
-                    promptVersion = KoogModelGateway.PROMPT_VERSION,
+                    model = PiAgentModelGateway.MODEL_NAME,
+                    maxIterations = PiAgentModelGateway.MAX_ITERATIONS,
+                    promptVersion = PiAgentModelGateway.PROMPT_VERSION,
                 ),
             )
             artifactStore.recordState(sessionCoordinator.uiState.value)
