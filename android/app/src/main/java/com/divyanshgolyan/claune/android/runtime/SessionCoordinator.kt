@@ -39,6 +39,7 @@ class SessionCoordinator(private val logStore: SessionLogStore) {
             _uiState.value.copy(
                 status = SessionStatus.Completed,
                 summaryLine = summary,
+                foregroundServiceRunning = false,
                 timeline = (_uiState.value.timeline + summary).takeLast(20),
             )
         logStore.record(_uiState.value)
@@ -49,6 +50,7 @@ class SessionCoordinator(private val logStore: SessionLogStore) {
             _uiState.value.copy(
                 status = SessionStatus.Blocked,
                 summaryLine = reason,
+                foregroundServiceRunning = false,
                 timeline = (_uiState.value.timeline + reason).takeLast(20),
             )
         logStore.record(_uiState.value)

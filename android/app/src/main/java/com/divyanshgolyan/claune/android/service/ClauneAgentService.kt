@@ -46,7 +46,7 @@ class ClauneAgentService : Service() {
     }
 
     override fun onDestroy() {
-        clauneContainer().sessionCoordinator.setForegroundServiceRunning(false)
+        applicationContext.clauneContainer().sessionCoordinator.setForegroundServiceRunning(false)
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -54,7 +54,7 @@ class ClauneAgentService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun runPrototypeTurn(goal: String) {
-        val container = clauneContainer()
+        val container = applicationContext.clauneContainer()
         if (container.sessionCoordinator.uiState.value.status == SessionStatus.Running) {
             container.sessionCoordinator.logEvent("Ignored start request while a session is already running.")
             return
@@ -62,13 +62,19 @@ class ClauneAgentService : Service() {
 
         container.sessionCoordinator.setForegroundServiceRunning(true)
         serviceScope.launch {
-            container.agentLoop.runSingleTurn(goal)
-            updateNotification(container.sessionCoordinator.uiState.value.summaryLine)
+            try {
+                container.agentLoop.runSingleTurn(goal)
+                updateNotification(container.sessionCoordinator.uiState.value.summaryLine)
+            } finally {
+                container.sessionCoordinator.setForegroundServiceRunning(false)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
     }
 
     private fun stopSession() {
-        val coordinator = clauneContainer().sessionCoordinator
+        val coordinator = applicationContext.clauneContainer().sessionCoordinator
         coordinator.stopSession("Stopped from the foreground notification.")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
