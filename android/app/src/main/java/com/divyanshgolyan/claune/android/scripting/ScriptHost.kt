@@ -126,6 +126,30 @@ class ScriptHost(
         )
     }
 
+    suspend fun typeIntoFocused(text: String): HostCallOutcome = recordCall(
+        name = "typeIntoFocused",
+        arguments =
+        buildJsonObject {
+            put("text", text)
+        },
+    ) {
+        val snapshot = phoneObserver.captureSnapshot()
+        recordSnapshot(snapshot)
+        val element = snapshot.findFocusedEditableElement()
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "No focused editable element was found on the current screen.",
+            )
+        phoneActuator.type(ElementRef(element.id), text).toOutcome(
+            data =
+            buildJsonObject {
+                put("matchedRef", element.ref)
+                put("matchedElementId", element.id)
+                put("matchedLabel", element.label)
+            },
+        )
+    }
+
     suspend fun scrollContainer(elementId: String, direction: String): HostCallOutcome = recordCall(
         name = "scrollContainer",
         arguments =
@@ -263,6 +287,10 @@ class ScriptHost(
     private fun decodeSelector(selectorJson: String): ElementSelectorPayload? = runCatching {
         ScriptJson.codec.decodeFromString(ElementSelectorPayload.serializer(), selectorJson)
     }.getOrNull()?.takeIf { it.hasCriteria() }
+
+    private fun UiSnapshot.findFocusedEditableElement(): UiElement? =
+        actionableElements.firstOrNull { it.id == focusedElementId && it.editable }
+            ?: actionableElements.firstOrNull { it.focused && it.editable }
 
     private fun selectElement(snapshot: UiSnapshot, selector: ElementSelectorPayload): UiElement? {
         val matches = snapshot.actionableElements.filter { it.matches(selector) }

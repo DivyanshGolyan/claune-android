@@ -161,6 +161,18 @@ class QuickJsScriptRuntime(
                 },
             )
             global.setProperty(
+                "__clauneTypeIntoFocusedJson",
+                JSCallFunction { args: Array<out Any?> ->
+                    val text = args.getOrNull(0)?.toString().orEmpty()
+                    runBlocking {
+                        ScriptJson.codec.encodeToString(
+                            HostCallOutcome.serializer(),
+                            host.typeIntoFocused(text),
+                        )
+                    }
+                },
+            )
+            global.setProperty(
                 "__clauneScrollContainerJson",
                 JSCallFunction { args: Array<out Any?> ->
                     val elementId = args.getOrNull(0)?.toString().orEmpty()

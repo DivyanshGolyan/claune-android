@@ -159,6 +159,37 @@ class ScriptHostTest {
     }
 
     @Test
+    fun `typeIntoFocused targets the focused editable element`() = runTest {
+        val actuator = FakePhoneActuator(typeResult = ActionResult.Success("Typed into focused field."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            focusedElementId = "search-box",
+                            elements =
+                            listOf(
+                                element(id = "search-box", ref = "e1", label = "Search", role = "input", editable = true, focused = true),
+                                element(id = "cta", ref = "e2", label = "Go"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.typeIntoFocused("apple")
+
+        assertTrue(result.ok)
+        assertEquals("search-box", actuator.lastTyped?.first?.elementId)
+        assertEquals("apple", actuator.lastTyped?.second)
+    }
+
+    @Test
     fun `waitForSelector succeeds when later snapshot exposes matching ref`() = runTest {
         var currentTime = Instant.parse("2026-04-16T00:00:00Z")
         val host =
@@ -201,24 +232,36 @@ class ScriptHostTest {
         assertEquals("Unsupported scroll direction 'sideways'.", result.message)
     }
 
-    private fun snapshot(packageName: String = "com.example.app", elements: List<UiElement> = listOf(element())): UiSnapshot = UiSnapshot(
+    private fun snapshot(
+        packageName: String = "com.example.app",
+        elements: List<UiElement> = listOf(element()),
+        focusedElementId: String? = null,
+    ): UiSnapshot = UiSnapshot(
         snapshotId = "snapshot",
         capturedAt = Instant.parse("2026-04-16T00:00:00Z"),
         foregroundPackage = packageName,
         visibleText = listOf("Alpha"),
         actionableElements = elements,
-        focusedElementId = null,
+        focusedElementId = focusedElementId,
     )
 
-    private fun element(id: String = "el-1", ref: String = id, label: String = "Action", text: String? = null): UiElement = UiElement(
+    private fun element(
+        id: String = "el-1",
+        ref: String = id,
+        label: String = "Action",
+        text: String? = null,
+        role: String = "button",
+        editable: Boolean = false,
+        focused: Boolean = false,
+    ): UiElement = UiElement(
         id = id,
         ref = ref,
-        role = "button",
+        role = role,
         label = label,
         text = text,
         clickable = true,
-        editable = false,
-        focused = false,
+        editable = editable,
+        focused = focused,
         bounds = listOf(0, 0, 100, 100),
     )
 }

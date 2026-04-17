@@ -103,7 +103,7 @@ internal object ClauneHostContract {
 
     val scriptLabSummary: String =
         "Run JS directly against the embedded runtime using the generated Claune host contract. " +
-            "The `claune` global exposes snapshot, selector, tap, typing, scroll, navigation, and wait helpers."
+            "The `claune` global exposes snapshot, selector, focused input, tap, typing, scroll, navigation, and wait helpers."
 
     private val hostFunctions =
         listOf(
@@ -145,6 +145,13 @@ internal object ClauneHostContract {
                     HostParameter("selector", "ElementSelector", "JSON.stringify(%s ?? {})"),
                     HostParameter("text", "string", "String(%s)"),
                 ),
+            ),
+            HostFunction(
+                name = "typeIntoFocused",
+                nativeBinding = "__clauneTypeIntoFocusedJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Type text into the currently focused editable element when focus is already where you need it.",
+                parameters = listOf(HostParameter("text", "string", "String(%s)")),
             ),
             HostFunction(
                 name = "typeIntoElement",
@@ -232,7 +239,7 @@ private data class HostFunction(
             if (throwsOnFailure) {
                 append("__clauneRequireOutcome(\"$name\", $nativeBinding($callArgs));\n")
             } else {
-                append("JSON.parse($nativeBinding($callArgs)));\n")
+                append("JSON.parse($nativeBinding($callArgs));\n")
             }
             append("  }")
         }
