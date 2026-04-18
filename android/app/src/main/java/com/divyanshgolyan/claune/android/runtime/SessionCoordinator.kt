@@ -63,10 +63,16 @@ class SessionCoordinator(private val logStore: SessionLogStore) {
     }
 
     fun logEvent(event: String) {
+        val currentState = _uiState.value
         _uiState.value =
-            _uiState.value.copy(
-                timeline = (_uiState.value.timeline + event).takeLast(20),
-                summaryLine = event,
+            currentState.copy(
+                timeline = (currentState.timeline + event).takeLast(20),
+                summaryLine =
+                if (currentState.status == SessionStatus.Running) {
+                    event
+                } else {
+                    currentState.summaryLine
+                },
             )
         logStore.record(_uiState.value)
     }

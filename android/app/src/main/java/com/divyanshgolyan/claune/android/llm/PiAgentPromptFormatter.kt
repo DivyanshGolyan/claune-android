@@ -1,5 +1,6 @@
 package com.divyanshgolyan.claune.android.llm
 
+import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 
 internal object PiAgentPromptFormatter {
@@ -19,6 +20,9 @@ internal object PiAgentPromptFormatter {
         appendLine()
         appendLine("Current phone snapshot:")
         appendLine("foregroundPackage: ${input.snapshot.foregroundPackage}")
+        if (input.snapshot.foregroundPackage == BuildConfig.APPLICATION_ID) {
+            appendLine("shellContext: You are still inside Claune Android's own control UI. Leave Claune before operating the destination app.")
+        }
         appendLine("focusedElementId: ${input.snapshot.focusedElementId ?: "none"}")
         appendLine("visibleText:")
         if (input.snapshot.visibleText.isEmpty()) {

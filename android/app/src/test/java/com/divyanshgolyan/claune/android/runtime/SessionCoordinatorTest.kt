@@ -44,4 +44,16 @@ class SessionCoordinatorTest {
         assertEquals(SessionStatus.Cancelled, coordinator.uiState.value.status)
         assertFalse(coordinator.uiState.value.foregroundServiceRunning)
     }
+
+    @Test
+    fun `log events do not overwrite terminal session summaries`() {
+        val coordinator = SessionCoordinator(InMemorySessionLogStore())
+
+        coordinator.startSession("Open Settings")
+        coordinator.finishSession("Completed successfully.")
+        coordinator.logEvent("Memory reflection made no durable update.")
+
+        assertEquals(SessionStatus.Completed, coordinator.uiState.value.status)
+        assertEquals("Completed successfully.", coordinator.uiState.value.summaryLine)
+    }
 }

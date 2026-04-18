@@ -1,6 +1,7 @@
 package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
+import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryArguments
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
@@ -46,6 +47,21 @@ class PiAgentModelGatewayTest {
     }
 
     @Test
+    fun `prompt formatter warns when still inside claune shell`() {
+        val prompt =
+            PiAgentPromptFormatter.format(
+                ModelTurnInput(
+                    sessionId = "session-1",
+                    goal = "Find the current weather",
+                    snapshot = snapshot(packageName = BuildConfig.APPLICATION_ID),
+                    recentEvents = emptyList(),
+                ),
+            )
+
+        assertTrue(prompt.contains("shellContext: You are still inside Claune Android's own control UI."))
+    }
+
+    @Test
     fun `system prompt embeds stable contract and memory context`() {
         val prompt =
             PiAgentModelGateway.systemPromptForTests(
@@ -73,6 +89,7 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("Only store durable facts in memory"))
         assertTrue(prompt.contains("Example wrapper-input script:"))
         assertTrue(prompt.contains("claune.focusSelector({ label: \"Search\" }, 2000);"))
+        assertTrue(prompt.contains("you are looking at Claune's own control shell for giving instructions"))
     }
 
     @Test

@@ -14,6 +14,7 @@ import com.divyanshgolyan.claune.android.llm.tools.toAgentTool
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
+import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
 import java.util.concurrent.CopyOnWriteArrayList
@@ -157,6 +158,9 @@ class PiAgentModelGateway(
         if (result !is ModelTurnOutput.Completion && result !is ModelTurnOutput.Blocked) {
             return
         }
+        if (sessionCoordinator.uiState.value.status != SessionStatus.Running) {
+            return
+        }
 
         toolBudget.enterReflectionPhase()
         val reflectionPrompt = MemoryReflectionPromptBuilder.format(input, result)
@@ -175,6 +179,9 @@ class PiAgentModelGateway(
                     sessionCoordinator.logEvent("Memory reflection updated memory.md. ${parsed.summary}")
             }
         }.onFailure { throwable ->
+            if (throwable is CancellationException) {
+                return@onFailure
+            }
             sessionCoordinator.logEvent(
                 "Memory reflection failed. ${throwable.message ?: throwable::class.simpleName ?: "Unknown failure."}",
             )

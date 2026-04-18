@@ -1,5 +1,6 @@
 package com.divyanshgolyan.claune.android.llm.tools
 
+import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.scripting.ClauneHostContract
 import java.time.LocalDate
 
@@ -32,6 +33,7 @@ internal object SystemPromptBuilder {
                         "Keep scripts focused but not tiny; avoid spending iterations on trivial one-action probes when the next step is already clear.",
                         "If the current screen is confusing, off-plan, or repeated assumptions fail, re-establish a known state before continuing instead of persisting with a broken plan.",
                         "If Back or Home returns you to Claune Android instead of the target app, treat that as a context reset and rebuild the plan from a fresh snapshot.",
+                        "If foregroundPackage is ${BuildConfig.APPLICATION_ID}, you are looking at Claune's own control shell for giving instructions, not the destination app. Do not treat its controls as part of the user's requested task.",
                         "Prefer visible, directly actionable controls over indirect routes when both are available.",
                         "Distinguish between selecting content and triggering an action attached to that content.",
                         "Do not substitute unrelated items, screens, or actions just because they are available. If the requested target cannot be found, recover, ask for clarification later, or block honestly.",
