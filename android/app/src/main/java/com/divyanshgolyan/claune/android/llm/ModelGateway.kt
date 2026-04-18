@@ -4,6 +4,7 @@ import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.AgentTranscriptSerializer
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
+import com.divyanshgolyan.claune.android.data.local.SettingsStore
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
@@ -36,7 +37,7 @@ interface ModelGateway {
 }
 
 class PiAgentModelGateway(
-    private val apiKey: String,
+    private val settingsStore: SettingsStore,
     private val memoryStore: MemoryStore,
     private val scriptRuntime: ScriptRuntime,
     private val phoneObserver: PhoneObserver,
@@ -51,10 +52,10 @@ class PiAgentModelGateway(
             artifactStore.writeModelInput(input.sessionId, prompt)
         }
 
+        val apiKey = settingsStore.state.value.anthropicApiKey
         if (apiKey.isBlank()) {
             return ModelTurnOutput.Blocked(
-                "Anthropic API key is missing. Add claune.anthropicApiKey to android/local.properties, " +
-                    "rebuild the debug app, and reinstall before retrying.",
+                "Anthropic API key is missing. Open Settings in the app, add your API key, and retry.",
             )
         }
 
@@ -128,7 +129,7 @@ class PiAgentModelGateway(
                 thinkingLevel = AgentThinkingLevel.MEDIUM,
                 tools = toolDefinitions().map { toAgentTool(it) },
             ),
-            getApiKey = { apiKey },
+            getApiKey = { settingsStore.state.value.anthropicApiKey },
             sessionId = sessionId,
             cacheRetention = CacheRetention.SHORT,
             thinkingBudgets = ThinkingBudgets(medium = 4096),

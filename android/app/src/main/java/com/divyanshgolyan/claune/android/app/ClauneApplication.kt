@@ -10,6 +10,8 @@ import com.divyanshgolyan.claune.android.data.local.FileMemoryStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
+import com.divyanshgolyan.claune.android.data.local.SettingsStore
+import com.divyanshgolyan.claune.android.data.local.SharedPreferencesSettingsStore
 import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
 import com.divyanshgolyan.claune.android.runtime.AgentLoop
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
@@ -26,6 +28,11 @@ class ClauneContainer(application: Application) {
     private val memoryLogStore = InMemorySessionLogStore()
     val artifactStore = FileAgentRunArtifactStore(File(application.filesDir, "agent-runs"))
     val memoryStore: MemoryStore = FileMemoryStore(File(application.filesDir, "memory.md"))
+    val settingsStore: SettingsStore =
+        SharedPreferencesSettingsStore(
+            context = application,
+            defaultAnthropicApiKey = BuildConfig.ANTHROPIC_API_KEY,
+        )
     val logStore: SessionLogStore by lazy {
         ArtifactSessionLogStore(
             delegate = memoryLogStore,
@@ -44,7 +51,7 @@ class ClauneContainer(application: Application) {
         )
     val modelGateway =
         PiAgentModelGateway(
-            apiKey = BuildConfig.ANTHROPIC_API_KEY,
+            settingsStore = settingsStore,
             memoryStore = memoryStore,
             scriptRuntime = scriptRuntime,
             phoneObserver = accessibilityBridge,
