@@ -19,5 +19,5 @@ include(":app")
 include(":pi-ai-core")
 include(":pi-agent-core")
 
-project(":pi-ai-core").projectDir = file("../../pi-agent-kotlin/pi-ai-core")
-project(":pi-agent-core").projectDir = file("../../pi-agent-kotlin/pi-agent-core")
+project(":pi-ai-core").projectDir = file("vendor/pi-agent-kotlin/pi-ai-core")
+project(":pi-agent-core").projectDir = file("vendor/pi-agent-kotlin/pi-agent-core")
