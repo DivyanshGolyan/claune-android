@@ -82,7 +82,11 @@ class QuickJsScriptRuntimeTest {
         assertTrue(declarations.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
         assertTrue(bootstrap.contains("globalThis.claune = Object.freeze"))
         assertTrue(bootstrap.contains("return JSON.parse(__clauneObservePhoneJson());"))
-        assertTrue(bootstrap.contains("__clauneRequireOutcome(\"focusSelector\", __clauneFocusSelectorJson(JSON.stringify(selector ?? {}), Number(timeoutMs ?? 0)));"))
+        assertTrue(
+            bootstrap.contains(
+                "__clauneRequireOutcome(\"focusSelector\", __clauneFocusSelectorJson(JSON.stringify(selector ?? {}), Number(timeoutMs ?? 0)));",
+            ),
+        )
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"scrollRef\", __clauneScrollRefJson(String(ref), String(direction)));"))
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"typeIntoFocused\", __clauneTypeIntoFocusedJson(String(text)));"))
         assertTrue(!bootstrap.contains("__clauneObservePhoneJson()));"))

@@ -3,7 +3,10 @@ package com.divyanshgolyan.claune.android.runtime
 import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
 import com.divyanshgolyan.claune.android.data.local.RunArtifactMetadata
+import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.llm.ModelGateway
+import com.divyanshgolyan.claune.android.scripting.HostCallRecord
+import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRecord
 import java.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
@@ -33,27 +36,25 @@ class AgentLoopTest {
 }
 
 private object FakePhoneObserver : PhoneObserver {
-    override suspend fun captureSnapshot(): UiSnapshot =
-        UiSnapshot(
-            snapshotId = "snapshot-1",
-            capturedAt = Instant.parse("2026-04-18T00:00:00Z"),
-            foregroundPackage = "com.android.settings",
-            visibleText = listOf("Settings"),
-            actionableElements =
-            listOf(
-                UiElement(
-                    id = "id-1",
-                    ref = "e0",
-                    role = "button",
-                    label = "Wi-Fi",
-                    clickable = true,
-                    editable = false,
-                    focused = false,
-                    bounds = listOf(0, 0, 100, 100),
-                ),
+    override suspend fun captureSnapshot(): UiSnapshot = UiSnapshot(
+        snapshotId = "snapshot-1",
+        capturedAt = Instant.parse("2026-04-18T00:00:00Z"),
+        foregroundPackage = "com.android.settings",
+        visibleText = listOf("Settings"),
+        actionableElements = listOf(
+            UiElement(
+                id = "id-1",
+                ref = "e0",
+                role = "button",
+                label = "Wi-Fi",
+                clickable = true,
+                editable = false,
+                focused = false,
+                bounds = listOf(0, 0, 100, 100),
             ),
-            focusedElementId = null,
-        )
+        ),
+        focusedElementId = null,
+    )
 }
 
 private object SlowModelGateway : ModelGateway {
@@ -70,12 +71,9 @@ private object NoOpArtifactStore : AgentRunArtifactStore {
 
     override fun recordSnapshot(runId: String, snapshot: UiSnapshot) = Unit
 
-    override fun recordScriptExecution(
-        runId: String,
-        execution: com.divyanshgolyan.claune.android.scripting.ScriptExecutionRecord,
-    ) = Unit
+    override fun recordScriptExecution(runId: String, execution: ScriptExecutionRecord) = Unit
 
-    override fun recordHostCall(runId: String, hostCall: com.divyanshgolyan.claune.android.scripting.HostCallRecord) = Unit
+    override fun recordHostCall(runId: String, hostCall: HostCallRecord) = Unit
 
     override fun writeSystemPrompt(runId: String, systemPrompt: String) = Unit
 
@@ -89,8 +87,5 @@ private object NoOpArtifactStore : AgentRunArtifactStore {
 
     override fun writeAgentMessages(runId: String, messages: List<pi.ai.core.Message>) = Unit
 
-    override fun writeAgentEvents(
-        runId: String,
-        events: List<com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent>,
-    ) = Unit
+    override fun writeAgentEvents(runId: String, events: List<SerializedAgentEvent>) = Unit
 }

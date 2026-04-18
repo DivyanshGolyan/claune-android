@@ -11,7 +11,6 @@ import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import java.time.Instant
 import kotlinx.coroutines.delay
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -101,7 +100,7 @@ class ScriptHost(
         name = "tapSelector",
         arguments = buildJsonObject { put("selector", selectorJson) },
     ) {
-        val selector = decodeSelector(selectorJson)
+        val selector = decodeElementSelector(selectorJson)
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "Invalid selector JSON.",
@@ -139,7 +138,7 @@ class ScriptHost(
             put("text", text)
         },
     ) {
-        val selector = decodeSelector(selectorJson)
+        val selector = decodeElementSelector(selectorJson)
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "Invalid selector JSON.",
@@ -167,7 +166,7 @@ class ScriptHost(
             put("timeoutMs", timeoutMs)
         },
     ) {
-        val selector = decodeSelector(selectorJson)
+        val selector = decodeElementSelector(selectorJson)
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "Invalid selector JSON.",
@@ -249,7 +248,7 @@ class ScriptHost(
             put("timeoutMs", timeoutMs)
         },
     ) {
-        val selector = decodeSelector(selectorJson)
+        val selector = decodeElementSelector(selectorJson)
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "Invalid selector JSON.",
@@ -337,17 +336,19 @@ class ScriptHost(
             snapshot = initialSnapshot,
             matchedElement = matchedElement,
         )?.let { editable ->
+            val editableLabel = editable.label.ifBlank { editable.id }
             return HostCallOutcome(
                 ok = true,
-                message = "Editable element '${editable.label.ifBlank { editable.id }}' is ready for input.",
+                message = "Editable element '$editableLabel' is ready for input.",
                 data = buildActivationData(matchedElement, editable),
             )
         }
 
         if (!matchedElement.clickable) {
+            val matchedLabel = matchedElement.label.ifBlank { matchedElement.id }
             return HostCallOutcome(
                 ok = false,
-                message = "Matched element '${matchedElement.label.ifBlank { matchedElement.id }}' is not editable and cannot be activated.",
+                message = "Matched element '$matchedLabel' is not editable and cannot be activated.",
                 data = buildMatchedData(matchedElement),
             )
         }
@@ -365,17 +366,20 @@ class ScriptHost(
                 snapshot = snapshot,
                 matchedElement = matchedElement,
             )?.let { editable ->
+                val matchedLabel = matchedElement.label.ifBlank { matchedElement.id }
+                val editableLabel = editable.label.ifBlank { editable.id }
                 return HostCallOutcome(
                     ok = true,
-                    message = "Activated '${matchedElement.label.ifBlank { matchedElement.id }}' and found editable element '${editable.label.ifBlank { editable.id }}'.",
+                    message = "Activated '$matchedLabel' and found editable element '$editableLabel'.",
                     data = buildActivationData(matchedElement, editable),
                 )
             }
 
             if (now().isAfter(deadline)) {
+                val matchedLabel = matchedElement.label.ifBlank { matchedElement.id }
                 return HostCallOutcome(
                     ok = false,
-                    message = "Timed out waiting for an editable element after activating '${matchedElement.label.ifBlank { matchedElement.id }}'.",
+                    message = "Timed out waiting for an editable element after activating '$matchedLabel'.",
                     data = buildMatchedData(matchedElement),
                 )
             }
@@ -384,86 +388,28 @@ class ScriptHost(
         }
     }
 
-    private fun decodeSelector(selectorJson: String): ElementSelectorPayload? = runCatching {
-        ScriptJson.codec.decodeFromString(ElementSelectorPayload.serializer(), selectorJson)
-    }.getOrNull()?.takeIf { it.hasCriteria() }
-
-    private fun resolveEditableTarget(snapshot: UiSnapshot, matchedElement: UiElement): UiElement? =
-        snapshot.findFocusedEditableElement()
-            ?: snapshot.actionableElements.firstOrNull { it.editable && it.ref == matchedElement.ref }
-            ?: snapshot.actionableElements.firstOrNull { it.editable && matchedElement.isSearchLike() && it.isSearchLike() }
-            ?: snapshot.actionableElements.singleOrNull { it.editable }
+    private fun resolveEditableTarget(snapshot: UiSnapshot, matchedElement: UiElement): UiElement? = snapshot.findFocusedEditableElement()
+        ?: snapshot.actionableElements.firstOrNull { it.editable && it.ref == matchedElement.ref }
+        ?: snapshot.actionableElements.firstOrNull { it.editable && matchedElement.isSearchLike() && it.isSearchLike() }
+        ?: snapshot.actionableElements.singleOrNull { it.editable }
 
     private fun UiSnapshot.findFocusedEditableElement(): UiElement? =
         actionableElements.firstOrNull { it.id == focusedElementId && it.editable }
             ?: actionableElements.firstOrNull { it.focused && it.editable }
 
-    private fun buildMatchedData(element: UiElement): JsonObject =
-        buildJsonObject {
-            put("matchedRef", element.ref)
-            put("matchedElementId", element.id)
-            put("matchedLabel", element.label)
-        }
-
-    private fun buildActivationData(matchedElement: UiElement, editableElement: UiElement): JsonObject =
-        buildJsonObject {
-            put("matchedRef", matchedElement.ref)
-            put("matchedElementId", matchedElement.id)
-            put("matchedLabel", matchedElement.label)
-            put("activatedElementId", editableElement.id)
-            put("activatedRef", editableElement.ref)
-            put("activatedLabel", editableElement.label)
-        }
-
-    private fun selectElement(snapshot: UiSnapshot, selector: ElementSelectorPayload): UiElement? {
-        val rankedMatches = snapshot.actionableElements
-            .mapNotNull { element ->
-                selector.matchScore(element)?.let { score -> element to score }
-            }
-            .sortedByDescending { (_, score) -> score }
-
-        if (rankedMatches.isEmpty()) {
-            return null
-        }
-        if (selector.first || rankedMatches.size == 1) {
-            return rankedMatches.first().first
-        }
-
-        val bestScore = rankedMatches.first().second
-        val topMatches = rankedMatches.takeWhile { (_, score) -> score == bestScore }
-        return topMatches.singleOrNull()?.first
+    private fun buildMatchedData(element: UiElement): JsonObject = buildJsonObject {
+        put("matchedRef", element.ref)
+        put("matchedElementId", element.id)
+        put("matchedLabel", element.label)
     }
 
-    private fun selectorFailure(selector: ElementSelectorPayload, snapshot: UiSnapshot): HostCallOutcome {
-        val rankedMatches = snapshot.actionableElements
-            .mapNotNull { element ->
-                selector.matchScore(element)?.let { score -> element to score }
-            }
-            .sortedByDescending { (_, score) -> score }
-        return when {
-            rankedMatches.isEmpty() ->
-                HostCallOutcome(
-                    ok = false,
-                    message = "Selector did not match any actionable element on the current screen.",
-                )
-
-            else ->
-                HostCallOutcome(
-                    ok = false,
-                    message =
-                    buildString {
-                        append("Selector matched multiple elements. Refine the selector or set first=true.")
-                        val candidates = rankedMatches.take(3).joinToString(separator = "; ") { (element, _) ->
-                            "ref=${element.ref}, label=${element.label.ifBlank { "<blank>" }}, id=${element.id}"
-                        }
-                        if (candidates.isNotBlank()) {
-                            append(" Top candidates: ")
-                            append(candidates)
-                            append('.')
-                        }
-                    },
-                )
-        }
+    private fun buildActivationData(matchedElement: UiElement, editableElement: UiElement): JsonObject = buildJsonObject {
+        put("matchedRef", matchedElement.ref)
+        put("matchedElementId", matchedElement.id)
+        put("matchedLabel", matchedElement.label)
+        put("activatedElementId", editableElement.id)
+        put("activatedRef", editableElement.ref)
+        put("activatedLabel", editableElement.label)
     }
 
     private suspend fun recordCall(name: String, arguments: JsonObject, block: suspend () -> HostCallOutcome): HostCallOutcome {
@@ -520,124 +466,6 @@ class ScriptHost(
     private companion object {
         private const val POLL_INTERVAL_MS = 250L
         private const val DEFAULT_FOCUS_TIMEOUT_MS = 1500L
-    }
-}
-
-private fun ElementSelectorPayload.hasCriteria(): Boolean = listOf(
-    ref,
-    label,
-    text,
-    contentDescription,
-    resourceId,
-    role,
-).any { !it.isNullOrBlank() } ||
-    listOf(clickable, editable, focused, enabled, checked, selected, scrollable).any { it != null }
-
-private fun ElementSelectorPayload.matchScore(element: UiElement): Int? {
-    if (ref != null && ref != element.ref) {
-        return null
-    }
-
-    if (label != null && !element.matchesTextCandidate(label, textExact, candidate = element.label)) {
-        return null
-    }
-
-    var score = 0
-    if (ref != null) {
-        score += 100
-    }
-    if (label != null) {
-        score += if (textExact) 60 else 40
-        if (element.clickable) {
-            score += 10
-        }
-    }
-
-    if (text != null) {
-        val textScore = element.textMatchScore(text, textExact) ?: return null
-        score += textScore
-    }
-
-    if (contentDescription != null) {
-        if (!(element.contentDescription?.contains(contentDescription, ignoreCase = true) == true)) {
-            return null
-        }
-        score += 30
-    }
-
-    if (resourceId != null) {
-        if (!(element.resourceId?.contains(resourceId, ignoreCase = true) == true)) {
-            return null
-        }
-        score += 35
-    }
-
-    if (role != null && role != element.role) {
-        return null
-    }
-    if (role != null) {
-        score += 15
-    }
-
-    val stateFilters =
-        listOf(
-            clickable to element.clickable,
-            editable to element.editable,
-            focused to element.focused,
-            enabled to element.enabled,
-            checked to element.checked,
-            selected to element.selected,
-            scrollable to element.scrollable,
-        )
-    if (stateFilters.any { (expected, actual) -> expected != null && expected != actual }) {
-        return null
-    }
-    score += stateFilters.count { (expected, _) -> expected != null } * 5
-
-    return score
-}
-
-private fun UiElement.textMatchScore(target: String, textExact: Boolean): Int? {
-    val exactCandidates = listOfNotNull(label.takeIf { it.isNotBlank() }, text, contentDescription)
-    val hasExact = exactCandidates.any { it.equals(target, ignoreCase = false) }
-    if (textExact) {
-        return if (hasExact) {
-            (if (clickable) 90 else 80)
-        } else {
-            null
-        }
-    }
-
-    val hasPartial = exactCandidates.any { it.contains(target, ignoreCase = true) }
-    if (!hasPartial) {
-        return null
-    }
-
-    return when {
-        hasExact && clickable -> 90
-        hasExact -> 80
-        clickable -> 70
-        else -> 60
-    }
-}
-
-private fun UiElement.matchesTextCandidate(target: String, textExact: Boolean, candidate: String?): Boolean {
-    val safeCandidate = candidate?.takeIf { it.isNotBlank() } ?: return false
-    return if (textExact) {
-        safeCandidate == target
-    } else {
-        safeCandidate.contains(target, ignoreCase = true)
-    }
-}
-
-private fun UiElement.matches(selector: ElementSelectorPayload): Boolean {
-    return selector.matchScore(this) != null
-}
-
-private fun UiElement.isSearchLike(): Boolean {
-    val candidates = listOfNotNull(label, text, contentDescription, resourceId, className)
-    return candidates.any { candidate ->
-        candidate.contains("search", ignoreCase = true)
     }
 }
 

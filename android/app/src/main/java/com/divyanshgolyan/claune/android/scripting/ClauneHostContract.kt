@@ -188,7 +188,9 @@ internal object ClauneHostContract {
                 name = "scrollContainer",
                 nativeBinding = "__clauneScrollContainerJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Scroll a scrollable container element id in the given direction. Prefer scrollRef when you already have a fresh snapshot ref.",
+                documentation =
+                "Scroll a scrollable container element id in the given direction. " +
+                    "Prefer scrollRef when you already have a fresh snapshot ref.",
                 parameters = listOf(
                     HostParameter("elementId", "string", "String(%s)"),
                     HostParameter("direction", "\"up\" | \"down\"", "String(%s)"),

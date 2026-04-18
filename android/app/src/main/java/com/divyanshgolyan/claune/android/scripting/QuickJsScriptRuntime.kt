@@ -92,181 +92,8 @@ class QuickJsScriptRuntime(
 
     private fun executeScript(request: ScriptExecutionRequest, host: ScriptHost): ScriptExecutionResult {
         val context = QuickJSContext.create()
-        val global = context.getGlobalObject()
         try {
-            global.setProperty(
-                "__clauneObservePhoneJson",
-                JSCallFunction {
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            UiSnapshotPayload.serializer(),
-                            host.observePhone(),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneTapElementJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val elementId = args.firstOrNull()?.toString().orEmpty()
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.tapElement(elementId),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneTapRefJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val ref = args.firstOrNull()?.toString().orEmpty()
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.tapRef(ref),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneScrollRefJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val ref = args.getOrNull(0)?.toString().orEmpty()
-                    val direction = args.getOrNull(1)?.toString().orEmpty()
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.scrollRef(ref, direction),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneFocusSelectorJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val selectorJson = args.getOrNull(0)?.toString().orEmpty()
-                    val timeoutMs = args.getOrNull(1)?.toString()?.toLongOrNull() ?: 0L
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.focusSelector(selectorJson, timeoutMs),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneTapSelectorJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val selectorJson = args.firstOrNull()?.toString().orEmpty()
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.tapSelector(selectorJson),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneTypeIntoElementJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val elementId = args.getOrNull(0)?.toString().orEmpty()
-                    val text = args.getOrNull(1)?.toString().orEmpty()
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.typeIntoElement(elementId, text),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneTypeIntoSelectorJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val selectorJson = args.getOrNull(0)?.toString().orEmpty()
-                    val text = args.getOrNull(1)?.toString().orEmpty()
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.typeIntoSelector(selectorJson, text),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneTypeIntoFocusedJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val text = args.getOrNull(0)?.toString().orEmpty()
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.typeIntoFocused(text),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneScrollContainerJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val elementId = args.getOrNull(0)?.toString().orEmpty()
-                    val direction = args.getOrNull(1)?.toString().orEmpty()
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.scrollContainer(elementId, direction),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__claunePressBackJson",
-                JSCallFunction {
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.pressBack(),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__claunePressHomeJson",
-                JSCallFunction {
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.pressHome(),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneWaitForStateJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val type = args.getOrNull(0)?.toString().orEmpty()
-                    val value = args.getOrNull(1)?.toString().orEmpty()
-                    val timeoutMs = args.getOrNull(2)?.toString()?.toLongOrNull() ?: 0L
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.waitForState(type, value, timeoutMs),
-                        )
-                    }
-                },
-            )
-            global.setProperty(
-                "__clauneWaitForSelectorJson",
-                JSCallFunction { args: Array<out Any?> ->
-                    val selectorJson = args.getOrNull(0)?.toString().orEmpty()
-                    val timeoutMs = args.getOrNull(1)?.toString()?.toLongOrNull() ?: 0L
-                    runBlocking {
-                        ScriptJson.codec.encodeToString(
-                            HostCallOutcome.serializer(),
-                            host.waitForSelector(selectorJson, timeoutMs),
-                        )
-                    }
-                },
-            )
+            registerHostFunctions(context, host)
 
             context.evaluate(ClauneHostContract.bootstrapJavascript)
             val compiledScript = compileUserScript(context, request.script)
@@ -302,6 +129,72 @@ class QuickJsScriptRuntime(
     } catch (throwable: Throwable) {
         throw ScriptValidationException(mapSyntaxError(script, throwable))
     }
+
+    private fun registerHostFunctions(context: QuickJSContext, host: ScriptHost) {
+        context.registerJsonFunction("__clauneObservePhoneJson") {
+            encodeSnapshot(host.observePhone())
+        }
+        context.registerJsonFunction("__clauneTapElementJson") { args ->
+            encodeOutcome(host.tapElement(args.stringArg(0)))
+        }
+        context.registerJsonFunction("__clauneTapRefJson") { args ->
+            encodeOutcome(host.tapRef(args.stringArg(0)))
+        }
+        context.registerJsonFunction("__clauneScrollRefJson") { args ->
+            encodeOutcome(host.scrollRef(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__clauneFocusSelectorJson") { args ->
+            encodeOutcome(host.focusSelector(args.stringArg(0), args.longArg(1)))
+        }
+        context.registerJsonFunction("__clauneTapSelectorJson") { args ->
+            encodeOutcome(host.tapSelector(args.stringArg(0)))
+        }
+        context.registerJsonFunction("__clauneTypeIntoElementJson") { args ->
+            encodeOutcome(host.typeIntoElement(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__clauneTypeIntoSelectorJson") { args ->
+            encodeOutcome(host.typeIntoSelector(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__clauneTypeIntoFocusedJson") { args ->
+            encodeOutcome(host.typeIntoFocused(args.stringArg(0)))
+        }
+        context.registerJsonFunction("__clauneScrollContainerJson") { args ->
+            encodeOutcome(host.scrollContainer(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__claunePressBackJson") {
+            encodeOutcome(host.pressBack())
+        }
+        context.registerJsonFunction("__claunePressHomeJson") {
+            encodeOutcome(host.pressHome())
+        }
+        context.registerJsonFunction("__clauneWaitForStateJson") { args ->
+            encodeOutcome(host.waitForState(args.stringArg(0), args.stringArg(1), args.longArg(2)))
+        }
+        context.registerJsonFunction("__clauneWaitForSelectorJson") { args ->
+            encodeOutcome(host.waitForSelector(args.stringArg(0), args.longArg(1)))
+        }
+    }
+
+    private fun QuickJSContext.registerJsonFunction(name: String, callback: suspend (Array<out Any?>) -> String) {
+        getGlobalObject().setProperty(
+            name,
+            JSCallFunction { args: Array<out Any?> ->
+                runBlocking {
+                    callback(args)
+                }
+            },
+        )
+    }
+
+    private suspend fun encodeSnapshot(snapshot: UiSnapshotPayload): String =
+        ScriptJson.codec.encodeToString(UiSnapshotPayload.serializer(), snapshot)
+
+    private suspend fun encodeOutcome(outcome: HostCallOutcome): String =
+        ScriptJson.codec.encodeToString(HostCallOutcome.serializer(), outcome)
+
+    private fun Array<out Any?>.stringArg(index: Int): String = getOrNull(index)?.toString().orEmpty()
+
+    private fun Array<out Any?>.longArg(index: Int): Long = getOrNull(index)?.toString()?.toLongOrNull() ?: 0L
 
     private fun mapSyntaxError(script: String, throwable: Throwable): String {
         val message = throwable.message?.trim()?.lineSequence()?.firstOrNull()?.trim().orEmpty()

@@ -242,7 +242,14 @@ class ScriptHostTest {
                             elements =
                             listOf(
                                 element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
-                                element(id = "search-input", ref = "e1", label = "Search input", role = "input", editable = true, focused = true),
+                                element(
+                                    id = "search-input",
+                                    ref = "e1",
+                                    label = "Search input",
+                                    role = "input",
+                                    editable = true,
+                                    focused = true,
+                                ),
                             ),
                         ),
                     ),
@@ -280,7 +287,14 @@ class ScriptHostTest {
                             focusedElementId = "search-input",
                             elements = listOf(
                                 element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
-                                element(id = "search-input", ref = "e1", label = "Search input", role = "input", editable = true, focused = true),
+                                element(
+                                    id = "search-input",
+                                    ref = "e1",
+                                    label = "Search input",
+                                    role = "input",
+                                    editable = true,
+                                    focused = true,
+                                ),
                             ),
                         ),
                     ),

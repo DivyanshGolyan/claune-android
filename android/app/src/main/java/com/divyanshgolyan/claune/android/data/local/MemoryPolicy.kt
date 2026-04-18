@@ -15,7 +15,7 @@ internal object MemoryPolicy {
                 trimmed
             } else {
                 "$HEADER\n\n$trimmed"
-        }
+            }
         return withHeader.trimEnd() + "\n"
     }
 }
