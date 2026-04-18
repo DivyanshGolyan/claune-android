@@ -1,9 +1,13 @@
 package com.divyanshgolyan.claune.android.llm
 
-import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
+import com.divyanshgolyan.claune.android.data.local.MemoryStore
+import com.divyanshgolyan.claune.android.llm.tools.EditMemoryArguments
+import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolResult
+import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
-import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest
@@ -15,6 +19,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -36,20 +41,38 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("Open Wi-Fi settings"))
         assertTrue(prompt.contains("Session started"))
         assertTrue(prompt.contains("foregroundPackage: com.android.settings"))
-        assertTrue(prompt.contains("id=el-1, role=button, label=Wi-Fi"))
+        assertTrue(prompt.contains("ref=el-1, role=button, label=Wi-Fi"))
+        assertTrue(prompt.contains("idForIdOnlyApis=el-1"))
     }
 
     @Test
-    fun `system prompt embeds generated claune host contract`() {
-        val prompt = PiAgentModelGateway.systemPromptForTests()
+    fun `system prompt embeds stable contract and memory context`() {
+        val prompt =
+            PiAgentModelGateway.systemPromptForTests(
+                """
+                # Claune Memory
+
+                - The user prefers Wi-Fi tasks to start from Settings.
+                """.trimIndent(),
+            )
 
         assertTrue(prompt.contains("TypeScript contract for the global `claune` object"))
         assertTrue(prompt.contains("interface ClauneHost"))
         assertTrue(prompt.contains("tapSelector(selector: ElementSelector): HostSuccessOutcome;"))
+        assertTrue(prompt.contains("focusSelector(selector: ElementSelector, timeoutMs: number): HostSuccessOutcome;"))
         assertTrue(prompt.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
+        assertTrue(prompt.contains("- execute_script:"))
+        assertTrue(prompt.contains("- read_memory:"))
+        assertTrue(prompt.contains("- edit_memory:"))
         assertTrue(prompt.contains("The TypeScript contract above is the source of truth"))
         assertTrue(prompt.contains("For any task that changes app or device state"))
         assertTrue(!prompt.contains("For mutation goals"))
+        assertTrue(prompt.contains("Available tools:"))
+        assertTrue(prompt.contains("Current memory.md:"))
+        assertTrue(prompt.contains("The user prefers Wi-Fi tasks to start from Settings."))
+        assertTrue(prompt.contains("Only store durable facts in memory"))
+        assertTrue(prompt.contains("Example wrapper-input script:"))
+        assertTrue(prompt.contains("claune.focusSelector({ label: \"Search\" }, 2000);"))
     }
 
     @Test
@@ -103,11 +126,8 @@ class PiAgentModelGatewayTest {
 
     @Test
     fun `execute script tool returns runtime result plus post action snapshot`() = runTest {
-        val coordinator = SessionCoordinator(InMemorySessionLogStore()).apply {
-            startSession("Inspect Wi-Fi")
-        }
         val toolSet =
-            ExecuteScriptAgentTool(
+            ExecuteScriptToolDefinition(
                 scriptRuntime = FakeScriptRuntime(
                     ScriptExecutionResult(
                         ok = true,
@@ -133,6 +153,40 @@ class PiAgentModelGatewayTest {
         assertEquals("Script completed with 1 host call.", payload.summary)
         assertEquals("after-script", payload.postActionSnapshot.snapshotId)
         assertEquals("opened_settings", payload.scriptData?.jsonObject?.get("step")?.toString()?.trim('"'))
+    }
+
+    @Test
+    fun `read memory tool returns current markdown`() = runTest {
+        val tool = ReadMemoryToolDefinition(FakeMemoryStore("# Claune Memory\n\n- Use Settings first.\n"))
+
+        val result = tool.execute("tool-call-1", Unit, null, null)
+        val text = (result.content.single() as pi.ai.core.TextContent).text
+
+        assertTrue(text.contains("Use Settings first."))
+        assertEquals(
+            "# Claune Memory\n\n- Use Settings first.\n",
+            result.details.jsonObject["content"]?.jsonPrimitive?.content,
+        )
+    }
+
+    @Test
+    fun `edit memory tool updates the markdown file by exact match`() = runTest {
+        val store = FakeMemoryStore("# Claune Memory\n\n- Old fact.\n")
+        val tool = EditMemoryToolDefinition(store)
+
+        val result =
+            tool.execute(
+                "tool-call-1",
+                EditMemoryArguments(
+                    oldText = "- Old fact.\n",
+                    newText = "- New durable fact.\n",
+                ),
+                null,
+                null,
+            )
+
+        assertEquals("# Claune Memory\n\n- New durable fact.\n", store.read())
+        assertEquals("Updated memory.md.", (result.content.single() as pi.ai.core.TextContent).text)
     }
 
     private fun snapshot(snapshotId: String = "snapshot-1", packageName: String = "com.android.settings"): UiSnapshot = UiSnapshot(
@@ -161,4 +215,18 @@ private class FakeScriptRuntime(private val result: ScriptExecutionResult) : Scr
 
 private class FakePhoneObserver(private val snapshot: UiSnapshot) : PhoneObserver {
     override suspend fun captureSnapshot(): UiSnapshot = snapshot
+}
+
+private class FakeMemoryStore(private var content: String) : MemoryStore {
+    override suspend fun read(): String = content
+
+    override suspend fun edit(oldText: String, newText: String) {
+        val occurrences = content.split(oldText).size - 1
+        check(occurrences == 1)
+        content = content.replace(oldText, newText).trimEnd() + "\n"
+    }
+
+    override suspend fun overwrite(content: String) {
+        this.content = content.trimEnd() + "\n"
+    }
 }

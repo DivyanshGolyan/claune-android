@@ -6,7 +6,9 @@ import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.accessibility.AccessibilityBridge
 import com.divyanshgolyan.claune.android.data.local.ArtifactSessionLogStore
 import com.divyanshgolyan.claune.android.data.local.FileAgentRunArtifactStore
+import com.divyanshgolyan.claune.android.data.local.FileMemoryStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
+import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
 import com.divyanshgolyan.claune.android.runtime.AgentLoop
@@ -23,6 +25,7 @@ class ClauneApplication : Application() {
 class ClauneContainer(application: Application) {
     private val memoryLogStore = InMemorySessionLogStore()
     val artifactStore = FileAgentRunArtifactStore(File(application.filesDir, "agent-runs"))
+    val memoryStore: MemoryStore = FileMemoryStore(File(application.filesDir, "memory.md"))
     val logStore: SessionLogStore by lazy {
         ArtifactSessionLogStore(
             delegate = memoryLogStore,
@@ -42,6 +45,7 @@ class ClauneContainer(application: Application) {
     val modelGateway =
         PiAgentModelGateway(
             apiKey = BuildConfig.ANTHROPIC_API_KEY,
+            memoryStore = memoryStore,
             scriptRuntime = scriptRuntime,
             phoneObserver = accessibilityBridge,
             sessionCoordinator = sessionCoordinator,

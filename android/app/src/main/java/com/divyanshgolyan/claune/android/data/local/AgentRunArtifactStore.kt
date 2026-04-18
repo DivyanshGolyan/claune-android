@@ -48,9 +48,15 @@ interface AgentRunArtifactStore {
 
     fun writeFinalOutput(runId: String, finalOutput: String)
 
+    fun writeMemoryReflectionPrompt(runId: String, prompt: String)
+
+    fun writeMemoryReflectionOutput(runId: String, output: String)
+
     fun writeAgentMessages(runId: String, messages: List<Message>)
 
     fun writeAgentEvents(runId: String, events: List<SerializedAgentEvent>)
+
+    fun recoverOrphanedRuns(reason: String) {}
 }
 
 class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -> Instant = { Instant.now() }) : AgentRunArtifactStore {
@@ -137,6 +143,16 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
     }
 
     @Synchronized
+    override fun writeMemoryReflectionPrompt(runId: String, prompt: String) {
+        writeText(runId, MEMORY_REFLECTION_PROMPT_FILE_NAME, prompt)
+    }
+
+    @Synchronized
+    override fun writeMemoryReflectionOutput(runId: String, output: String) {
+        writeText(runId, MEMORY_REFLECTION_OUTPUT_FILE_NAME, output)
+    }
+
+    @Synchronized
     override fun writeAgentMessages(runId: String, messages: List<Message>) {
         writeJson(
             runDirectory(runId).resolve(AGENT_MESSAGES_FILE_NAME),
@@ -152,6 +168,32 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
             ListSerializer(SerializedAgentEvent.serializer()),
             events,
         )
+    }
+
+    @Synchronized
+    override fun recoverOrphanedRuns(reason: String) {
+        rootDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.forEach { directory ->
+                val metadataFile = directory.resolve(METADATA_FILE_NAME)
+                if (!metadataFile.exists()) {
+                    return@forEach
+                }
+                val metadata = json.decodeFromString(RunArtifactMetadata.serializer(), metadataFile.readText())
+                if (metadata.status != SessionStatus.Running.name) {
+                    return@forEach
+                }
+                writeJson(
+                    metadataFile,
+                    RunArtifactMetadata.serializer(),
+                    metadata.copy(
+                        status = SessionStatus.Cancelled.name,
+                        latestSummary = reason,
+                        foregroundServiceRunning = false,
+                        finishedAt = now().toString(),
+                    ),
+                )
+            }
     }
 
     private fun writeText(runId: String, fileName: String, value: String) {
@@ -198,6 +240,8 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
         private const val SYSTEM_PROMPT_FILE_NAME = "system-prompt.txt"
         private const val MODEL_INPUT_FILE_NAME = "model-input.txt"
         private const val FINAL_OUTPUT_FILE_NAME = "final-output.txt"
+        private const val MEMORY_REFLECTION_PROMPT_FILE_NAME = "memory-reflection-prompt.txt"
+        private const val MEMORY_REFLECTION_OUTPUT_FILE_NAME = "memory-reflection-output.txt"
         private const val AGENT_MESSAGES_FILE_NAME = "agent-messages.json"
         private const val AGENT_EVENTS_FILE_NAME = "agent-events.json"
     }
@@ -368,6 +412,7 @@ object AgentTranscriptSerializer {
     }
 
     private fun serializeAssistantMessage(message: AssistantMessage): JsonObject = buildJsonObject {
+        val content = message.content.toList()
         put("role", JsonPrimitive(message.role))
         put("timestamp", JsonPrimitive(message.timestamp))
         put("api", JsonPrimitive(message.api))
@@ -380,7 +425,7 @@ object AgentTranscriptSerializer {
         put(
             "content",
             buildJsonArray {
-                message.content.forEach { block ->
+                content.forEach { block ->
                     add(serializeAssistantContentBlock(block))
                 }
             },
@@ -388,6 +433,7 @@ object AgentTranscriptSerializer {
     }
 
     private fun serializeToolResultMessage(message: ToolResultMessage): JsonObject = buildJsonObject {
+        val content = message.content.toList()
         put("role", JsonPrimitive(message.role))
         put("timestamp", JsonPrimitive(message.timestamp))
         put("toolCallId", JsonPrimitive(message.toolCallId))
@@ -397,7 +443,7 @@ object AgentTranscriptSerializer {
         put(
             "content",
             buildJsonArray {
-                message.content.forEach { part ->
+                content.forEach { part ->
                     add(serializeToolResultContentPart(part))
                 }
             },
@@ -411,7 +457,7 @@ object AgentTranscriptSerializer {
                 put("value", JsonPrimitive(content.value))
             }
         is UserMessageContent.Structured ->
-            JsonArray(content.parts.map(::serializeUserContentPart))
+            JsonArray(content.parts.toList().map(::serializeUserContentPart))
     }
 
     private fun serializeUserContentPart(part: pi.ai.core.UserContentPart): JsonObject = when (part) {

@@ -2,40 +2,37 @@ package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.AgentTranscriptSerializer
+import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
+import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.SystemPromptBuilder
+import com.divyanshgolyan.claune.android.llm.tools.ToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.toAgentTool
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
-import com.divyanshgolyan.claune.android.scripting.ClauneHostContract
-import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
 import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
-import com.divyanshgolyan.claune.android.scripting.UiSnapshotPayload
-import com.divyanshgolyan.claune.android.scripting.toPayload
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import pi.agent.core.Agent
 import pi.agent.core.AgentEvent
 import pi.agent.core.AgentOptions
 import pi.agent.core.AgentThinkingLevel
-import pi.agent.core.AgentTool
-import pi.agent.core.AgentToolResult
 import pi.agent.core.BeforeToolCallContext
 import pi.agent.core.BeforeToolCallResult
 import pi.ai.core.ANTHROPIC_PROVIDER
 import pi.ai.core.CacheRetention
 import pi.ai.core.Message
 import pi.ai.core.Model
+import pi.ai.core.ThinkingBudgets
 import pi.ai.core.TextContent
 import pi.ai.core.getModel
 
@@ -45,6 +42,7 @@ interface ModelGateway {
 
 class PiAgentModelGateway(
     private val apiKey: String,
+    private val memoryStore: MemoryStore,
     private val scriptRuntime: ScriptRuntime,
     private val phoneObserver: PhoneObserver,
     private val sessionCoordinator: SessionCoordinator,
@@ -52,8 +50,9 @@ class PiAgentModelGateway(
 ) : ModelGateway {
     override suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput {
         val prompt = PiAgentPromptFormatter.format(input)
+        val systemPrompt = buildSystemPrompt(memoryStore.read())
         runCatching {
-            artifactStore.writeSystemPrompt(input.sessionId, PI_AGENT_SYSTEM_PROMPT.trimIndent())
+            artifactStore.writeSystemPrompt(input.sessionId, systemPrompt)
             artifactStore.writeModelInput(input.sessionId, prompt)
         }
 
@@ -70,13 +69,17 @@ class PiAgentModelGateway(
             )
         }
 
-        val eventTrace = mutableListOf<SerializedAgentEvent>()
+        val eventTrace = CopyOnWriteArrayList<SerializedAgentEvent>()
         val toolBudget = ToolBudget(MAX_ITERATIONS)
-        val agent = createAgent(input.sessionId, toolBudget)
+        val agent = createAgent(input.sessionId, toolBudget, systemPrompt)
         val unsubscribe =
             agent.subscribe { event, _ ->
-                eventTrace += AgentTranscriptSerializer.serializeEvent(event)
-                logAgentEvent(event)
+                runCatching {
+                    eventTrace += AgentTranscriptSerializer.serializeEvent(event)
+                }
+                runCatching {
+                    logAgentEvent(event)
+                }
             }
 
         sessionCoordinator.logEvent("Agent started.")
@@ -87,11 +90,13 @@ class PiAgentModelGateway(
                 val finalOutput = finalAssistantText(agent.state.messages)
                 runCatching { artifactStore.writeFinalOutput(input.sessionId, finalOutput) }
                 val assistantError = finalAssistantError(agent.state.messages)
-                if (!assistantError.isNullOrBlank()) {
+                val parsedResult = if (!assistantError.isNullOrBlank()) {
                     ModelTurnOutput.Blocked("Model request failed. $assistantError")
                 } else {
                     PiAgentResultParser.parse(finalOutput)
                 }
+                runMemoryReflection(agent, input, toolBudget, parsedResult)
+                parsedResult
             } catch (cancelled: CancellationException) {
                 agent.abort()
                 throw cancelled
@@ -105,28 +110,33 @@ class PiAgentModelGateway(
             } finally {
                 unsubscribe()
                 withContext(NonCancellable) {
+                    val messageSnapshot =
+                        runCatching {
+                            agent.state.messages.toList().filterIsInstance<Message>()
+                        }.getOrElse { emptyList() }
                     runCatching {
-                        artifactStore.writeAgentMessages(input.sessionId, agent.state.messages.filterIsInstance<Message>())
+                        artifactStore.writeAgentMessages(input.sessionId, messageSnapshot)
                     }
-                    runCatching { artifactStore.writeAgentEvents(input.sessionId, eventTrace) }
+                    runCatching { artifactStore.writeAgentEvents(input.sessionId, eventTrace.toList()) }
                 }
             }
 
         return result
     }
 
-    private fun createAgent(sessionId: String, toolBudget: ToolBudget): Agent = Agent(
+    private fun createAgent(sessionId: String, toolBudget: ToolBudget, systemPrompt: String): Agent = Agent(
         AgentOptions(
             initialState =
             pi.agent.core.InitialAgentState(
-                systemPrompt = PI_AGENT_SYSTEM_PROMPT,
+                systemPrompt = systemPrompt,
                 model = model(),
-                thinkingLevel = AgentThinkingLevel.OFF,
-                tools = listOf(ExecuteScriptAgentTool(scriptRuntime, phoneObserver)),
+                thinkingLevel = AgentThinkingLevel.MEDIUM,
+                tools = toolDefinitions().map { toAgentTool(it) },
             ),
             getApiKey = { apiKey },
             sessionId = sessionId,
             cacheRetention = CacheRetention.SHORT,
+            thinkingBudgets = ThinkingBudgets(medium = 4096),
             toolExecution = pi.agent.core.ToolExecutionMode.SEQUENTIAL,
             beforeToolCall = { context, _ -> toolBudget.beforeToolCall(context) },
         ),
@@ -134,6 +144,45 @@ class PiAgentModelGateway(
 
     private fun model(): Model<String> = requireNotNull(getModel(ANTHROPIC_PROVIDER, MODEL_NAME)) {
         "Anthropic model $MODEL_NAME is not registered in pi-ai-core."
+    }
+
+    private fun toolDefinitions(): List<ToolDefinition<*>> = listOf(
+        ExecuteScriptToolDefinition(scriptRuntime, phoneObserver),
+        ReadMemoryToolDefinition(memoryStore),
+        EditMemoryToolDefinition(memoryStore),
+    )
+
+    private fun buildSystemPrompt(memoryContent: String): String = SystemPromptBuilder.build(
+        memoryContent = memoryContent,
+        tools = toolDefinitions(),
+    )
+
+    private suspend fun runMemoryReflection(agent: Agent, input: ModelTurnInput, toolBudget: ToolBudget, result: ModelTurnOutput) {
+        if (result !is ModelTurnOutput.Completion && result !is ModelTurnOutput.Blocked) {
+            return
+        }
+
+        toolBudget.enterReflectionPhase()
+        val reflectionPrompt = MemoryReflectionPromptBuilder.format(input, result)
+        runCatching { artifactStore.writeMemoryReflectionPrompt(input.sessionId, reflectionPrompt) }
+        sessionCoordinator.logEvent("Agent memory reflection started.")
+
+        runCatching {
+            agent.prompt(reflectionPrompt)
+            val reflectionOutput = finalAssistantText(agent.state.messages)
+            runCatching { artifactStore.writeMemoryReflectionOutput(input.sessionId, reflectionOutput) }
+            when (val parsed = MemoryReflectionResultParser.parse(reflectionOutput)) {
+                is MemoryReflectionResult.NoUpdate ->
+                    sessionCoordinator.logEvent("Memory reflection made no durable update. ${parsed.summary}")
+
+                is MemoryReflectionResult.Updated ->
+                    sessionCoordinator.logEvent("Memory reflection updated memory.md. ${parsed.summary}")
+            }
+        }.onFailure { throwable ->
+            sessionCoordinator.logEvent(
+                "Memory reflection failed. ${throwable.message ?: throwable::class.simpleName ?: "Unknown failure."}",
+            )
+        }
     }
 
     private fun logAgentEvent(event: AgentEvent) {
@@ -162,94 +211,47 @@ class PiAgentModelGateway(
     companion object {
         const val MODEL_NAME = "claude-haiku-4-5"
         const val MAX_ITERATIONS = 100
-        const val PROMPT_VERSION = "pi-agent-anthropic-v1"
+        const val PROMPT_VERSION = "pi-agent-anthropic-v6"
 
-        internal fun systemPromptForTests(): String = PI_AGENT_SYSTEM_PROMPT
-
-        private val PI_AGENT_SYSTEM_PROMPT: String =
-            buildString {
-                val rules =
-                    listOf(
-                        "All phone interaction must happen through execute_script.",
-                        "The TypeScript contract above is the source of truth for the script surface. " +
-                            "Do not invent APIs or fields outside it.",
-                        "claune APIs are synchronous plain function calls. Do not use await, Promise syntax, or async functions.",
-                        "Every claune action except observePhone throws immediately if the host call fails. " +
-                            "Do not assume a wait or tap succeeded unless the script continues past it.",
-                        "Refs and element ids are snapshot-scoped. After navigation, scrolling, typing, tapping, " +
-                            "or any UI-changing action, call observePhone() again before using new refs or ids.",
-                        "waitForState(\"element\", value, timeoutMs) expects an element id from actionableElements, not a ref.",
-                        "After navigation, prefer waitForState(\"package\", \"...\", timeoutMs) or " +
-                            "waitForSelector({ ... }, timeoutMs) instead of waiting on a stale ref or element id.",
-                        "Never invent refs or element IDs; use only values present in snapshots.",
-                        "Never select elements by array index. Use selector matches, refs, ids, resource ids, or labels from the snapshot.",
-                        "Prefer tapSelector({ text: \"...\" }) when text is distinctive, and tapRef(ref) " +
-                            "when you already have a fresh ref from the current snapshot.",
-                        "Use typeIntoFocused(text) when the current screen already has a focused editable field. " +
-                            "Otherwise, select a specific editable element first and then type into it.",
-                        "Prefer the fewest scripts possible. A single script may observe, take multiple actions, wait for state changes, " +
-                            "and return a compact summary.",
-                        "Keep scripts focused but not tiny; avoid spending iterations on trivial one-action probes " +
-                            "when the next step is already clear.",
-                        "If the current screen is confusing, off-plan, or repeated assumptions fail, re-establish a known state " +
-                            "before continuing instead of persisting with a broken plan.",
-                        "Prefer visible, directly actionable controls over indirect routes when both are available.",
-                        "Distinguish between selecting content and triggering an action attached to that content.",
-                        "Do not hardcode launcher package names; vendor launchers vary. After pressHome(), " +
-                            "capture a fresh snapshot and tap the launcher icon you need.",
-                        "For any task that changes app or device state, capture the relevant baseline before acting " +
-                            "and verify an observable delta afterward.",
-                        "Never claim success from pre-existing state. Verify what changed because of your actions.",
-                        "If a launch, wait, or selector assumption fails, re-observe and adapt instead of repeating the same assumption.",
-                        "If the goal is complete, stop using tools and return final JSON only.",
-                        "If progress is impossible, stop using tools and return final JSON only.",
-                    )
-
-                appendLine("You are Claune Android, a phone-control agent operating an Android 12 device.")
-                appendLine()
-                appendLine(
-                    "You must help the user achieve the goal by reasoning over the provided phone snapshot and recent session events.",
-                )
-                appendLine()
-                appendLine("You have exactly one tool: execute_script.")
-                appendLine("Use execute_script whenever you need to act on or re-check the phone.")
-                appendLine("The script runs in a JS runtime with a global object named `claune`.")
-                appendLine()
-                appendLine(ClauneHostContract.modelContractBlock)
-                appendLine()
-                appendLine("Important rules:")
-                rules.forEach { rule ->
-                    append("- ")
-                    appendLine(rule)
-                }
-                appendLine()
-                appendLine("Example valid script:")
-                appendLine("let screen = claune.observePhone();")
-                appendLine("claune.pressHome();")
-                appendLine("screen = claune.observePhone();")
-                appendLine("claune.tapSelector({ text: \"Settings\" });")
-                appendLine("claune.waitForState(\"package\", \"com.android.settings\", 3000);")
-                appendLine("screen = claune.observePhone();")
-                appendLine("claune.tapSelector({ text: \"Wi-Fi\" });")
-                appendLine("claune.waitForSelector({ text: \"Wi-Fi assistant\", first: true }, 3000);")
-                appendLine("return { stage: \"wifi_page\", foregroundPackage: screen.foregroundPackage };")
-                appendLine()
-                appendLine("Your final response must be a single valid JSON object with no prose before or after it.")
-                appendLine("The first character of the final response must be { and the last character must be }.")
-                appendLine("Use exactly one of these shapes:")
-                appendLine("""{"kind":"completion","summary":"..."}""")
-                appendLine("""{"kind":"blocked","reason":"..."}""")
-                appendLine("""{"kind":"message","messageToUser":"..."}""")
-                appendLine()
-                appendLine("Do not wrap the final JSON in markdown fences.")
-            }.trim()
+        internal fun systemPromptForTests(memoryContent: String = "# Claune Memory\n\n"): String = SystemPromptBuilder.build(
+            memoryContent = memoryContent,
+            tools = listOf(
+                ExecuteScriptToolDefinition(FailingScriptRuntime, FailingPhoneObserver),
+                ReadMemoryToolDefinition(FailingMemoryStore),
+                EditMemoryToolDefinition(FailingMemoryStore),
+            ),
+        )
     }
 }
 
-private class ToolBudget(private val maxToolCalls: Int) {
+private class ToolBudget(private val maxToolCalls: Int, private val maxReflectionToolCalls: Int = 4) {
+    private var inReflectionPhase: Boolean = false
     private var usedToolCalls: Int = 0
+    private var usedReflectionToolCalls: Int = 0
+
+    fun enterReflectionPhase() {
+        inReflectionPhase = true
+        usedReflectionToolCalls = 0
+    }
 
     fun beforeToolCall(context: BeforeToolCallContext): BeforeToolCallResult? {
+        if (inReflectionPhase) {
+            if (context.toolCall.name == "execute_script") {
+                return BeforeToolCallResult(
+                    block = true,
+                    reason = "Phone interaction is not allowed during memory reflection.",
+                )
+            }
+            if (usedReflectionToolCalls >= maxReflectionToolCalls) {
+                return BeforeToolCallResult(
+                    block = true,
+                    reason = "Memory reflection tool budget exceeded after $maxReflectionToolCalls tool calls.",
+                )
+            }
+            usedReflectionToolCalls += 1
+            return null
+        }
+
         if (usedToolCalls >= maxToolCalls) {
             return BeforeToolCallResult(
                 block = true,
@@ -261,81 +263,6 @@ private class ToolBudget(private val maxToolCalls: Int) {
     }
 }
 
-internal class ExecuteScriptAgentTool(private val scriptRuntime: ScriptRuntime, private val phoneObserver: PhoneObserver) :
-    AgentTool<String> {
-    override val name: String = "execute_script"
-    override val label: String = "Execute Script"
-    override val description: String =
-        "Execute a JavaScript snippet against the live Claune host runtime. " +
-            "Use this tool for any phone interaction or phone-state recheck. " +
-            "Return value is JSON text with script result and a post-action snapshot."
-    override val parameters =
-        buildJsonObject {
-            put("type", JsonPrimitive("object"))
-            put(
-                "properties",
-                buildJsonObject {
-                    put(
-                        "script",
-                        buildJsonObject {
-                            put("type", JsonPrimitive("string"))
-                            put(
-                                "description",
-                                JsonPrimitive(
-                                    "A complete JavaScript snippet that uses the claune host APIs to observe the phone, " +
-                                        "act on it, and return a compact result object.",
-                                ),
-                            )
-                        },
-                    )
-                },
-            )
-            put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("script"))))
-        }
-
-    override fun validateArguments(arguments: kotlinx.serialization.json.JsonObject): String =
-        arguments["script"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: error("Missing script")
-
-    override suspend fun execute(
-        toolCallId: String,
-        params: String,
-        signal: pi.ai.core.AbortSignal?,
-        onUpdate: pi.agent.core.AgentToolUpdateCallback<JsonElement>?,
-    ): AgentToolResult<JsonElement> {
-        val result =
-            scriptRuntime.execute(
-                ScriptExecutionRequest(
-                    script = params,
-                    source = "pi_agent",
-                ),
-            )
-        val postActionSnapshot = phoneObserver.captureSnapshot().toPayload()
-        val payload =
-            ExecuteScriptToolResult(
-                ok = result.ok,
-                summary = result.summary,
-                error = result.error,
-                scriptData = result.data,
-                postActionSnapshot = postActionSnapshot,
-            )
-        val encoded = ScriptJson.codec.encodeToString(ExecuteScriptToolResult.serializer(), payload)
-        return AgentToolResult(
-            content = listOf(TextContent(encoded)),
-            details = ScriptJson.codec.encodeToJsonElement(ExecuteScriptToolResult.serializer(), payload),
-        )
-    }
-}
-
-@Serializable
-internal data class ExecuteScriptToolResult(
-    val ok: Boolean,
-    val summary: String,
-    val error: String? = null,
-    val scriptData: JsonElement? = null,
-    val postActionSnapshot: UiSnapshotPayload,
-)
-
 @Serializable
 internal data class FinalAgentResponse(
     val kind: String,
@@ -343,6 +270,9 @@ internal data class FinalAgentResponse(
     val reason: String? = null,
     val messageToUser: String? = null,
 )
+
+@Serializable
+internal data class MemoryReflectionResponse(val kind: String, val summary: String)
 
 internal object PiAgentResultParser {
     fun parse(raw: String): ModelTurnOutput {
@@ -413,6 +343,117 @@ internal object PiAgentResultParser {
     }
 }
 
+private object MemoryReflectionPromptBuilder {
+    fun format(input: ModelTurnInput, result: ModelTurnOutput): String = buildString {
+        appendLine("System follow-up: reflect on the run for long-term memory only.")
+        appendLine()
+        appendLine("Original user goal:")
+        appendLine(input.goal)
+        appendLine()
+        appendLine("Run outcome:")
+        when (result) {
+            is ModelTurnOutput.Blocked -> appendLine("blocked: ${result.reason}")
+            is ModelTurnOutput.Completion -> appendLine("completion: ${result.summary}")
+            is ModelTurnOutput.Message -> appendLine("message: ${result.messageToUser}")
+        }
+        appendLine()
+        appendLine("Rules for this reflection turn:")
+        appendLine("- Do not use execute_script.")
+        appendLine("- Read memory.md first if you might update it.")
+        appendLine("- Use edit_memory for a surgical update, not a full rewrite.")
+        appendLine(
+            "- Only store durable long-term facts: stable app facts, stable device facts, recurring workflow rules, or user preferences.",
+        )
+        appendLine(
+            "- Do not store time-sensitive, situational, or one-off observations. Memory is for durable facts that are likely to remain useful across many future runs.",
+        )
+        appendLine(
+            "- If a candidate fact depends on temporary state, recent search results, ephemeral availability, current contents, or a single named item/entity from one task, treat it as transient and do not store it.",
+        )
+        appendLine("- Do not store one-off task outcomes, transient UI state, generic prompting rules, or short-term learnings.")
+        appendLine("- If there is no durable long-term learning worth saving, do not update memory.md.")
+        appendLine()
+        appendLine("Few-shot examples:")
+        appendLine("""- Good durable memory: "On this device, App X uses package com.example.realapp instead of the branded name." """)
+        appendLine("""- Why good: that is a stable app/device fact that can prevent the same mistake in future runs.""")
+        appendLine("""- Bad transient memory: "Today the search results showed oranges unavailable." """)
+        appendLine("""- Why bad: that depends on temporary inventory or current results and may be false later.""")
+        appendLine("""- Good durable memory: "In App Y, tapping the visible search wrapper does not focus an editable field; verify focus before typing." """)
+        appendLine("""- Why good: that is a recurring interaction fact about the app surface, not a one-off task result.""")
+        appendLine("""- Bad transient memory: "This run succeeded after opening Screen Z and tapping the third visible item." """)
+        appendLine("""- Why bad: that is just a one-run tactic, not a durable fact worth injecting into future prompts.""")
+        appendLine()
+        appendLine("Return a single JSON object with exactly one of these shapes:")
+        appendLine("""{"kind":"no_update","summary":"..."}""")
+        appendLine("""{"kind":"updated","summary":"..."}""")
+        appendLine()
+        appendLine("Do not wrap the final JSON in markdown fences.")
+    }.trim()
+}
+
+private sealed interface MemoryReflectionResult {
+    val summary: String
+
+    data class NoUpdate(override val summary: String) : MemoryReflectionResult
+
+    data class Updated(override val summary: String) : MemoryReflectionResult
+}
+
+private object MemoryReflectionResultParser {
+    fun parse(raw: String): MemoryReflectionResult {
+        val payload =
+            runCatching {
+                ScriptJson.codec.decodeFromString(MemoryReflectionResponse.serializer(), raw.trim())
+            }.getOrElse {
+                extractCandidateJsonObjects(raw)
+                    .asReversed()
+                    .firstNotNullOfOrNull { candidate ->
+                        runCatching {
+                            ScriptJson.codec.decodeFromString(MemoryReflectionResponse.serializer(), candidate)
+                        }.getOrNull()
+                    }
+            } ?: return MemoryReflectionResult.NoUpdate("Malformed reflection output.")
+
+        return when (payload.kind) {
+            "no_update" -> MemoryReflectionResult.NoUpdate(payload.summary)
+            "updated" -> MemoryReflectionResult.Updated(payload.summary)
+            else -> MemoryReflectionResult.NoUpdate("Unsupported reflection kind '${payload.kind}'.")
+        }
+    }
+
+    private fun extractCandidateJsonObjects(raw: String): List<String> {
+        val candidates = mutableListOf<String>()
+        var inString = false
+        var escaping = false
+        var depth = 0
+        var startIndex = -1
+
+        raw.forEachIndexed { index, char ->
+            when {
+                escaping -> escaping = false
+                char == '\\' && inString -> escaping = true
+                char == '"' -> inString = !inString
+                !inString && char == '{' -> {
+                    if (depth == 0) {
+                        startIndex = index
+                    }
+                    depth += 1
+                }
+
+                !inString && char == '}' && depth > 0 -> {
+                    depth -= 1
+                    if (depth == 0 && startIndex >= 0) {
+                        candidates += raw.substring(startIndex, index + 1)
+                        startIndex = -1
+                    }
+                }
+            }
+        }
+
+        return candidates
+    }
+}
+
 internal object PiAgentPromptFormatter {
     fun format(input: ModelTurnInput): String = buildString {
         appendLine("Goal:")
@@ -447,8 +488,6 @@ internal object PiAgentPromptFormatter {
             input.snapshot.actionableElements.take(20).forEach { element ->
                 append("- ref=")
                 append(element.ref)
-                append(", id=")
-                append(element.id)
                 append(", role=")
                 append(element.role)
                 append(", label=")
@@ -459,6 +498,8 @@ internal object PiAgentPromptFormatter {
                 append(element.contentDescription ?: "<none>")
                 append(", resourceId=")
                 append(element.resourceId ?: "<none>")
+                append(", idForIdOnlyApis=")
+                append(element.id)
                 append(", clickable=")
                 append(element.clickable)
                 append(", editable=")
@@ -475,5 +516,26 @@ internal object PiAgentPromptFormatter {
         }
         appendLine()
         appendLine("Return final JSON only when the goal is complete or clearly blocked.")
+    }
+}
+
+private object FailingScriptRuntime : ScriptRuntime {
+    override suspend fun execute(request: com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest) =
+        error("Test helper should not execute scripts")
+}
+
+private object FailingPhoneObserver : PhoneObserver {
+    override suspend fun captureSnapshot() = error("Test helper should not capture snapshots")
+}
+
+private object FailingMemoryStore : MemoryStore {
+    override suspend fun read(): String = "# Claune Memory\n\n"
+
+    override suspend fun edit(oldText: String, newText: String) {
+        error("Test helper should not edit memory")
+    }
+
+    override suspend fun overwrite(content: String) {
+        error("Test helper should not overwrite memory")
     }
 }
