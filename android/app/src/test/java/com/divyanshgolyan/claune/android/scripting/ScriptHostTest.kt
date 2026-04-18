@@ -11,6 +11,8 @@ import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -159,6 +161,34 @@ class ScriptHostTest {
     }
 
     @Test
+    fun `tapSelector accepts label selectors because labels are exposed in snapshots`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped selector match."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "wifi", ref = "e1", label = "Wi-Fi", text = null),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.tapSelector("""{"label":"Wi-Fi"}""")
+
+        assertTrue(result.ok)
+        assertEquals("wifi", actuator.lastTapped?.elementId)
+    }
+
+    @Test
     fun `typeIntoFocused targets the focused editable element`() = runTest {
         val actuator = FakePhoneActuator(typeResult = ActionResult.Success("Typed into focused field."))
         val host =
@@ -187,6 +217,84 @@ class ScriptHostTest {
         assertTrue(result.ok)
         assertEquals("search-box", actuator.lastTyped?.first?.elementId)
         assertEquals("apple", actuator.lastTyped?.second)
+    }
+
+    @Test
+    fun `typeIntoSelector activates a wrapper control and types into the resulting editable element`() = runTest {
+        val actuator = FakePhoneActuator(
+            tapResult = ActionResult.Success("Tapped wrapper."),
+            typeResult = ActionResult.Success("Typed into activated field."),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
+                            ),
+                        ),
+                        snapshot(
+                            focusedElementId = "search-input",
+                            elements =
+                            listOf(
+                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
+                                element(id = "search-input", ref = "e1", label = "Search input", role = "input", editable = true, focused = true),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.typeIntoSelector("""{"label":"Search"}""", "oranges")
+
+        assertTrue(result.ok)
+        assertEquals("search-wrapper", actuator.lastTapped?.elementId)
+        assertEquals("search-input", actuator.lastTyped?.first?.elementId)
+        assertEquals("oranges", actuator.lastTyped?.second)
+    }
+
+    @Test
+    fun `focusSelector returns the activated editable element`() = runTest {
+        val actuator = FakePhoneActuator(
+            tapResult = ActionResult.Success("Tapped wrapper."),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(
+                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
+                            ),
+                        ),
+                        snapshot(
+                            focusedElementId = "search-input",
+                            elements = listOf(
+                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
+                                element(id = "search-input", ref = "e1", label = "Search input", role = "input", editable = true, focused = true),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.focusSelector("""{"label":"Search"}""", timeoutMs = 1000)
+
+        assertTrue(result.ok)
+        assertEquals("search-wrapper", actuator.lastTapped?.elementId)
+        assertEquals("search-input", result.data!!.jsonObject["activatedElementId"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -230,6 +338,34 @@ class ScriptHostTest {
 
         assertFalse(result.ok)
         assertEquals("Unsupported scroll direction 'sideways'.", result.message)
+    }
+
+    @Test
+    fun `scrollRef resolves a fresh ref to the underlying element id`() = runTest {
+        val actuator = FakePhoneActuator(scrollResult = ActionResult.Success("Scrolled container."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(
+                                element(id = "scroll-el", ref = "e1", label = "Product list"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.scrollRef("e1", "down")
+
+        assertTrue(result.ok)
+        assertEquals("scroll-el", actuator.lastScrolled?.first?.elementId)
+        assertEquals(ScrollDirection.Down, actuator.lastScrolled?.second)
     }
 
     private fun snapshot(

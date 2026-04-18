@@ -106,6 +106,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.quickjs.wrapper.android)
+    implementation(libs.rhino)
     implementation(project(":pi-agent-core"))
 
     implementation(platform(libs.androidx.compose.bom))

@@ -12,6 +12,7 @@ core-ktx = "1.17.0"
 datastore = "1.2.1"
 coroutines = "1.10.2"
 quickjs-wrapper = "3.2.3"
+rhino = "1.7.15.1"
 junit4 = "4.13.2"
 junit5 = "5.12.2"
 junit-platform = "1.12.2"
@@ -37,6 +38,7 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 quickjs-wrapper-android = { module = "wang.harlon.quickjs:wrapper-android", version.ref = "quickjs-wrapper" }
+rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit5" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit-platform" }

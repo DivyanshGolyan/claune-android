@@ -15,6 +15,13 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonNull
+import org.mozilla.javascript.CompilerEnvirons
+import org.mozilla.javascript.Context
+import org.mozilla.javascript.Parser
+import org.mozilla.javascript.ast.AstNode
+import org.mozilla.javascript.ast.Name
+import org.mozilla.javascript.ast.NodeVisitor
+import org.mozilla.javascript.ast.PropertyGet
 
 class QuickJsScriptRuntime(
     private val phoneObserver: PhoneObserver,
@@ -57,7 +64,7 @@ class QuickJsScriptRuntime(
             }.getOrElse { throwable ->
                 ScriptExecutionResult(
                     ok = false,
-                    summary = "Script execution failed.",
+                    summary = if (throwable is ScriptValidationException) "Script uses unsupported syntax." else "Script execution failed.",
                     error = throwable.message ?: throwable::class.simpleName ?: "Unknown QuickJS failure.",
                     hostCalls = host.hostCalls(),
                 )
@@ -118,6 +125,32 @@ class QuickJsScriptRuntime(
                         ScriptJson.codec.encodeToString(
                             HostCallOutcome.serializer(),
                             host.tapRef(ref),
+                        )
+                    }
+                },
+            )
+            global.setProperty(
+                "__clauneScrollRefJson",
+                JSCallFunction { args: Array<out Any?> ->
+                    val ref = args.getOrNull(0)?.toString().orEmpty()
+                    val direction = args.getOrNull(1)?.toString().orEmpty()
+                    runBlocking {
+                        ScriptJson.codec.encodeToString(
+                            HostCallOutcome.serializer(),
+                            host.scrollRef(ref, direction),
+                        )
+                    }
+                },
+            )
+            global.setProperty(
+                "__clauneFocusSelectorJson",
+                JSCallFunction { args: Array<out Any?> ->
+                    val selectorJson = args.getOrNull(0)?.toString().orEmpty()
+                    val timeoutMs = args.getOrNull(1)?.toString()?.toLongOrNull() ?: 0L
+                    runBlocking {
+                        ScriptJson.codec.encodeToString(
+                            HostCallOutcome.serializer(),
+                            host.focusSelector(selectorJson, timeoutMs),
                         )
                     }
                 },
@@ -236,8 +269,9 @@ class QuickJsScriptRuntime(
             )
 
             context.evaluate(ClauneHostContract.bootstrapJavascript)
+            val compiledScript = compileUserScript(context, request.script)
 
-            val resultJson = context.evaluate(wrapUserScript(request.script)) as? String
+            val resultJson = context.execute(compiledScript) as? String
 
             val parsedData = resultJson?.let(ScriptJson.codec::parseToJsonElement) ?: JsonNull
             val summary =
@@ -263,6 +297,29 @@ class QuickJsScriptRuntime(
         }
     }
 
+    private fun compileUserScript(context: QuickJSContext, script: String): ByteArray = try {
+        context.compile(wrapUserScript(script), "claune-user-script.js")
+    } catch (throwable: Throwable) {
+        throw ScriptValidationException(mapSyntaxError(script, throwable))
+    }
+
+    private fun mapSyntaxError(script: String, throwable: Throwable): String {
+        val message = throwable.message?.trim()?.lineSequence()?.firstOrNull()?.trim().orEmpty()
+        return when {
+            script.contains("await") ->
+                "unsupported_syntax: top-level await is not supported; claune APIs are synchronous plain function calls"
+
+            script.contains("import ") || script.contains("\nimport ") || script.contains("export ") ->
+                "unsupported_syntax: import/export modules are not supported in Claune scripts"
+
+            script.contains("async ") ->
+                "unsupported_syntax: async functions are not supported; write synchronous scripts only"
+
+            message.isNotBlank() -> "unsupported_syntax: $message"
+            else -> "unsupported_syntax: script could not be compiled by QuickJS"
+        }
+    }
+
     private fun wrapUserScript(script: String): String =
         """
         (() => {
@@ -285,38 +342,53 @@ class QuickJsScriptRuntime(
 }
 
 internal object ScriptSourceValidator {
-    fun firstUnsupportedFeature(script: String): UnsupportedScriptFeature? = unsupportedFeatures.firstOrNull { feature ->
-        feature.pattern.containsMatchIn(script)
+    fun firstUnsupportedFeature(script: String): UnsupportedScriptFeature? {
+        val ast =
+            runCatching {
+                Parser(
+                    CompilerEnvirons().apply {
+                        languageVersion = Context.VERSION_ES6
+                    },
+                ).parse(wrapForStaticAnalysis(script), "claune-user-script.js", 1)
+            }.getOrNull() ?: return null
+
+        var unsupported: UnsupportedScriptFeature? = null
+        ast.visit(
+            NodeVisitor { node ->
+                if (unsupported != null) {
+                    return@NodeVisitor false
+                }
+                unsupported = unsupportedFeatureForNode(node)
+                unsupported == null
+            },
+        )
+        return unsupported
     }
 
-    private val unsupportedFeatures =
-        listOf(
-            UnsupportedScriptFeature(
-                name = "await",
-                pattern = Regex("""(^|[^\w$])await\s+"""),
-                error = "unsupported_syntax: top-level await is not supported; claune APIs are synchronous plain function calls",
-            ),
-            UnsupportedScriptFeature(
-                name = "async",
-                pattern = Regex("""(^|[^\w$])async\s+"""),
-                error = "unsupported_syntax: async functions are not supported; write synchronous scripts only",
-            ),
-            UnsupportedScriptFeature(
-                name = "promise",
-                pattern = Regex("""(^|[^\w$])Promise(\b|\.)"""),
-                error = "unsupported_syntax: Promise syntax is not supported in Claune scripts",
-            ),
+    private fun unsupportedFeatureForNode(node: AstNode): UnsupportedScriptFeature? = when {
+        node is PropertyGet && (node.left as? Name)?.identifier == "console" ->
             UnsupportedScriptFeature(
                 name = "console",
-                pattern = Regex("""(^|[^\w$])console\."""),
                 error = "unsupported_api: console is not available in Claune scripts; return compact data instead",
-            ),
+            )
+
+        node is Name && node.identifier == "Promise" ->
             UnsupportedScriptFeature(
-                name = "module",
-                pattern = Regex("""(^|\n)\s*(import|export)\b"""),
-                error = "unsupported_syntax: import/export modules are not supported in Claune scripts",
-            ),
-        )
+                name = "promise",
+                error = "unsupported_syntax: Promise syntax is not supported in Claune scripts",
+            )
+
+        else -> null
+    }
+
+    private fun wrapForStaticAnalysis(script: String): String =
+        """
+        function __clauneStaticAnalysis() {
+        $script
+        }
+        """.trimIndent()
 }
 
-internal data class UnsupportedScriptFeature(val name: String, val pattern: Regex, val error: String)
+private class ScriptValidationException(message: String) : IllegalArgumentException(message)
+
+internal data class UnsupportedScriptFeature(val name: String, val error: String)

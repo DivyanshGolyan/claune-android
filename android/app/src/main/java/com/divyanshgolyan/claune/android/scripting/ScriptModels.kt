@@ -80,6 +80,7 @@ data class UiElementPayload(
 @Serializable
 data class ElementSelectorPayload(
     val ref: String? = null,
+    val label: String? = null,
     val text: String? = null,
     val textExact: Boolean = false,
     val contentDescription: String? = null,

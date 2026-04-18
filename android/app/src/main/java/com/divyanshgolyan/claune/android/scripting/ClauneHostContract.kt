@@ -44,6 +44,7 @@ internal object ClauneHostContract {
             appendLine()
             appendLine("export interface ElementSelector {")
             appendLine("  ref?: string;")
+            appendLine("  label?: string;")
             appendLine("  text?: string;")
             appendLine("  textExact?: boolean;")
             appendLine("  contentDescription?: string;")
@@ -123,6 +124,26 @@ internal object ClauneHostContract {
                 parameters = listOf(HostParameter("ref", "string", "String(%s)")),
             ),
             HostFunction(
+                name = "scrollRef",
+                nativeBinding = "__clauneScrollRefJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Scroll a scrollable actionable element by snapshot ref in the given direction.",
+                parameters = listOf(
+                    HostParameter("ref", "string", "String(%s)"),
+                    HostParameter("direction", "\"up\" | \"down\"", "String(%s)"),
+                ),
+            ),
+            HostFunction(
+                name = "focusSelector",
+                nativeBinding = "__clauneFocusSelectorJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Activate a selector-matched control and wait for an editable field to become available for typing.",
+                parameters = listOf(
+                    HostParameter("selector", "ElementSelector", "JSON.stringify(%s ?? {})"),
+                    HostParameter("timeoutMs", "number", "Number(%s ?? 0)"),
+                ),
+            ),
+            HostFunction(
                 name = "tapSelector",
                 nativeBinding = "__clauneTapSelectorJson",
                 returnType = "HostSuccessOutcome",
@@ -140,7 +161,7 @@ internal object ClauneHostContract {
                 name = "typeIntoSelector",
                 nativeBinding = "__clauneTypeIntoSelectorJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Type text into a selector-matched editable element.",
+                documentation = "Type text into an editable element matched by selector, activating a wrapper control first when needed.",
                 parameters = listOf(
                     HostParameter("selector", "ElementSelector", "JSON.stringify(%s ?? {})"),
                     HostParameter("text", "string", "String(%s)"),
@@ -167,7 +188,7 @@ internal object ClauneHostContract {
                 name = "scrollContainer",
                 nativeBinding = "__clauneScrollContainerJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Scroll a scrollable container element id in the given direction.",
+                documentation = "Scroll a scrollable container element id in the given direction. Prefer scrollRef when you already have a fresh snapshot ref.",
                 parameters = listOf(
                     HostParameter("elementId", "string", "String(%s)"),
                     HostParameter("direction", "\"up\" | \"down\"", "String(%s)"),
