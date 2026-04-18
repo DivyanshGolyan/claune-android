@@ -31,4 +31,17 @@ class SessionCoordinatorTest {
         assertEquals(SessionStatus.Blocked, coordinator.uiState.value.status)
         assertFalse(coordinator.uiState.value.foregroundServiceRunning)
     }
+
+    @Test
+    fun `recover orphaned session cancels stale running state`() {
+        val coordinator = SessionCoordinator(InMemorySessionLogStore())
+
+        coordinator.startSession("Open Settings")
+        coordinator.setForegroundServiceRunning(true)
+
+        coordinator.recoverOrphanedSession("Previous session ended unexpectedly.")
+
+        assertEquals(SessionStatus.Cancelled, coordinator.uiState.value.status)
+        assertFalse(coordinator.uiState.value.foregroundServiceRunning)
+    }
 }

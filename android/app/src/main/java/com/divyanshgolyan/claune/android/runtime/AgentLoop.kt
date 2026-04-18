@@ -5,6 +5,8 @@ import com.divyanshgolyan.claune.android.data.local.RunArtifactMetadata
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.llm.ModelGateway
 import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 
 class AgentLoop(
     private val phoneObserver: PhoneObserver,
@@ -12,6 +14,7 @@ class AgentLoop(
     private val sessionCoordinator: SessionCoordinator,
     private val logStore: SessionLogStore,
     private val artifactStore: AgentRunArtifactStore,
+    private val modelTurnTimeoutMs: Long = DEFAULT_MODEL_TURN_TIMEOUT_MS,
 ) {
     suspend fun runSingleTurn(goal: String) {
         sessionCoordinator.startSession(goal)
@@ -38,14 +41,22 @@ class AgentLoop(
         )
 
         val modelOutput =
-            modelGateway.nextStep(
-                ModelTurnInput(
-                    sessionId = sessionId,
-                    goal = goal,
-                    snapshot = snapshot,
-                    recentEvents = sessionCoordinator.uiState.value.timeline,
-                ),
-            )
+            try {
+                withTimeout(modelTurnTimeoutMs) {
+                    modelGateway.nextStep(
+                        ModelTurnInput(
+                            sessionId = sessionId,
+                            goal = goal,
+                            snapshot = snapshot,
+                            recentEvents = sessionCoordinator.uiState.value.timeline,
+                        ),
+                    )
+                }
+            } catch (_: TimeoutCancellationException) {
+                val reason = "Model turn timed out after ${modelTurnTimeoutMs}ms."
+                sessionCoordinator.logEvent(reason)
+                ModelTurnOutput.Blocked(reason)
+            }
 
         when (modelOutput) {
             is ModelTurnOutput.Message -> {
@@ -60,5 +71,9 @@ class AgentLoop(
                 sessionCoordinator.blockSession(modelOutput.reason)
             }
         }
+    }
+
+    companion object {
+        const val DEFAULT_MODEL_TURN_TIMEOUT_MS: Long = 120_000
     }
 }

@@ -1,6 +1,7 @@
 package com.divyanshgolyan.claune.android.service
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -136,5 +137,11 @@ class ClauneAgentService : Service() {
 
         fun stopIntent(context: Context) = Intent(context, ClauneAgentService::class.java)
             .setAction(ACTION_STOP)
+
+        @Suppress("DEPRECATION")
+        fun isRunning(context: Context): Boolean {
+            val manager = context.getSystemService(ActivityManager::class.java) ?: return false
+            return manager.getRunningServices(Int.MAX_VALUE).any { it.service.className == ClauneAgentService::class.java.name }
+        }
     }
 }

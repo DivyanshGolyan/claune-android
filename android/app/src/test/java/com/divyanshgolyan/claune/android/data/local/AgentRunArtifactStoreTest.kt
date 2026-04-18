@@ -102,6 +102,40 @@ class AgentRunArtifactStoreTest {
         assertTrue(firstBlock.contains("claune.observePhone"))
     }
 
+    @Test
+    fun `file store recovers orphaned running metadata`() {
+        val root = Files.createTempDirectory("claune-artifacts").toFile()
+        try {
+            val store = FileAgentRunArtifactStore(root) { JavaInstant.parse("2026-04-18T10:20:00Z") }
+
+            store.startRun(
+                RunArtifactMetadata(
+                    runId = "session-stuck",
+                    goal = "Add apples and oranges",
+                    startedAt = "2026-04-18T10:10:00Z",
+                    model = "claude-haiku-4-5",
+                    maxIterations = 100,
+                    promptVersion = "pi-agent-anthropic-v5",
+                ),
+            )
+
+            store.recoverOrphanedRuns("Previous session ended unexpectedly. Resetting stale running state.")
+
+            val metadata =
+                ScriptJson.codec.decodeFromString(
+                    RunArtifactMetadata.serializer(),
+                    root.resolve("session-stuck/metadata.json").readText(),
+                )
+
+            assertEquals(SessionStatus.Cancelled.name, metadata.status)
+            assertEquals("Previous session ended unexpectedly. Resetting stale running state.", metadata.latestSummary)
+            assertEquals(false, metadata.foregroundServiceRunning)
+            assertTrue(metadata.finishedAt != null)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun snapshot(): UiSnapshot = UiSnapshot(
         snapshotId = "snapshot-1",
         capturedAt = JavaInstant.parse("2026-04-17T10:00:00Z"),

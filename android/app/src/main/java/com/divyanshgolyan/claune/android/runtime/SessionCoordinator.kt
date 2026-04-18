@@ -34,6 +34,12 @@ class SessionCoordinator(private val logStore: SessionLogStore) {
         logStore.record(_uiState.value)
     }
 
+    fun recoverOrphanedSession(reason: String) {
+        if (_uiState.value.status == SessionStatus.Running) {
+            stopSession(reason)
+        }
+    }
+
     fun finishSession(summary: String) {
         _uiState.value =
             _uiState.value.copy(
