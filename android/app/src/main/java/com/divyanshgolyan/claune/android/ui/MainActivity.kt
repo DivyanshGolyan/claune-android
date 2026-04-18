@@ -9,8 +9,10 @@ import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.content.Intent as AndroidIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,7 +28,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -59,13 +60,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -159,6 +162,13 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, "Starting session...", Toast.LENGTH_SHORT).show()
         val intent = ClauneAgentService.startIntent(this, goal)
         ContextCompat.startForegroundService(this, intent)
+        moveTaskToBack(true)
+        startActivity(
+            AndroidIntent(AndroidIntent.ACTION_MAIN).apply {
+                addCategory(AndroidIntent.CATEGORY_HOME)
+                flags = AndroidIntent.FLAG_ACTIVITY_NEW_TASK
+            },
+        )
     }
 
     private fun stopAgentService() {
@@ -197,8 +207,9 @@ private fun ClauneApp(
 ) {
     val context = LocalContext.current
     var screen by rememberSaveable { mutableStateOf(ClauneScreen.Home.name) }
-    var goal by rememberSaveable { mutableStateOf("Open Settings and inspect the Wi-Fi page") }
+    var goal by rememberSaveable { mutableStateOf("") }
     var homeMode by rememberSaveable { mutableStateOf(HomeMode.Idle.name) }
+    var composerRequestsKeyboard by rememberSaveable { mutableStateOf(false) }
     var voiceUiState by remember { mutableStateOf(VoiceUiState()) }
     val speechRecognizer =
         remember {
@@ -310,6 +321,21 @@ private fun ClauneApp(
         }
     }
 
+    BackHandler(enabled = screen != ClauneScreen.Home.name || homeMode != HomeMode.Idle.name) {
+        when {
+            screen != ClauneScreen.Home.name -> {
+                screen = ClauneScreen.Home.name
+            }
+
+            homeMode != HomeMode.Idle.name -> {
+                speechRecognizer?.cancel()
+                voiceUiState = VoiceUiState()
+                composerRequestsKeyboard = false
+                homeMode = HomeMode.Idle.name
+            }
+        }
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = SoftKraftPalette.Background,
@@ -323,23 +349,25 @@ private fun ClauneApp(
                     mode = HomeMode.valueOf(homeMode),
                     goal = goal,
                     voiceUiState = voiceUiState,
+                    autoFocusInput = composerRequestsKeyboard,
                     onGoalChanged = { goal = it },
                     onReuseGoal = { goal = it },
                     onStart = {
+                        composerRequestsKeyboard = false
                         homeMode = HomeMode.Idle.name
                         onStartSession(goal)
                     },
                     onStop = onStopSession,
-                    onOpenTyping = { homeMode = HomeMode.Composer.name },
-                    onCloseComposer = {
-                        homeMode = HomeMode.Idle.name
-                        voiceUiState = VoiceUiState()
+                    onOpenTyping = {
+                        composerRequestsKeyboard = true
+                        homeMode = HomeMode.Composer.name
                     },
                     onStartVoiceCapture = {
                         if (!sessionState.foregroundServiceRunning &&
                             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                             PackageManager.PERMISSION_GRANTED
                         ) {
+                            composerRequestsKeyboard = false
                             homeMode = HomeMode.Composer.name
                             voiceUiState = VoiceUiState(startedAtMillis = SystemClock.elapsedRealtime())
                             startSpeechRecognition(speechRecognizer, context)
@@ -359,7 +387,6 @@ private fun ClauneApp(
                 SettingsScreen(
                     settingsState = settingsState,
                     accessibilityConnected = sessionState.accessibilityConnected,
-                    onBack = { screen = ClauneScreen.Home.name },
                     onSaveKey = onUpdateAnthropicKey,
                     onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                 )
@@ -375,12 +402,12 @@ private fun SoftKraftHomeScreen(
     mode: HomeMode,
     goal: String,
     voiceUiState: VoiceUiState,
+    autoFocusInput: Boolean,
     onGoalChanged: (String) -> Unit,
     onReuseGoal: (String) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onOpenTyping: () -> Unit,
-    onCloseComposer: () -> Unit,
     onStartVoiceCapture: () -> Unit,
     onStopVoiceCapture: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
@@ -422,11 +449,11 @@ private fun SoftKraftHomeScreen(
                     listeningElapsedSeconds = voiceUiState.elapsedSeconds,
                     listeningLevel = voiceUiState.level,
                     listeningError = voiceUiState.errorMessage,
+                    autoFocusInput = autoFocusInput,
                     canEdit = !sessionState.foregroundServiceRunning && isReady,
                     canStart = goal.isNotBlank() && !sessionState.foregroundServiceRunning && isReady,
                     canStop = sessionState.foregroundServiceRunning,
                     onGoalChanged = onGoalChanged,
-                    onClose = onCloseComposer,
                     onStartVoiceCapture = onStartVoiceCapture,
                     onStopVoiceCapture = onStopVoiceCapture,
                     onStart = onStart,
@@ -465,7 +492,10 @@ private fun IdleHomeScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item {
-                IdleHeader(onOpenSettings = onOpenSettings)
+                IdleHeader(
+                    isReady = isReady,
+                    onOpenSettings = onOpenSettings,
+                )
             }
 
             if (!isReady) {
@@ -477,69 +507,85 @@ private fun IdleHomeScreen(
                         onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                     )
                 }
-            }
+            } else {
+                val latestEntry = historyEntries.firstOrNull { it.goal.isNotBlank() }
+                latestEntry?.let { latest ->
+                    item {
+                        ContinueSessionCard(
+                            entry = latest,
+                            onReuseGoal = { onReuseGoal(latest.goal) },
+                        )
+                    }
+                }
 
-            val latestEntry = historyEntries.firstOrNull { it.goal.isNotBlank() }
-            latestEntry?.let { latest ->
-                item {
-                    ContinueSessionCard(
-                        entry = latest,
-                        onReuseGoal = { onReuseGoal(latest.goal) },
+                val recentEntries =
+                    if (latestEntry != null) {
+                        historyEntries.filterNot {
+                            it.sessionId == latestEntry.sessionId || it.goal == latestEntry.goal
+                        }
+                    } else {
+                        historyEntries
+                    }
+
+                if (recentEntries.isNotEmpty()) {
+                    item {
+                        SectionLabel("Recent")
+                    }
+                }
+
+                items(recentEntries.take(3)) { entry ->
+                    SessionHistoryRow(
+                        entry = entry,
+                        onReuseGoal = { onReuseGoal(entry.goal) },
                     )
                 }
             }
-
-            val recentEntries =
-                if (latestEntry != null) {
-                    historyEntries.filterNot {
-                        it.sessionId == latestEntry.sessionId || it.goal == latestEntry.goal
-                    }
-                } else {
-                    historyEntries
-                }
-
-            if (recentEntries.isNotEmpty()) {
-                item {
-                    SectionLabel("Recent")
-                }
-            }
-
-            items(recentEntries.take(3)) { entry ->
-                SessionHistoryRow(
-                    entry = entry,
-                    onReuseGoal = { onReuseGoal(entry.goal) },
-                )
-            }
         }
 
-        IdleDock(
-            modifier =
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 14.dp)
-                .navigationBarsPadding()
-                .padding(bottom = 16.dp),
-            listeningEnabled = isReady && !sessionState.foregroundServiceRunning,
-            onOpenTyping = onOpenTyping,
-            onStartVoiceCapture = onStartVoiceCapture,
-        )
+        if (isReady) {
+            IdleDock(
+                modifier =
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 14.dp)
+                    .navigationBarsPadding()
+                    .padding(bottom = 16.dp),
+                listeningEnabled = !sessionState.foregroundServiceRunning,
+                onOpenTyping = onOpenTyping,
+                onStartVoiceCapture = onStartVoiceCapture,
+            )
+        }
     }
 }
 
 @Composable
-private fun IdleHeader(onOpenSettings: () -> Unit) {
+private fun IdleHeader(isReady: Boolean, onOpenSettings: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Top,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionLabel("Fri Apr 18 · 9:30")
+            if (!isReady) {
+                SectionLabel("Setup")
+            }
             Text(
-                text = "what do you\nneed done?",
+                text =
+                if (isReady) {
+                    "what do you\nneed done?"
+                } else {
+                    "before we\nstart"
+                },
                 style = MaterialTheme.typography.headlineLarge,
                 color = SoftKraftPalette.Ink,
             )
+            if (!isReady) {
+                Text(
+                    text = "Finish these two steps and Claune will be ready to use your phone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SoftKraftPalette.InkSoft,
+                )
+            }
         }
 
         TextButton(onClick = onOpenSettings) {
@@ -625,16 +671,26 @@ private fun TaskComposerScreen(
     listeningElapsedSeconds: Int,
     listeningLevel: Float,
     listeningError: String?,
+    autoFocusInput: Boolean,
     canEdit: Boolean,
     canStart: Boolean,
     canStop: Boolean,
     onGoalChanged: (String) -> Unit,
-    onClose: () -> Unit,
     onStartVoiceCapture: () -> Unit,
     onStopVoiceCapture: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(autoFocusInput, isListening) {
+        if (autoFocusInput && !isListening) {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
     Column(
         modifier =
         Modifier
@@ -645,7 +701,6 @@ private fun TaskComposerScreen(
     ) {
         ComposerTopBar(
             statusText = if (isListening) "Listening · ${elapsedLabel(listeningElapsedSeconds)}" else null,
-            onClose = onClose,
         )
         Card(
             modifier =
@@ -686,6 +741,7 @@ private fun TaskComposerScreen(
                     Modifier
                         .fillMaxWidth()
                         .weight(1f)
+                        .focusRequester(focusRequester)
                         .testTag("goal_input"),
                     decorationBox = { innerTextField ->
                         Box(
@@ -753,10 +809,10 @@ private fun TaskComposerScreen(
 }
 
 @Composable
-private fun ComposerTopBar(statusText: String?, onClose: () -> Unit) {
+private fun ComposerTopBar(statusText: String?) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (statusText != null) {
@@ -767,11 +823,6 @@ private fun ComposerTopBar(statusText: String?, onClose: () -> Unit) {
                 fontSize = 11.sp,
                 letterSpacing = 1.4.sp,
             )
-        } else {
-            Spacer(modifier = Modifier)
-        }
-        TextButton(onClick = onClose) {
-            Text("Close", color = SoftKraftPalette.AccentDeep)
         }
     }
 }
@@ -830,37 +881,6 @@ private fun ComposerVoiceHero(isListening: Boolean, level: Float) {
                         ),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun Header(onOpenSettings: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SectionLabel("Soft Kraft")
-            Text(
-                text = "Claune",
-                style = MaterialTheme.typography.headlineLarge,
-                color = SoftKraftPalette.Ink,
-            )
-            Text(
-                text = "A warm command capsule for live phone use. Type for now, voice next.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = SoftKraftPalette.InkSoft,
-            )
-        }
-
-        TextButton(onClick = onOpenSettings) {
-            Text(
-                text = "Settings",
-                color = SoftKraftPalette.AccentDeep,
-                fontFamily = FontFamily.Monospace,
-            )
         }
     }
 }
@@ -990,180 +1010,9 @@ private fun SessionHistoryRow(entry: SessionHistoryEntry, onReuseGoal: () -> Uni
 }
 
 @Composable
-private fun BottomCapsule(
-    modifier: Modifier = Modifier,
-    goal: String,
-    onGoalChanged: (String) -> Unit,
-    canEdit: Boolean,
-    canStart: Boolean,
-    canStop: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    sessionState: SessionUiState,
-    fullScreen: Boolean = false,
-) {
-    val capsuleAlpha = if (canEdit || canStop) 1f else 0.62f
-
-    Card(
-        modifier =
-        modifier
-            .fillMaxWidth()
-            .shadow(
-                elevation = 28.dp,
-                shape = RoundedCornerShape(34.dp),
-                ambientColor = SoftKraftPalette.AccentDeep.copy(alpha = 0.18f),
-                spotColor = SoftKraftPalette.Ink.copy(alpha = 0.12f),
-            )
-            .alpha(capsuleAlpha),
-        shape = RoundedCornerShape(if (fullScreen) 30.dp else 34.dp),
-        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
-        elevation = CardDefaults.cardElevation(defaultElevation = 18.dp),
-    ) {
-        Column(
-            modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CapsuleModePill(label = "Mic", active = false, enabled = false)
-                    CapsuleModePill(label = "Type", active = true, enabled = true)
-                }
-                Text(
-                    text =
-                    if (sessionState.foregroundServiceRunning) {
-                        "working now"
-                    } else {
-                        "ready for a task"
-                    },
-                    color = SoftKraftPalette.InkSoft,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                )
-            }
-
-            BasicTextField(
-                value = goal,
-                onValueChange = onGoalChanged,
-                enabled = canEdit,
-                textStyle =
-                TextStyle(
-                    color = SoftKraftPalette.Ink,
-                    fontSize = 16.sp,
-                    lineHeight = 22.sp,
-                ),
-                modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = if (fullScreen) 240.dp else 0.dp)
-                    .testTag("goal_input"),
-                decorationBox = { innerTextField ->
-                    Box(
-                        modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .background(SoftKraftPalette.SurfaceInput, RoundedCornerShape(24.dp))
-                            .border(1.5.dp, SoftKraftPalette.Rule, RoundedCornerShape(24.dp))
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                    ) {
-                        if (goal.isBlank()) {
-                            Text(
-                                text = "Tell Claune what to do on your phone…",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = SoftKraftPalette.InkFaint,
-                            )
-                        }
-                        innerTextField()
-                    }
-                },
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text =
-                    if (fullScreen) {
-                        "Write the task clearly, then start when it reads exactly right."
-                    } else {
-                        "Keyboard-first for now. Voice is the next input slice."
-                    },
-                    modifier = Modifier.weight(1f),
-                    color = SoftKraftPalette.InkSoft,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontStyle = FontStyle.Italic,
-                )
-
-                if (canStop) {
-                    OutlinedButton(
-                        modifier = Modifier.testTag("stop_session_button"),
-                        onClick = onStop,
-                    ) {
-                        Text("Stop")
-                    }
-                } else {
-                    Button(
-                        modifier = Modifier.testTag("start_session_button"),
-                        onClick = onStart,
-                        enabled = canStart,
-                        colors =
-                        ButtonDefaults.buttonColors(
-                            containerColor = SoftKraftPalette.Accent,
-                            contentColor = SoftKraftPalette.Background,
-                        ),
-                    ) {
-                        Text("Start")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CapsuleModePill(label: String, active: Boolean, enabled: Boolean) {
-    val background =
-        when {
-            active -> SoftKraftPalette.AccentSoft
-            !enabled -> SoftKraftPalette.Background
-            else -> SoftKraftPalette.SurfaceMuted
-        }
-    val textColor =
-        when {
-            active -> SoftKraftPalette.AccentDeep
-            !enabled -> SoftKraftPalette.InkFaint
-            else -> SoftKraftPalette.InkSoft
-        }
-
-    Box(
-        modifier =
-        Modifier
-            .background(background, CircleShape)
-            .border(1.dp, SoftKraftPalette.Rule, CircleShape)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
-    ) {
-        Text(
-            text = label.uppercase(),
-            color = textColor,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-        )
-    }
-}
-
-@Composable
 private fun SettingsScreen(
     settingsState: SettingsState,
     accessibilityConnected: Boolean,
-    onBack: () -> Unit,
     onSaveKey: (String) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
 ) {
@@ -1185,12 +1034,6 @@ private fun SettingsScreen(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(
-                    onClick = onBack,
-                    contentPadding = PaddingValues(0.dp),
-                ) {
-                    Text("← Back", color = SoftKraftPalette.AccentDeep)
-                }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SectionLabel("Settings")
                     Text(
