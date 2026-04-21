@@ -70,7 +70,8 @@ class ClauneAgentService : Service() {
             try {
                 container.agentLoop.submitUserText(message)
             } finally {
-                val stillRunning = container.sessionCoordinator.uiState.value.status == SessionStatus.Running
+                val status = container.sessionCoordinator.uiState.value.status
+                val stillRunning = status == SessionStatus.Running || status == SessionStatus.Paused
                 container.sessionCoordinator.setForegroundServiceRunning(stillRunning)
                 if (!stillRunning) {
                     stopForeground(STOP_FOREGROUND_REMOVE)

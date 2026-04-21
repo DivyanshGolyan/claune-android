@@ -131,8 +131,10 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
             _uiState.value.copy(
                 status = SessionStatus.Paused,
                 summaryLine = reason,
-                foregroundServiceRunning = false,
+                foregroundServiceRunning = true,
                 isStreaming = false,
+                pendingSteeringCount = 0,
+                isCompacting = false,
                 timeline = (_uiState.value.timeline + reason).takeLast(20),
                 recentSessions = refreshSessionList(_uiState.value.selectedSessionPath),
             )

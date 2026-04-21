@@ -87,8 +87,7 @@ class SessionOverlayController(
             return true
         }
         return state.foregroundServiceRunning &&
-            state.status == SessionStatus.Running &&
-            !state.appInForeground
+            (state.status == SessionStatus.Running || state.status == SessionStatus.Paused)
     }
 
     private fun show() {

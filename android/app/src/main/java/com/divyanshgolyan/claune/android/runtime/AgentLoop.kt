@@ -67,7 +67,7 @@ class AgentLoop(
 
         when (modelOutput) {
             is ModelTurnOutput.Message -> {
-                sessionCoordinator.blockSession(modelOutput.messageToUser)
+                sessionCoordinator.pauseSession(modelOutput.messageToUser)
             }
 
             is ModelTurnOutput.Completion -> {
