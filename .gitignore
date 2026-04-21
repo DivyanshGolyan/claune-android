@@ -5,5 +5,4 @@ android/.gradle/
 android/.kotlin/
 android/local.properties
 android/**/build/
-docs/pi-mono-agent/
-docs/pi-mono-coding-agent-core/
+docs/packages/
