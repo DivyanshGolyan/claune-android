@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class ClauneAgentService : Service() {
@@ -27,6 +28,14 @@ class ClauneAgentService : Service() {
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        val coordinator = applicationContext.clauneContainer().sessionCoordinator
+        serviceScope.launch {
+            coordinator.uiState.collectLatest { state ->
+                if (state.foregroundServiceRunning) {
+                    updateNotification(state.summaryLine)
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = when (intent?.action) {
@@ -36,12 +45,12 @@ class ClauneAgentService : Service() {
         }
 
         else -> {
-            val goal =
-                intent?.getStringExtra(EXTRA_GOAL).orEmpty().ifBlank {
+            val message =
+                intent?.getStringExtra(EXTRA_MESSAGE).orEmpty().ifBlank {
                     "Inspect the current screen and explain the next safe action."
                 }
-            startForeground(NOTIFICATION_ID, buildNotification(goal))
-            runPrototypeTurn(goal)
+            startForeground(NOTIFICATION_ID, buildNotification(message))
+            runSessionMessage(message)
             START_STICKY
         }
     }
@@ -54,31 +63,30 @@ class ClauneAgentService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun runPrototypeTurn(goal: String) {
+    private fun runSessionMessage(message: String) {
         val container = applicationContext.clauneContainer()
-        if (container.sessionCoordinator.uiState.value.status == SessionStatus.Running) {
-            container.sessionCoordinator.logEvent("Ignored start request while a session is already running.")
-            return
-        }
-
         container.sessionCoordinator.setForegroundServiceRunning(true)
         serviceScope.launch {
             try {
-                container.agentLoop.runSingleTurn(goal)
-                updateNotification(container.sessionCoordinator.uiState.value.summaryLine)
+                container.agentLoop.submitUserText(message)
             } finally {
-                container.sessionCoordinator.setForegroundServiceRunning(false)
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                val stillRunning = container.sessionCoordinator.uiState.value.status == SessionStatus.Running
+                container.sessionCoordinator.setForegroundServiceRunning(stillRunning)
+                if (!stillRunning) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
     }
 
     private fun stopSession() {
-        val coordinator = applicationContext.clauneContainer().sessionCoordinator
-        coordinator.stopSession("Stopped from the foreground notification.")
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        val container = applicationContext.clauneContainer()
+        serviceScope.launch {
+            container.agentLoop.stopActiveSession("Stopped from the foreground notification.")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     private fun buildNotification(summary: String) = NotificationCompat
@@ -127,13 +135,13 @@ class ClauneAgentService : Service() {
     companion object {
         private const val CHANNEL_ID = "claune-agent-session"
         private const val NOTIFICATION_ID = 42
-        private const val EXTRA_GOAL = "extra_goal"
-        private const val ACTION_START = "com.divyanshgolyan.claune.android.START"
+        private const val EXTRA_MESSAGE = "extra_message"
+        private const val ACTION_SEND_MESSAGE = "com.divyanshgolyan.claune.android.SEND_MESSAGE"
         private const val ACTION_STOP = "com.divyanshgolyan.claune.android.STOP"
 
-        fun startIntent(context: Context, goal: String) = Intent(context, ClauneAgentService::class.java)
-            .setAction(ACTION_START)
-            .putExtra(EXTRA_GOAL, goal)
+        fun startIntent(context: Context, message: String) = Intent(context, ClauneAgentService::class.java)
+            .setAction(ACTION_SEND_MESSAGE)
+            .putExtra(EXTRA_MESSAGE, message)
 
         fun stopIntent(context: Context) = Intent(context, ClauneAgentService::class.java)
             .setAction(ACTION_STOP)

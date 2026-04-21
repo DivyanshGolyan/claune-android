@@ -9,6 +9,7 @@ class ClauneAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         val container = clauneContainer()
         container.accessibilityBridge.attach(this)
+        container.overlayController.attach(this)
         container.sessionCoordinator.setAccessibilityConnected(true)
         container.sessionCoordinator.logEvent("Accessibility service connected.")
     }
@@ -22,8 +23,10 @@ class ClauneAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
-        clauneContainer().accessibilityBridge.detach()
-        clauneContainer().sessionCoordinator.setAccessibilityConnected(false)
+        val container = clauneContainer()
+        container.accessibilityBridge.detach()
+        container.overlayController.detach()
+        container.sessionCoordinator.setAccessibilityConnected(false)
         super.onDestroy()
     }
 }

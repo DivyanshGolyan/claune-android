@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.runtime.ActionResult
 import com.divyanshgolyan.claune.android.runtime.ElementRef
 import com.divyanshgolyan.claune.android.runtime.PhoneActuator
@@ -45,12 +46,7 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
 
     override suspend fun captureSnapshot(): UiSnapshot {
         val activeService = service
-        val root =
-            activeService?.rootInActiveWindow
-                ?: activeService
-                    ?.windows
-                    ?.firstOrNull { it.isActive || it.isFocused }
-                    ?.root
+        val root = currentRoot(activeService)
         if (activeService == null || root == null) {
             return UiSnapshot(
                 snapshotId = "snapshot-${System.currentTimeMillis()}",
@@ -228,8 +224,43 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
     }
 
     private fun findNodeByElementId(elementId: String): AccessibilityNodeInfo? {
-        val root = service?.rootInActiveWindow ?: return null
+        val root = currentRoot(service) ?: return null
         return findNodeByElementId(root, elementId)
+    }
+
+    private fun currentRoot(activeService: ClauneAccessibilityService?): AccessibilityNodeInfo? {
+        if (activeService == null) {
+            return null
+        }
+
+        val windows = activeService.windows.orEmpty()
+        val roots =
+            windows.mapNotNull { it.root }
+                .distinctBy { root ->
+                    listOf(
+                        root.packageName?.toString().orEmpty(),
+                        root.className?.toString().orEmpty(),
+                        root.windowId,
+                    ).joinToString("|")
+                }
+
+        if (roots.isEmpty()) {
+            return activeService.rootInActiveWindow
+        }
+
+        val preferExternalWindow =
+            sessionCoordinator.uiState.value.foregroundServiceRunning &&
+                !sessionCoordinator.uiState.value.appInForeground
+
+        if (preferExternalWindow) {
+            roots.firstOrNull { root ->
+                root.packageName?.toString()?.isNotBlank() == true &&
+                    root.packageName?.toString() != BuildConfig.APPLICATION_ID
+            }?.let { return it }
+        }
+
+        return activeService.rootInActiveWindow
+            ?: roots.firstOrNull()
     }
 
     private fun findNodeByElementId(node: AccessibilityNodeInfo, elementId: String): AccessibilityNodeInfo? {
