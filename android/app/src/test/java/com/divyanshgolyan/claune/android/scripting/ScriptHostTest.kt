@@ -1,5 +1,6 @@
 package com.divyanshgolyan.claune.android.scripting
 
+import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
 import com.divyanshgolyan.claune.android.runtime.ActionResult
 import com.divyanshgolyan.claune.android.runtime.ElementRef
@@ -9,6 +10,7 @@ import com.divyanshgolyan.claune.android.runtime.ScrollDirection
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
+import java.nio.file.Files
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
@@ -22,7 +24,7 @@ class ScriptHostTest {
     @Test
     fun `observePhone returns snapshot payload and records snapshot`() = runTest {
         val logStore = InMemorySessionLogStore()
-        val coordinator = SessionCoordinator(logStore)
+        val coordinator = testSessionCoordinator(logStore)
         val snapshot =
             UiSnapshot(
                 snapshotId = "snapshot-1",
@@ -64,7 +66,7 @@ class ScriptHostTest {
     fun `waitForState succeeds when later snapshot matches package`() = runTest {
         var currentTime = Instant.parse("2026-04-16T00:00:00Z")
         val logStore = InMemorySessionLogStore()
-        val coordinator = SessionCoordinator(logStore)
+        val coordinator = testSessionCoordinator(logStore)
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
@@ -92,7 +94,7 @@ class ScriptHostTest {
     fun `waitForState times out cleanly`() = runTest {
         var currentTime = Instant.parse("2026-04-16T00:00:00Z")
         val logStore = InMemorySessionLogStore()
-        val coordinator = SessionCoordinator(logStore)
+        val coordinator = testSessionCoordinator(logStore)
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
@@ -113,7 +115,7 @@ class ScriptHostTest {
     @Test
     fun `tapElement delegates to actuator and records host call`() = runTest {
         val logStore = InMemorySessionLogStore()
-        val coordinator = SessionCoordinator(logStore)
+        val coordinator = testSessionCoordinator(logStore)
         val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped element."))
         val host =
             ScriptHost(
@@ -150,7 +152,7 @@ class ScriptHostTest {
                     ),
                 ),
                 phoneActuator = actuator,
-                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
             )
 
@@ -178,11 +180,40 @@ class ScriptHostTest {
                     ),
                 ),
                 phoneActuator = actuator,
-                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
             )
 
         val result = host.tapSelector("""{"label":"Wi-Fi"}""")
+
+        assertTrue(result.ok)
+        assertEquals("wifi", actuator.lastTapped?.elementId)
+    }
+
+    @Test
+    fun `tapText prefers exact visible text without relying on refs`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped visible text match."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "display", ref = "e0", label = "Display", text = "Display"),
+                                element(id = "wifi", ref = "e1", label = "Wi-Fi", text = "Wi-Fi"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.tapText("Wi-Fi", exact = true)
 
         assertTrue(result.ok)
         assertEquals("wifi", actuator.lastTapped?.elementId)
@@ -208,7 +239,7 @@ class ScriptHostTest {
                     ),
                 ),
                 phoneActuator = actuator,
-                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
             )
 
@@ -255,7 +286,7 @@ class ScriptHostTest {
                     ),
                 ),
                 phoneActuator = actuator,
-                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
             )
 
@@ -300,7 +331,7 @@ class ScriptHostTest {
                     ),
                 ),
                 phoneActuator = actuator,
-                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
             )
 
@@ -325,7 +356,7 @@ class ScriptHostTest {
                     ),
                 ),
                 phoneActuator = FakePhoneActuator(),
-                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
                 now = { currentTime },
                 sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
@@ -344,7 +375,7 @@ class ScriptHostTest {
                 scriptExecutionId = "script-1",
                 phoneObserver = FakePhoneObserver(listOf(snapshot())),
                 phoneActuator = FakePhoneActuator(),
-                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
             )
 
@@ -365,13 +396,13 @@ class ScriptHostTest {
                     listOf(
                         snapshot(
                             elements = listOf(
-                                element(id = "scroll-el", ref = "e1", label = "Product list"),
+                                element(id = "scroll-el", ref = "e1", label = "Product list", scrollable = true),
                             ),
                         ),
                     ),
                 ),
                 phoneActuator = actuator,
-                sessionCoordinator = SessionCoordinator(InMemorySessionLogStore()),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
             )
 
@@ -379,6 +410,73 @@ class ScriptHostTest {
 
         assertTrue(result.ok)
         assertEquals("scroll-el", actuator.lastScrolled?.first?.elementId)
+        assertEquals(ScrollDirection.Down, actuator.lastScrolled?.second)
+    }
+
+    @Test
+    fun `scrollRef explains when the matched ref is not scrollable`() = runTest {
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(
+                                element(id = "child", ref = "e1", label = "Available networks", scrollable = false),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.scrollRef("e1", "down")
+
+        assertFalse(result.ok)
+        assertTrue(result.message.contains("Use scrollScreen(direction)"))
+    }
+
+    @Test
+    fun `scrollScreen picks the main scrollable element on the page`() = runTest {
+        val actuator = FakePhoneActuator(scrollResult = ActionResult.Success("Scrolled page."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(
+                                element(
+                                    id = "small-chip-row",
+                                    ref = "e0",
+                                    label = "Chip row",
+                                    scrollable = true,
+                                    bounds = listOf(0, 0, 100, 40),
+                                ),
+                                element(
+                                    id = "main-list",
+                                    ref = "e1",
+                                    label = "Settings list",
+                                    scrollable = true,
+                                    bounds = listOf(0, 0, 100, 400),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.scrollScreen("down")
+
+        assertTrue(result.ok)
+        assertEquals("main-list", actuator.lastScrolled?.first?.elementId)
         assertEquals(ScrollDirection.Down, actuator.lastScrolled?.second)
     }
 
@@ -403,6 +501,8 @@ class ScriptHostTest {
         role: String = "button",
         editable: Boolean = false,
         focused: Boolean = false,
+        scrollable: Boolean = false,
+        bounds: List<Int> = listOf(0, 0, 100, 100),
     ): UiElement = UiElement(
         id = id,
         ref = ref,
@@ -412,8 +512,15 @@ class ScriptHostTest {
         clickable = true,
         editable = editable,
         focused = focused,
-        bounds = listOf(0, 0, 100, 100),
+        scrollable = scrollable,
+        bounds = bounds,
     )
+}
+
+private fun testSessionCoordinator(logStore: InMemorySessionLogStore): SessionCoordinator {
+    val root = Files.createTempDirectory("claune-script-host").toFile()
+    val store = CodingSessionStore(cwd = root.absolutePath, agentDir = root.resolve("agent"))
+    return SessionCoordinator(logStore, store)
 }
 
 private class FakePhoneObserver(private val snapshots: List<UiSnapshot>) : PhoneObserver {

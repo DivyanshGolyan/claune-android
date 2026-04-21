@@ -140,8 +140,14 @@ class QuickJsScriptRuntime(
         context.registerJsonFunction("__clauneTapRefJson") { args ->
             encodeOutcome(host.tapRef(args.stringArg(0)))
         }
+        context.registerJsonFunction("__clauneTapTextJson") { args ->
+            encodeOutcome(host.tapText(args.stringArg(0), args.booleanArg(1)))
+        }
         context.registerJsonFunction("__clauneScrollRefJson") { args ->
             encodeOutcome(host.scrollRef(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__clauneScrollScreenJson") { args ->
+            encodeOutcome(host.scrollScreen(args.stringArg(0)))
         }
         context.registerJsonFunction("__clauneFocusSelectorJson") { args ->
             encodeOutcome(host.focusSelector(args.stringArg(0), args.longArg(1)))
@@ -195,6 +201,8 @@ class QuickJsScriptRuntime(
     private fun Array<out Any?>.stringArg(index: Int): String = getOrNull(index)?.toString().orEmpty()
 
     private fun Array<out Any?>.longArg(index: Int): Long = getOrNull(index)?.toString()?.toLongOrNull() ?: 0L
+
+    private fun Array<out Any?>.booleanArg(index: Int): Boolean = getOrNull(index)?.toString()?.toBooleanStrictOrNull() ?: false
 
     private fun mapSyntaxError(script: String, throwable: Throwable): String {
         val message = throwable.message?.trim()?.lineSequence()?.firstOrNull()?.trim().orEmpty()

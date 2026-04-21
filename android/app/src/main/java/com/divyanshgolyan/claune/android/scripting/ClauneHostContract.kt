@@ -124,12 +124,31 @@ internal object ClauneHostContract {
                 parameters = listOf(HostParameter("ref", "string", "String(%s)")),
             ),
             HostFunction(
+                name = "tapText",
+                nativeBinding = "__clauneTapTextJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Tap the best actionable element whose visible text or label matches the given text.",
+                parameters = listOf(
+                    HostParameter("text", "string", "String(%s)"),
+                    HostParameter("exact", "boolean", "Boolean(%s ?? true)"),
+                ),
+            ),
+            HostFunction(
                 name = "scrollRef",
                 nativeBinding = "__clauneScrollRefJson",
                 returnType = "HostSuccessOutcome",
                 documentation = "Scroll a scrollable actionable element by snapshot ref in the given direction.",
                 parameters = listOf(
                     HostParameter("ref", "string", "String(%s)"),
+                    HostParameter("direction", "\"up\" | \"down\"", "String(%s)"),
+                ),
+            ),
+            HostFunction(
+                name = "scrollScreen",
+                nativeBinding = "__clauneScrollScreenJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Scroll the best visible scrollable container on the current screen in the given direction.",
+                parameters = listOf(
                     HostParameter("direction", "\"up\" | \"down\"", "String(%s)"),
                 ),
             ),

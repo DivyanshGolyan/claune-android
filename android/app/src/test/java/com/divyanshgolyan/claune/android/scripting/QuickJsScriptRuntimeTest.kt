@@ -77,17 +77,21 @@ class QuickJsScriptRuntimeTest {
         }
         assertTrue(declarations.contains("interface ClauneHost"))
         assertTrue(declarations.contains("label?: string;"))
+        assertTrue(declarations.contains("tapText(text: string, exact: boolean): HostSuccessOutcome;"))
         assertTrue(declarations.contains("focusSelector(selector: ElementSelector, timeoutMs: number): HostSuccessOutcome;"))
         assertTrue(declarations.contains("scrollRef(ref: string, direction: \"up\" | \"down\"): HostSuccessOutcome;"))
+        assertTrue(declarations.contains("scrollScreen(direction: \"up\" | \"down\"): HostSuccessOutcome;"))
         assertTrue(declarations.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
         assertTrue(bootstrap.contains("globalThis.claune = Object.freeze"))
         assertTrue(bootstrap.contains("return JSON.parse(__clauneObservePhoneJson());"))
+        assertTrue(bootstrap.contains("__clauneRequireOutcome(\"tapText\", __clauneTapTextJson(String(text), Boolean(exact ?? true)));"))
         assertTrue(
             bootstrap.contains(
                 "__clauneRequireOutcome(\"focusSelector\", __clauneFocusSelectorJson(JSON.stringify(selector ?? {}), Number(timeoutMs ?? 0)));",
             ),
         )
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"scrollRef\", __clauneScrollRefJson(String(ref), String(direction)));"))
+        assertTrue(bootstrap.contains("__clauneRequireOutcome(\"scrollScreen\", __clauneScrollScreenJson(String(direction)));"))
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"typeIntoFocused\", __clauneTypeIntoFocusedJson(String(text)));"))
         assertTrue(!bootstrap.contains("__clauneObservePhoneJson()));"))
     }

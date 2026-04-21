@@ -66,6 +66,29 @@ class ScriptHost(
         )
     }
 
+    suspend fun tapText(text: String, exact: Boolean): HostCallOutcome = recordCall(
+        name = "tapText",
+        arguments =
+        buildJsonObject {
+            put("text", text)
+            put("exact", exact)
+        },
+    ) {
+        val snapshot = phoneObserver.captureSnapshot()
+        recordSnapshot(snapshot)
+        val selector = ElementSelectorPayload(text = text, textExact = exact)
+        val element = selectElement(snapshot, selector)
+            ?: return@recordCall selectorFailure(selector, snapshot)
+        phoneActuator.tap(ElementRef(element.id)).toOutcome(
+            data =
+            buildJsonObject {
+                put("matchedRef", element.ref)
+                put("matchedElementId", element.id)
+                put("matchedLabel", element.label)
+            },
+        )
+    }
+
     suspend fun scrollRef(ref: String, direction: String): HostCallOutcome = recordCall(
         name = "scrollRef",
         arguments =
@@ -85,6 +108,49 @@ class ScriptHost(
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "Ref '$ref' was not found in the current snapshot.",
+            )
+        if (!element.scrollable) {
+            return@recordCall HostCallOutcome(
+                ok = false,
+                message =
+                "Matched element '${element.label.ifBlank { element.id }}' is not scrollable. " +
+                    "Use scrollScreen(direction) unless the snapshot shows a scrollable ref.",
+                data =
+                buildJsonObject {
+                    put("matchedRef", element.ref)
+                    put("matchedElementId", element.id)
+                    put("matchedLabel", element.label)
+                },
+            )
+        }
+        phoneActuator.scroll(ElementRef(element.id), parsedDirection).toOutcome(
+            data =
+            buildJsonObject {
+                put("matchedRef", element.ref)
+                put("matchedElementId", element.id)
+                put("matchedLabel", element.label)
+            },
+        )
+    }
+
+    suspend fun scrollScreen(direction: String): HostCallOutcome = recordCall(
+        name = "scrollScreen",
+        arguments =
+        buildJsonObject {
+            put("direction", direction)
+        },
+    ) {
+        val parsedDirection = direction.toScrollDirection()
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "Unsupported scroll direction '$direction'.",
+            )
+        val snapshot = phoneObserver.captureSnapshot()
+        recordSnapshot(snapshot)
+        val element = snapshot.bestScrollableElement()
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "No scrollable element was found on the current screen.",
             )
         phoneActuator.scroll(ElementRef(element.id), parsedDirection).toOutcome(
             data =
@@ -393,6 +459,14 @@ class ScriptHost(
         ?: snapshot.actionableElements.firstOrNull { it.editable && matchedElement.isSearchLike() && it.isSearchLike() }
         ?: snapshot.actionableElements.singleOrNull { it.editable }
 
+    private fun UiSnapshot.bestScrollableElement(): UiElement? = actionableElements
+        .filter { it.scrollable }
+        .maxWithOrNull(
+            compareBy<UiElement> { it.focused }
+                .thenBy { it.boundsArea() }
+                .thenBy { it.clickable },
+        )
+
     private fun UiSnapshot.findFocusedEditableElement(): UiElement? =
         actionableElements.firstOrNull { it.id == focusedElementId && it.editable }
             ?: actionableElements.firstOrNull { it.focused && it.editable }
@@ -467,6 +541,13 @@ class ScriptHost(
         private const val POLL_INTERVAL_MS = 250L
         private const val DEFAULT_FOCUS_TIMEOUT_MS = 1500L
     }
+}
+
+private fun UiElement.boundsArea(): Int {
+    if (bounds.size < 4) return 0
+    val width = (bounds[2] - bounds[0]).coerceAtLeast(0)
+    val height = (bounds[3] - bounds[1]).coerceAtLeast(0)
+    return width * height
 }
 
 private fun ActionResult.toOutcome(data: JsonObject? = null): HostCallOutcome = when (this) {
