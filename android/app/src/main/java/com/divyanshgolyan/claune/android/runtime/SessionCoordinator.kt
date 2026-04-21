@@ -7,10 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class SessionCoordinator(
-    private val logStore: SessionLogStore,
-    private val codingSessionStore: CodingSessionStore,
-) {
+class SessionCoordinator(private val logStore: SessionLogStore, private val codingSessionStore: CodingSessionStore) {
     private val _uiState = MutableStateFlow(SessionUiState())
     val uiState: StateFlow<SessionUiState> = _uiState.asStateFlow()
 

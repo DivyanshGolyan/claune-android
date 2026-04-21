@@ -14,46 +14,30 @@ interface SessionLogStore {
 
     fun recordHostCall(hostCall: HostCallRecord)
 
-    fun recentStates(): List<SessionUiState>
-
     fun recentSnapshots(): List<UiSnapshot>
-
-    fun recentScriptExecutions(): List<ScriptExecutionRecord>
 
     fun recentHostCalls(): List<HostCallRecord>
 }
 
 class InMemorySessionLogStore : SessionLogStore {
-    private val states = ArrayDeque<SessionUiState>()
     private val snapshots = ArrayDeque<UiSnapshot>()
-    private val scriptExecutions = ArrayDeque<ScriptExecutionRecord>()
     private val hostCalls = ArrayDeque<HostCallRecord>()
 
-    override fun record(state: SessionUiState) {
-        states += state
-        trim(states)
-    }
+    override fun record(state: SessionUiState) = Unit
 
     override fun recordSnapshot(snapshot: UiSnapshot) {
         snapshots += snapshot
         trim(snapshots)
     }
 
-    override fun recordScriptExecution(execution: ScriptExecutionRecord) {
-        scriptExecutions += execution
-        trim(scriptExecutions)
-    }
+    override fun recordScriptExecution(execution: ScriptExecutionRecord) = Unit
 
     override fun recordHostCall(hostCall: HostCallRecord) {
         hostCalls += hostCall
         trim(hostCalls)
     }
 
-    override fun recentStates(): List<SessionUiState> = states.toList()
-
     override fun recentSnapshots(): List<UiSnapshot> = snapshots.toList()
-
-    override fun recentScriptExecutions(): List<ScriptExecutionRecord> = scriptExecutions.toList()
 
     override fun recentHostCalls(): List<HostCallRecord> = hostCalls.toList()
 

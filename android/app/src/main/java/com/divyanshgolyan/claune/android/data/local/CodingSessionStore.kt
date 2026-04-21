@@ -29,10 +29,7 @@ data class PersistedSessionSummary(
     val modifiedAt: Instant,
 )
 
-data class PersistedSessionDetail(
-    val summary: PersistedSessionSummary,
-    val entries: List<PersistedSessionDetailEntry>,
-)
+data class PersistedSessionDetail(val summary: PersistedSessionSummary, val entries: List<PersistedSessionDetailEntry>)
 
 data class PersistedSessionDetailEntry(
     val id: String,
@@ -53,10 +50,7 @@ enum class PersistedSessionDetailKind {
     System,
 }
 
-class CodingSessionStore(
-    private val cwd: String,
-    private val agentDir: File,
-) {
+class CodingSessionStore(private val cwd: String, private val agentDir: File) {
     private val sessionDir: String = getDefaultSessionDir(cwd, agentDir.absolutePath)
 
     fun listSessions(limit: Int = 20): List<PersistedSessionSummary> = SessionManager
@@ -81,8 +75,6 @@ class CodingSessionStore(
         }
         return SessionManager.open(resolvedPath, sessionDir = sessionDir, cwdOverride = cwd).toSummary()
     }
-
-    fun recentSession(): PersistedSessionSummary? = listSessions(limit = 1).firstOrNull()
 
     fun sessionManager(path: String?): SessionManager = when {
         path.isNullOrBlank() -> SessionManager.create(cwd, sessionDir)
@@ -222,26 +214,23 @@ class CodingSessionStore(
         else -> null
     }
 
-    private fun UserMessageContent.asDisplayText(): String =
-        when (this) {
-            is UserMessageContent.Text -> value.trim()
-            is UserMessageContent.Structured -> parts.joinToString(separator = "\n") { it.asDisplayText() }.trim()
-        }
+    private fun UserMessageContent.asDisplayText(): String = when (this) {
+        is UserMessageContent.Text -> value.trim()
+        is UserMessageContent.Structured -> parts.joinToString(separator = "\n") { it.asDisplayText() }.trim()
+    }
 
-    private fun UserContentPart.asDisplayText(): String =
-        when (this) {
-            is TextContent -> text.trim()
-            is ImageContent -> "[image]"
-        }
+    private fun UserContentPart.asDisplayText(): String = when (this) {
+        is TextContent -> text.trim()
+        is ImageContent -> "[image]"
+    }
 
-    private fun sessionTitle(text: String): String =
-        userFacingText(text)
-            .lineSequence()
-            .firstOrNull { it.isNotBlank() }
-            ?.trim()
-            ?.take(MAX_SESSION_TITLE_CHARS)
-            ?.ifBlank { null }
-            ?: "Untitled session"
+    private fun sessionTitle(text: String): String = userFacingText(text)
+        .lineSequence()
+        .firstOrNull { it.isNotBlank() }
+        ?.trim()
+        ?.take(MAX_SESSION_TITLE_CHARS)
+        ?.ifBlank { null }
+        ?: "Untitled session"
 
     private fun userFacingText(text: String): String {
         val trimmed = text.trim()

@@ -56,8 +56,6 @@ interface AgentRunArtifactStore {
 
     fun writeAgentEvents(runId: String, events: List<SerializedAgentEvent>)
 
-    fun recentRunMetadata(limit: Int = 10): List<RunArtifactMetadata> = emptyList()
-
     fun recoverOrphanedRuns(reason: String) {}
 }
 
@@ -198,24 +196,6 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
             }
     }
 
-    @Synchronized
-    override fun recentRunMetadata(limit: Int): List<RunArtifactMetadata> = rootDir.listFiles()
-        ?.asSequence()
-        ?.filter { it.isDirectory }
-        ?.mapNotNull { directory ->
-            val metadataFile = directory.resolve(METADATA_FILE_NAME)
-            if (!metadataFile.exists()) {
-                return@mapNotNull null
-            }
-            runCatching {
-                json.decodeFromString(RunArtifactMetadata.serializer(), metadataFile.readText())
-            }.getOrNull()
-        }
-        ?.sortedByDescending { it.startedAt }
-        ?.take(limit)
-        ?.toList()
-        .orEmpty()
-
     private fun writeText(runId: String, fileName: String, value: String) {
         val file = runDirectory(runId).resolve(fileName)
         file.parentFile?.mkdirs()
@@ -295,11 +275,7 @@ class ArtifactSessionLogStore(
         runCatching { artifactStore.recordHostCall(runId, hostCall) }
     }
 
-    override fun recentStates(): List<SessionUiState> = delegate.recentStates()
-
     override fun recentSnapshots(): List<UiSnapshot> = delegate.recentSnapshots()
-
-    override fun recentScriptExecutions(): List<ScriptExecutionRecord> = delegate.recentScriptExecutions()
 
     override fun recentHostCalls(): List<HostCallRecord> = delegate.recentHostCalls()
 }
