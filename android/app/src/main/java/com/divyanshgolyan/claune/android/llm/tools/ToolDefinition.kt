@@ -2,6 +2,10 @@ package com.divyanshgolyan.claune.android.llm.tools
 
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import pi.agent.core.AgentTool
 import pi.agent.core.AgentToolResult
 
@@ -38,3 +42,20 @@ internal fun <TArguments> toAgentTool(definition: ToolDefinition<TArguments>): A
         onUpdate: pi.agent.core.AgentToolUpdateCallback<JsonElement>?,
     ): AgentToolResult<JsonElement> = definition.execute(toolCallId, params, signal, onUpdate)
 }
+
+internal fun objectParameters(properties: JsonObject = buildJsonObject {}, required: List<String> = emptyList()): JsonObject =
+    buildJsonObject {
+        put("type", JsonPrimitive("object"))
+        put("properties", properties)
+        if (required.isNotEmpty()) {
+            put("required", kotlinx.serialization.json.JsonArray(required.map(::JsonPrimitive)))
+        }
+    }
+
+internal fun stringProperty(description: String): JsonObject = buildJsonObject {
+    put("type", JsonPrimitive("string"))
+    put("description", JsonPrimitive(description))
+}
+
+internal fun JsonObject.requiredString(name: String): String =
+    this[name]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: error("Missing $name")

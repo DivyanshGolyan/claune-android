@@ -9,7 +9,6 @@ import com.divyanshgolyan.claune.android.scripting.UiSnapshotPayload
 import com.divyanshgolyan.claune.android.scripting.toPayload
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -31,31 +30,20 @@ internal class ExecuteScriptToolDefinition(private val scriptRuntime: ScriptRunt
         "After execute_script returns, trust postActionSnapshot as the current screen state for the next step.",
     )
     override val parameters =
-        buildJsonObject {
-            put("type", JsonPrimitive("object"))
-            put(
-                "properties",
-                buildJsonObject {
-                    put(
-                        "script",
-                        buildJsonObject {
-                            put("type", JsonPrimitive("string"))
-                            put(
-                                "description",
-                                JsonPrimitive(
-                                    "A complete JavaScript snippet that uses the claune host APIs to observe the phone, act on it, and return a compact result object.",
-                                ),
-                            )
-                        },
-                    )
-                },
-            )
-            put("required", JsonArray(listOf(JsonPrimitive("script"))))
-        }
+        objectParameters(
+            properties =
+            buildJsonObject {
+                put(
+                    "script",
+                    stringProperty(
+                        "A complete JavaScript snippet that uses the claune host APIs to observe the phone, act on it, and return a compact result object.",
+                    ),
+                )
+            },
+            required = listOf("script"),
+        )
 
-    override fun validateArguments(arguments: kotlinx.serialization.json.JsonObject): String =
-        arguments["script"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: error("Missing script")
+    override fun validateArguments(arguments: kotlinx.serialization.json.JsonObject): String = arguments.requiredString("script")
 
     override suspend fun execute(
         toolCallId: String,
@@ -96,10 +84,7 @@ internal class ReadMemoryToolDefinition(private val memoryStore: MemoryStore) : 
         "Use read_memory before edit_memory so you preserve useful existing memory.",
     )
     override val parameters =
-        buildJsonObject {
-            put("type", JsonPrimitive("object"))
-            put("properties", buildJsonObject {})
-        }
+        objectParameters()
 
     override fun validateArguments(arguments: kotlinx.serialization.json.JsonObject) {
         Unit
@@ -135,40 +120,17 @@ internal class EditMemoryToolDefinition(private val memoryStore: MemoryStore) : 
         "To append a new memory bullet, replace the exact header block `# Claune Memory\\n\\n` with that header plus the new bullet below it.",
     )
     override val parameters =
-        buildJsonObject {
-            put("type", JsonPrimitive("object"))
-            put(
-                "properties",
-                buildJsonObject {
-                    put(
-                        "oldText",
-                        buildJsonObject {
-                            put("type", JsonPrimitive("string"))
-                            put(
-                                "description",
-                                JsonPrimitive("The exact unique text currently present in memory.md that should be replaced."),
-                            )
-                        },
-                    )
-                    put(
-                        "newText",
-                        buildJsonObject {
-                            put("type", JsonPrimitive("string"))
-                            put(
-                                "description",
-                                JsonPrimitive("The replacement Markdown text for the matched memory.md section."),
-                            )
-                        },
-                    )
-                },
-            )
-            put("required", JsonArray(listOf(JsonPrimitive("oldText"), JsonPrimitive("newText"))))
-        }
+        objectParameters(
+            properties =
+            buildJsonObject {
+                put("oldText", stringProperty("The exact unique text currently present in memory.md that should be replaced."))
+                put("newText", stringProperty("The replacement Markdown text for the matched memory.md section."))
+            },
+            required = listOf("oldText", "newText"),
+        )
 
     override fun validateArguments(arguments: kotlinx.serialization.json.JsonObject): EditMemoryArguments = EditMemoryArguments(
-        oldText =
-        arguments["oldText"]?.jsonPrimitive?.content?.takeIf { it.isNotEmpty() }
-            ?: error("Missing oldText"),
+        oldText = arguments.requiredString("oldText"),
         newText = arguments["newText"]?.jsonPrimitive?.content ?: error("Missing newText"),
     )
 

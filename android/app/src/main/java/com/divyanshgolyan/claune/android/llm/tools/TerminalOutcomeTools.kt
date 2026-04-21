@@ -5,7 +5,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import pi.agent.core.AgentToolResult
 import pi.ai.core.TextContent
@@ -39,16 +38,13 @@ internal class CompleteTaskToolDefinition(private val recorder: TerminalOutcomeR
     override val promptSnippet: String = "End the run as completed with a verified summary."
     override val promptGuidelines: List<String> = emptyList()
     override val parameters: JsonObject =
-        buildJsonObject {
-            put("type", JsonPrimitive("object"))
-            put(
-                "properties",
-                buildJsonObject {
-                    put("summary", stringProperty("A concise summary of the verified completed outcome."))
-                },
-            )
-            put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("summary"))))
-        }
+        objectParameters(
+            properties =
+            buildJsonObject {
+                put("summary", stringProperty("A concise summary of the verified completed outcome."))
+            },
+            required = listOf("summary"),
+        )
 
     override fun validateArguments(arguments: JsonObject): CompleteTaskArguments = CompleteTaskArguments(
         summary = arguments.requiredString("summary"),
@@ -73,16 +69,13 @@ internal class BlockTaskToolDefinition(private val recorder: TerminalOutcomeReco
     override val promptSnippet: String = "End the run as blocked with the reason."
     override val promptGuidelines: List<String> = emptyList()
     override val parameters: JsonObject =
-        buildJsonObject {
-            put("type", JsonPrimitive("object"))
-            put(
-                "properties",
-                buildJsonObject {
-                    put("reason", stringProperty("A concise reason the task cannot continue."))
-                },
-            )
-            put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("reason"))))
-        }
+        objectParameters(
+            properties =
+            buildJsonObject {
+                put("reason", stringProperty("A concise reason the task cannot continue."))
+            },
+            required = listOf("reason"),
+        )
 
     override fun validateArguments(arguments: JsonObject): BlockTaskArguments = BlockTaskArguments(
         reason = arguments.requiredString("reason"),
@@ -107,16 +100,13 @@ internal class AskUserToolDefinition(private val recorder: TerminalOutcomeRecord
     override val promptSnippet: String = "Pause the run with a user-facing question or decision request."
     override val promptGuidelines: List<String> = emptyList()
     override val parameters: JsonObject =
-        buildJsonObject {
-            put("type", JsonPrimitive("object"))
-            put(
-                "properties",
-                buildJsonObject {
-                    put("messageToUser", stringProperty("The concise question or decision request for the user."))
-                },
-            )
-            put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("messageToUser"))))
-        }
+        objectParameters(
+            properties =
+            buildJsonObject {
+                put("messageToUser", stringProperty("The concise question or decision request for the user."))
+            },
+            required = listOf("messageToUser"),
+        )
 
     override fun validateArguments(arguments: JsonObject): AskUserArguments = AskUserArguments(
         messageToUser = arguments.requiredString("messageToUser"),
@@ -132,14 +122,6 @@ internal class AskUserToolDefinition(private val recorder: TerminalOutcomeRecord
         return terminalToolResult("Recorded user question.", "message", params.messageToUser)
     }
 }
-
-private fun stringProperty(description: String): JsonObject = buildJsonObject {
-    put("type", JsonPrimitive("string"))
-    put("description", JsonPrimitive(description))
-}
-
-private fun JsonObject.requiredString(name: String): String =
-    this[name]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: error("Missing $name")
 
 private fun terminalToolResult(message: String, kind: String, value: String): AgentToolResult<JsonElement> {
     val details =
