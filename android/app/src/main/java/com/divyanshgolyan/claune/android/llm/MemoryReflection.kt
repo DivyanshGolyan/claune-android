@@ -2,9 +2,7 @@ package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
-import com.divyanshgolyan.claune.android.scripting.ScriptJson
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 
 internal object MemoryReflectionPromptBuilder {
     fun systemPrompt(memoryContent: String): String = buildString {
@@ -92,18 +90,8 @@ internal sealed interface MemoryReflectionResult {
 
 internal object MemoryReflectionResultParser {
     fun parse(raw: String): MemoryReflectionResult {
-        val payload =
-            runCatching {
-                ScriptJson.codec.decodeFromString(MemoryReflectionResponse.serializer(), raw.trim())
-            }.getOrElse {
-                extractCandidateJsonObjects(raw)
-                    .asReversed()
-                    .firstNotNullOfOrNull { candidate ->
-                        runCatching {
-                            ScriptJson.codec.decodeFromString(MemoryReflectionResponse.serializer(), candidate)
-                        }.getOrNull()
-                    }
-            } ?: return MemoryReflectionResult.NoUpdate("Malformed reflection output.")
+        val payload = decodeModelJson(raw, MemoryReflectionResponse.serializer())
+            ?: return MemoryReflectionResult.NoUpdate("Malformed reflection output.")
 
         return when (payload.kind) {
             "no_update" -> MemoryReflectionResult.NoUpdate(payload.summary)

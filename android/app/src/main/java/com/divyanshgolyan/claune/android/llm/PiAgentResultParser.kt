@@ -2,6 +2,7 @@ package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 
@@ -34,20 +35,22 @@ internal object PiAgentResultParser {
         }
     }
 
-    private fun decodeFinalResponse(raw: String): FinalAgentResponse? {
-        val trimmed = raw.trim()
-        runCatching {
-            return ScriptJson.codec.decodeFromString(FinalAgentResponse.serializer(), trimmed)
-        }
+    private fun decodeFinalResponse(raw: String): FinalAgentResponse? = decodeModelJson(raw, FinalAgentResponse.serializer())
+}
 
-        return extractCandidateJsonObjects(raw)
-            .asReversed()
-            .firstNotNullOfOrNull { candidate ->
-                runCatching {
-                    ScriptJson.codec.decodeFromString(FinalAgentResponse.serializer(), candidate)
-                }.getOrNull()
-            }
+internal fun <T> decodeModelJson(raw: String, serializer: KSerializer<T>): T? {
+    val trimmed = raw.trim()
+    runCatching {
+        return ScriptJson.codec.decodeFromString(serializer, trimmed)
     }
+
+    return extractCandidateJsonObjects(raw)
+        .asReversed()
+        .firstNotNullOfOrNull { candidate ->
+            runCatching {
+                ScriptJson.codec.decodeFromString(serializer, candidate)
+            }.getOrNull()
+        }
 }
 
 internal fun extractCandidateJsonObjects(raw: String): List<String> {
