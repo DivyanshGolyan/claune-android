@@ -35,6 +35,7 @@ class SessionOverlayController(
     private var titleView: TextView? = null
     private var bodyView: TextView? = null
     private var inputView: EditText? = null
+    private var debugOverlayVisible = false
 
     fun attach(service: AccessibilityService) {
         this.service = service
@@ -56,6 +57,11 @@ class SessionOverlayController(
         windowManager = null
     }
 
+    fun setDebugOverlayVisible(visible: Boolean) {
+        debugOverlayVisible = visible
+        render(sessionStateProvider.value)
+    }
+
     private fun render(state: SessionUiState) {
         if (!shouldShow(state)) {
             hide()
@@ -64,15 +70,26 @@ class SessionOverlayController(
         if (overlayView == null) {
             show()
         }
-        titleView?.text = state.activeSessionTitle ?: state.selectedSessionTitle ?: "Current session"
-        bodyView?.text = state.lastAssistantText.ifBlank { state.summaryLine }.take(220)
+        if (debugOverlayVisible) {
+            titleView?.text = "Debug overlay"
+            bodyView?.text = "Test overlay is visible without an agent run."
+        } else {
+            titleView?.text = state.activeSessionTitle ?: state.selectedSessionTitle ?: "Current session"
+            bodyView?.text = state.lastAssistantText.ifBlank { state.summaryLine }.take(220)
+        }
     }
 
-    private fun shouldShow(state: SessionUiState): Boolean =
-        state.foregroundServiceRunning &&
+    private fun shouldShow(state: SessionUiState): Boolean {
+        if (service == null) {
+            return false
+        }
+        if (debugOverlayVisible) {
+            return true
+        }
+        return state.foregroundServiceRunning &&
             state.status == SessionStatus.Running &&
-            !state.appInForeground &&
-            service != null
+            !state.appInForeground
+    }
 
     private fun show() {
         val service = service ?: return
@@ -192,6 +209,5 @@ class SessionOverlayController(
         imm?.hideSoftInputFromWindow(inputView?.windowToken, 0)
     }
 
-    private fun dp(context: Context, value: Int): Int =
-        (value * context.resources.displayMetrics.density).toInt()
+    private fun dp(context: Context, value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 }
