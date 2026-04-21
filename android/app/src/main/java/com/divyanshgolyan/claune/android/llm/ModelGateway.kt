@@ -6,25 +6,29 @@ import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
+import com.divyanshgolyan.claune.android.llm.tools.AskUserToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.BlockTaskToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.CompleteTaskToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.SystemPromptBuilder
+import com.divyanshgolyan.claune.android.llm.tools.TerminalOutcomeRecorder
 import com.divyanshgolyan.claune.android.llm.tools.ToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.toAgentTool
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
-import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
+import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import pi.agent.core.AgentEvent
 import pi.agent.core.AgentThinkingLevel
 import pi.ai.core.ANTHROPIC_PROVIDER
@@ -62,10 +66,13 @@ class PiAgentModelGateway(
     private var activeSessionUnsubscribe: (() -> Unit)? = null
     private var activeRunId: String? = null
     private var activeEventTrace = CopyOnWriteArrayList<SerializedAgentEvent>()
+    private val terminalOutcomeRecorder = TerminalOutcomeRecorder()
 
     override suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput {
         val prompt = PiAgentPromptFormatter.format(input)
-        val systemPrompt = buildSystemPrompt(memoryStore.read())
+        terminalOutcomeRecorder.clear()
+        val mainTools = mainToolDefinitions()
+        val systemPrompt = buildSystemPrompt(memoryStore.read(), mainTools)
         runCatching {
             artifactStore.writeSystemPrompt(input.sessionId, systemPrompt)
             artifactStore.writeModelInput(input.sessionId, prompt)
@@ -84,7 +91,7 @@ class PiAgentModelGateway(
             )
         }
 
-        val agentSession = ensureMainSession(input, systemPrompt, apiKey)
+        val agentSession = ensureMainSession(input, systemPrompt, apiKey, mainTools)
         activeRunId = input.sessionId
         activeEventTrace = CopyOnWriteArrayList()
         sessionCoordinator.logEvent("Agent started.")
@@ -93,11 +100,13 @@ class PiAgentModelGateway(
         val result =
             try {
                 agentSession.prompt(prompt)
-                val finalOutput = finalAssistantText(agentSession.messages)
+                val finalOutput = terminalOutcomeRecorder.outcome?.toArtifactText() ?: finalAssistantText(agentSession.messages)
                 runCatching { artifactStore.writeFinalOutput(input.sessionId, finalOutput) }
                 val assistantError = finalAssistantError(agentSession.messages)
                 val parsedResult = if (!assistantError.isNullOrBlank()) {
                     ModelTurnOutput.Blocked("Model request failed. $assistantError")
+                } else if (terminalOutcomeRecorder.outcome != null) {
+                    terminalOutcomeRecorder.outcome!!
                 } else {
                     PiAgentResultParser.parse(finalOutput)
                 }
@@ -146,24 +155,28 @@ class PiAgentModelGateway(
         }
     }
 
+    @Suppress("ktlint:standard:function-signature")
     private suspend fun createMainSession(
         input: ModelTurnInput,
         systemPrompt: String,
         apiKey: String,
+        tools: List<ToolDefinition<*>>,
     ): AgentSession = sessionFactory.create(
         sessionPath = input.persistentSessionPath,
         systemPrompt = systemPrompt,
         model = model(),
-        tools = agentTools(toolDefinitions()),
+        tools = agentTools(tools),
         apiKey = apiKey,
         thinkingLevel = AgentThinkingLevel.MEDIUM,
         thinkingBudgets = ThinkingBudgets(medium = 4096),
     )
 
+    @Suppress("ktlint:standard:function-signature")
     private suspend fun ensureMainSession(
         input: ModelTurnInput,
         systemPrompt: String,
         apiKey: String,
+        tools: List<ToolDefinition<*>>,
     ): AgentSession = activeSessionLock.withLock {
         val needsReplacement =
             activeAgentSession == null ||
@@ -173,7 +186,7 @@ class PiAgentModelGateway(
         if (needsReplacement) {
             activeSessionUnsubscribe?.invoke()
             activeAgentSession?.dispose()
-            val session = createMainSession(input, systemPrompt, apiKey)
+            val session = createMainSession(input, systemPrompt, apiKey, tools)
             activeSessionPath = input.persistentSessionPath
             activeSystemPrompt = systemPrompt
             activeApiKey = apiKey
@@ -222,8 +235,11 @@ class PiAgentModelGateway(
         "Anthropic model $MODEL_NAME is not registered in pi-ai-core."
     }
 
-    private fun toolDefinitions(): List<ToolDefinition<*>> = listOf(
+    private fun mainToolDefinitions(): List<ToolDefinition<*>> = listOf(
         ExecuteScriptToolDefinition(scriptRuntime, phoneObserver),
+        CompleteTaskToolDefinition(terminalOutcomeRecorder),
+        BlockTaskToolDefinition(terminalOutcomeRecorder),
+        AskUserToolDefinition(terminalOutcomeRecorder),
         ReadMemoryToolDefinition(memoryStore),
         EditMemoryToolDefinition(memoryStore),
     )
@@ -233,9 +249,9 @@ class PiAgentModelGateway(
         toAgentTool(definition as ToolDefinition<Any?>)
     }
 
-    private fun buildSystemPrompt(memoryContent: String): String = SystemPromptBuilder.build(
+    private fun buildSystemPrompt(memoryContent: String, tools: List<ToolDefinition<*>>): String = SystemPromptBuilder.build(
         memoryContent = memoryContent,
-        tools = toolDefinitions(),
+        tools = tools,
     )
 
     private suspend fun runMemoryReflection(input: ModelTurnInput, result: ModelTurnOutput, apiKey: String) {
@@ -250,17 +266,18 @@ class PiAgentModelGateway(
         val reflectionPrompt = MemoryReflectionPromptBuilder.format(input, result)
         runCatching { artifactStore.writeMemoryReflectionPrompt(input.sessionId, reflectionPrompt) }
         sessionCoordinator.logEvent("Agent memory reflection started.")
+        val reflectionTools =
+            listOf(
+                ReadMemoryToolDefinition(memoryStore),
+                EditMemoryToolDefinition(memoryStore),
+            )
 
         val reflectionSession =
             sessionFactory.create(
                 sessionPath = input.persistentSessionPath,
-                systemPrompt = buildSystemPrompt(memoryStore.read()),
+                systemPrompt = MemoryReflectionPromptBuilder.systemPrompt(memoryStore.read()),
                 model = model(),
-                tools =
-                listOf(
-                    ReadMemoryToolDefinition(memoryStore),
-                    EditMemoryToolDefinition(memoryStore),
-                ).let(::agentTools),
+                tools = agentTools(reflectionTools),
                 apiKey = apiKey,
                 thinkingLevel = AgentThinkingLevel.MEDIUM,
                 thinkingBudgets = ThinkingBudgets(medium = 4096),
@@ -335,17 +352,41 @@ class PiAgentModelGateway(
 
     companion object {
         const val MODEL_NAME = "claude-haiku-4-5"
-        const val PROMPT_VERSION = "pi-agent-anthropic-v6"
+        const val PROMPT_VERSION = "pi-agent-anthropic-v7"
 
         internal fun systemPromptForTests(memoryContent: String = "# Claune Memory\n\n"): String = SystemPromptBuilder.build(
             memoryContent = memoryContent,
             tools = listOf(
                 ExecuteScriptToolDefinition(FailingScriptRuntime, FailingPhoneObserver),
+                CompleteTaskToolDefinition(TerminalOutcomeRecorder()),
+                BlockTaskToolDefinition(TerminalOutcomeRecorder()),
+                AskUserToolDefinition(TerminalOutcomeRecorder()),
                 ReadMemoryToolDefinition(FailingMemoryStore),
                 EditMemoryToolDefinition(FailingMemoryStore),
             ),
         )
     }
+}
+
+private fun ModelTurnOutput.toArtifactText(): String = when (this) {
+    is ModelTurnOutput.Blocked -> """{"kind":"blocked","reason":${reason.jsonStringLiteral()}}"""
+    is ModelTurnOutput.Completion -> """{"kind":"completion","summary":${summary.jsonStringLiteral()}}"""
+    is ModelTurnOutput.Message -> """{"kind":"message","messageToUser":${messageToUser.jsonStringLiteral()}}"""
+}
+
+private fun String.jsonStringLiteral(): String = buildString {
+    append('"')
+    this@jsonStringLiteral.forEach { char ->
+        when (char) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(char)
+        }
+    }
+    append('"')
 }
 
 private object FailingScriptRuntime : ScriptRuntime {

@@ -3,10 +3,7 @@ package com.divyanshgolyan.claune.android.llm
 import pi.agent.core.BeforeToolCallContext
 import pi.agent.core.BeforeToolCallResult
 
-internal class ToolBudget(
-    private val maxToolCalls: Int? = null,
-    private val maxReflectionToolCalls: Int = 4,
-) {
+internal class ToolBudget(private val maxToolCalls: Int? = null, private val maxReflectionToolCalls: Int = 4) {
     private var inReflectionPhase: Boolean = false
     private var usedToolCalls: Int = 0
     private var usedReflectionToolCalls: Int = 0

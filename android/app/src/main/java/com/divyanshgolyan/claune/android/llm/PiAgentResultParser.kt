@@ -35,8 +35,9 @@ internal object PiAgentResultParser {
     }
 
     private fun decodeFinalResponse(raw: String): FinalAgentResponse? {
+        val trimmed = raw.trim()
         runCatching {
-            return ScriptJson.codec.decodeFromString(FinalAgentResponse.serializer(), raw.trim())
+            return ScriptJson.codec.decodeFromString(FinalAgentResponse.serializer(), trimmed)
         }
 
         return extractCandidateJsonObjects(raw)

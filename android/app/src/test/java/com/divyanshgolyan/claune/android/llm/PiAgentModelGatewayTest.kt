@@ -1,13 +1,17 @@
 package com.divyanshgolyan.claune.android.llm
 
-import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.BuildConfig
+import com.divyanshgolyan.claune.android.data.local.MemoryStore
+import com.divyanshgolyan.claune.android.llm.tools.CompleteTaskArguments
+import com.divyanshgolyan.claune.android.llm.tools.CompleteTaskToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryArguments
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolResult
 import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.TerminalOutcomeRecorder
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
+import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
 import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
@@ -86,23 +90,28 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("scrollScreen(direction: \"up\" | \"down\"): HostSuccessOutcome;"))
         assertTrue(prompt.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
         assertTrue(prompt.contains("- execute_script:"))
+        assertTrue(prompt.contains("- complete_task:"))
+        assertTrue(prompt.contains("- block_task:"))
+        assertTrue(prompt.contains("- ask_user:"))
         assertTrue(prompt.contains("- read_memory:"))
         assertTrue(prompt.contains("- edit_memory:"))
-        assertTrue(prompt.contains("The TypeScript contract above is the source of truth"))
-        assertTrue(prompt.contains("If the target you need is already visible by text or label, tap it directly"))
-        assertTrue(prompt.contains("Use scrollScreen(direction) when you only need to reveal more of the current page."))
-        assertTrue(prompt.contains("For any task that changes app or device state"))
+        assertTrue(prompt.contains("Terminal outcome contract:"))
+        assertTrue(prompt.contains("After calling a terminal outcome tool, do not call more tools"))
+        assertTrue(prompt.contains("The TypeScript contract below is the source of truth"))
+        assertTrue(prompt.contains("Prefer visible direct controls by text or label."))
+        assertTrue(prompt.contains("Use scrollScreen for the current page."))
+        assertTrue(prompt.contains("For state-changing tasks"))
         assertTrue(!prompt.contains("For mutation goals"))
         assertTrue(prompt.contains("Available tools:"))
         assertTrue(prompt.contains("Current memory.md:"))
         assertTrue(prompt.contains("The user prefers Wi-Fi tasks to start from Settings."))
-        assertTrue(prompt.contains("Only store durable facts in memory"))
+        assertTrue(prompt.contains("Do not edit memory during the main task."))
         assertTrue(prompt.contains("Example wrapper-input script:"))
         assertTrue(prompt.contains("Example scrolling script:"))
-        assertTrue(prompt.contains("claune.tapText(\"Settings\", true);"))
+        assertTrue(prompt.contains("Example observe-and-wait script:"))
         assertTrue(prompt.contains("claune.scrollScreen(\"down\");"))
         assertTrue(prompt.contains("claune.focusSelector({ label: \"Search\" }, 2000);"))
-        assertTrue(prompt.contains("you are looking at Claune's own control shell for giving instructions"))
+        assertTrue(prompt.contains("you are seeing Claune's control shell"))
     }
 
     @Test
@@ -183,6 +192,23 @@ class PiAgentModelGatewayTest {
         assertEquals("Script completed with 1 host call.", payload.summary)
         assertEquals("after-script", payload.postActionSnapshot.snapshotId)
         assertEquals("opened_settings", payload.scriptData?.jsonObject?.get("step")?.toString()?.trim('"'))
+    }
+
+    @Test
+    fun `complete task tool records terminal completion`() = runTest {
+        val recorder = TerminalOutcomeRecorder()
+        val tool = CompleteTaskToolDefinition(recorder)
+
+        val result =
+            tool.execute(
+                "tool-call-1",
+                CompleteTaskArguments("Added the requested items."),
+                null,
+                null,
+            )
+
+        assertEquals(ModelTurnOutput.Completion("Added the requested items."), recorder.outcome)
+        assertEquals("Recorded task completion.", (result.content.single() as pi.ai.core.TextContent).text)
     }
 
     @Test

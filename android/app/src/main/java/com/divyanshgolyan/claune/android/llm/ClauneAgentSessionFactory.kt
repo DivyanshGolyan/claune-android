@@ -6,7 +6,10 @@ import pi.agent.core.Agent
 import pi.agent.core.AgentOptions
 import pi.agent.core.AgentThinkingLevel
 import pi.agent.core.AgentTool
+import pi.agent.core.BeforeToolCallContext
+import pi.agent.core.BeforeToolCallResult
 import pi.agent.core.InitialAgentState
+import pi.ai.core.AbortSignal
 import pi.ai.core.CacheRetention
 import pi.ai.core.Model
 import pi.ai.core.ThinkingBudgets
@@ -16,14 +19,10 @@ import pi.coding.agent.core.AuthStorage
 import pi.coding.agent.core.DefaultResourceLoader
 import pi.coding.agent.core.DefaultResourceLoaderOptions
 import pi.coding.agent.core.ModelRegistry
-import pi.coding.agent.core.SessionManager
 import pi.coding.agent.core.SettingsManager
 import pi.coding.agent.core.convertToLlm
 
-class ClauneAgentSessionFactory(
-    private val codingSessionStore: CodingSessionStore,
-    private val agentDir: File,
-) {
+class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionStore, private val agentDir: File) {
     suspend fun create(
         sessionPath: String?,
         systemPrompt: String,
@@ -32,7 +31,7 @@ class ClauneAgentSessionFactory(
         apiKey: String,
         thinkingLevel: AgentThinkingLevel = AgentThinkingLevel.MEDIUM,
         thinkingBudgets: ThinkingBudgets = ThinkingBudgets(medium = 4096),
-        beforeToolCall: (suspend (pi.agent.core.BeforeToolCallContext, pi.ai.core.AbortSignal?) -> pi.agent.core.BeforeToolCallResult?)? = null,
+        beforeToolCall: (suspend (BeforeToolCallContext, AbortSignal?) -> BeforeToolCallResult?)? = null,
     ): AgentSession {
         val authStorage = AuthStorage.create(File(agentDir, "auth.json").absolutePath)
         authStorage.setApiKey(model.provider, apiKey)
@@ -71,13 +70,13 @@ class ClauneAgentSessionFactory(
             Agent(
                 AgentOptions(
                     initialState =
-                        InitialAgentState(
-                            systemPrompt = systemPrompt,
-                            model = resolvedModel,
-                            thinkingLevel = resolvedThinkingLevel,
-                            tools = tools,
-                            messages = restored.messages,
-                        ),
+                    InitialAgentState(
+                        systemPrompt = systemPrompt,
+                        model = resolvedModel,
+                        thinkingLevel = resolvedThinkingLevel,
+                        tools = tools,
+                        messages = restored.messages,
+                    ),
                     convertToLlm = ::convertToLlm,
                     getApiKey = modelRegistry::getApiKey,
                     cacheRetention = CacheRetention.SHORT,
@@ -109,14 +108,13 @@ class ClauneAgentSessionFactory(
         )
     }
 
-    private fun parseThinkingLevel(value: String?): AgentThinkingLevel? =
-        when (value?.lowercase()) {
-            "off" -> AgentThinkingLevel.OFF
-            "minimal" -> AgentThinkingLevel.MINIMAL
-            "low" -> AgentThinkingLevel.LOW
-            "medium" -> AgentThinkingLevel.MEDIUM
-            "high" -> AgentThinkingLevel.HIGH
-            "xhigh" -> AgentThinkingLevel.XHIGH
-            else -> null
-        }
+    private fun parseThinkingLevel(value: String?): AgentThinkingLevel? = when (value?.lowercase()) {
+        "off" -> AgentThinkingLevel.OFF
+        "minimal" -> AgentThinkingLevel.MINIMAL
+        "low" -> AgentThinkingLevel.LOW
+        "medium" -> AgentThinkingLevel.MEDIUM
+        "high" -> AgentThinkingLevel.HIGH
+        "xhigh" -> AgentThinkingLevel.XHIGH
+        else -> null
+    }
 }

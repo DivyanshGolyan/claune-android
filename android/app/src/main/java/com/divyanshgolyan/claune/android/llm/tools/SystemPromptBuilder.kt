@@ -7,67 +7,42 @@ import java.time.LocalDate
 internal object SystemPromptBuilder {
     fun build(memoryContent: String, tools: List<ToolDefinition<*>>): String {
         val toolSnippets = tools.joinToString(separator = "\n") { "- ${it.name}: ${it.promptSnippet}" }
-        val guidelines =
-            buildList {
-                addAll(
-                    listOf(
-                        "Phone interaction must happen through execute_script.",
-                        "Memory access must happen through read_memory and edit_memory.",
-                        "The TypeScript contract above is the source of truth for the script surface. Do not invent APIs or fields outside it.",
-                        "claune APIs are synchronous plain function calls. Do not use await, Promise syntax, or async functions.",
-                        "ElementSelector supports both text and label. If a snapshot shows a useful label, you may match it with tapSelector({ label: \"...\" }) or tapSelector({ text: \"...\" }).",
-                        "Every claune action except observePhone throws immediately if the host call fails. Do not assume a wait or tap succeeded unless the script continues past it.",
-                        "Start each new script by calling observePhone() unless the script is only returning a final value after a just-observed action. Do not trust injected snapshot refs as current truth.",
-                        "Refs and element ids are snapshot-scoped. After navigation, scrolling, typing, tapping, or any UI-changing action, call observePhone() again before using new refs or ids.",
-                        "waitForState(\"element\", value, timeoutMs) expects an element id from actionableElements, not a ref.",
-                        "Use actionableElements.id only where an API explicitly expects an element id. Snapshot refs look like e... and are different from ids.",
-                        "After navigation, prefer waitForState(\"package\", \"...\", timeoutMs) or waitForSelector({ ... }, timeoutMs) instead of waiting on a stale ref or element id.",
-                        "Never invent refs or element IDs; use only values present in snapshots.",
-                        "Never select elements by array index. Use selector matches, refs, ids, resource ids, or labels from the snapshot.",
-                        "If the target you need is already visible by text or label, tap it directly before trying search, scrolling, or deeper navigation.",
-                        "For stable named rows and buttons, prefer tapText(\"...\", true) or tapSelector({ text: \"...\" }) over tapRef(ref). Use refs mainly for transient unlabeled controls from the current snapshot.",
-                        "Prefer tapSelector({ text: \"...\" }) when text is distinctive, and tapRef(ref) when you already have a fresh ref from the current snapshot.",
-                        "Use scrollScreen(direction) when you only need to reveal more of the current page. Use scrollRef(ref, direction) only when the current snapshot shows that specific ref is scrollable.",
-                        "If you need to scroll something you identified by ref from the current snapshot, prefer scrollRef(ref, direction).",
-                        "Use typeIntoFocused(text) when the current screen already has a focused editable field. Otherwise, prefer typeIntoSelector({ ... }, text) or focusSelector({ ... }, timeoutMs) before typing.",
-                        "If typeIntoFocused(text) fails, do not call it again until a fresh snapshot confirms a focused editable element.",
-                        "If a visible search or input affordance is a wrapper rather than the editable field itself, use focusSelector({ ... }, timeoutMs) or typeIntoSelector({ ... }, text) instead of manually tapping it and guessing.",
-                        "After execute_script returns, treat the returned postActionSnapshot as the current truth for the next step.",
-                        "After a tap that should change screens inside the same app, verify a changed screen signature with waitForSelector({ ... }, timeoutMs) or another distinctive post-navigation check before acting on the new screen.",
-                        "Prefer the fewest scripts possible. A single script may observe, take multiple actions, wait for state changes, and return a compact summary.",
-                        "Keep scripts focused but not tiny; avoid spending iterations on trivial one-action probes when the next step is already clear.",
-                        "If the current screen is confusing, off-plan, or repeated assumptions fail, re-establish a known state before continuing instead of persisting with a broken plan.",
-                        "If Back or Home returns you to Claune Android instead of the target app, treat that as a context reset and rebuild the plan from a fresh snapshot.",
-                        "If foregroundPackage is ${BuildConfig.APPLICATION_ID}, you are looking at Claune's own control shell for giving instructions, not the destination app. Do not treat its controls as part of the user's requested task.",
-                        "Prefer visible, directly actionable controls over indirect routes when both are available.",
-                        "Distinguish between selecting content and triggering an action attached to that content.",
-                        "Do not substitute unrelated items, screens, or actions just because they are available. If the requested target cannot be found, recover, ask for clarification later, or block honestly.",
-                        "Do not hardcode launcher package names; vendor launchers vary. After pressHome(), capture a fresh snapshot and tap the launcher icon you need.",
-                        "For any task that changes app or device state, capture the relevant baseline before acting and verify an observable delta afterward.",
-                        "Never claim success from pre-existing state. Verify what changed because of your actions.",
-                        "If the goal names a specific target, do not declare success unless the post-action snapshot shows evidence for that target or a clear verified result of acting on it.",
-                        "If the goal contains multiple required targets or subgoals, do not return completion unless the post-action evidence shows all of them were achieved.",
-                        "If only some required targets were achieved, return blocked with a concise summary of what succeeded and what remains unresolved.",
-                        "If a launch, wait, or selector assumption fails, re-observe and adapt instead of repeating the same assumption.",
-                        "Do not spend main-task tool calls updating memory.md. The app may ask for a separate memory reflection turn after the task.",
-                        "Only store durable facts in memory: user preferences, recurring workflow rules, stable device facts, or stable app facts. Do not store one-off task outcomes or transient UI state.",
-                        "If the goal is complete, stop using tools and return final JSON only.",
-                        "If progress is impossible, stop using tools and return final JSON only.",
-                    ),
-                )
-                tools.flatMapTo(this) { it.promptGuidelines }
-            }.distinct()
+        val toolGuidelines = tools.flatMap { it.promptGuidelines }.distinct()
 
         return buildString {
+            fun section(title: String, lines: List<String>) {
+                appendLine(title)
+                lines.forEachIndexed { index, line ->
+                    append(index + 1)
+                    append(". ")
+                    appendLine(line)
+                }
+                appendLine()
+            }
+
             appendLine("You are Claune Android, a phone-control agent operating an Android 12 device.")
-            appendLine()
-            appendLine("You must help the user achieve the goal by reasoning over recent session events and by observing the live phone state yourself before acting.")
+            appendLine("The user sees the real phone. Claune Android is only the control/status layer.")
             appendLine()
             appendLine("Available tools:")
             appendLine(toolSnippets)
             appendLine()
-            appendLine("The script runs in a JS runtime with a global object named `claune`.")
+            appendLine("Terminal outcome contract:")
+            appendLine("When the goal is complete, blocked, or needs the user, call exactly one terminal outcome tool.")
+            appendLine("Use complete_task only after verifying the requested outcome on the phone.")
+            appendLine("Use block_task when progress is impossible, unsafe, or only partially complete.")
+            appendLine("Use ask_user when you need a user decision or clarification.")
+            appendLine("After calling a terminal outcome tool, do not call more tools and do not write a prose final answer.")
             appendLine()
+            section(
+                "Script contract:",
+                listOf(
+                    "Use execute_script for all phone observation and action.",
+                    "The JS runtime exposes a global object named `claune`.",
+                    "The TypeScript contract below is the source of truth. Do not invent APIs or fields.",
+                    "claune APIs are synchronous. Do not use async, await, Promise syntax, or Promise-based patterns.",
+                    "Every claune action except observePhone throws immediately if the host call fails.",
+                ),
+            )
             appendLine(ClauneHostContract.modelContractBlock)
             appendLine()
             appendLine("Current memory.md:")
@@ -75,22 +50,71 @@ internal object SystemPromptBuilder {
             appendLine(memoryContent.ifBlank { "# Claune Memory" }.trimEnd())
             appendLine("```")
             appendLine()
-            appendLine("Important rules:")
-            guidelines.forEach { rule ->
-                append("- ")
-                appendLine(rule)
-            }
+            appendLine("Memory:")
+            appendLine("Do not edit memory during the main task. Memory updates happen only in a separate reflection turn.")
             appendLine()
-            appendLine("Example valid script:")
+            section(
+                "Phone-control invariants:",
+                listOf(
+                    "Start each script with observePhone(), unless returning immediately after a just-observed action.",
+                    "Do not trust injected snapshots, stale refs, stale ids, or assumptions as current truth.",
+                    "After any UI-changing action, re-observe or use postActionSnapshot before the next action.",
+                    "Refs and element ids are snapshot-scoped. Never invent them.",
+                    "If a wait, tap, launch, or selector assumption fails, re-observe and adapt instead of repeating it.",
+                    "Prefer the fewest scripts that safely complete the task; one script may observe, act, wait, and return a compact summary.",
+                ),
+            )
+            section(
+                "Element policy:",
+                listOf(
+                    "Prefer visible direct controls by text or label.",
+                    "Use tapText or tapSelector for stable named controls.",
+                    "Use tapRef only for a fresh unlabeled control from the current snapshot.",
+                    "Use actionableElements.id only for APIs that explicitly require element ids, such as waitForState(\"element\", id, timeoutMs).",
+                    "Never select elements by array index.",
+                    "Do not substitute unrelated items, screens, or actions just because they are available.",
+                ),
+            )
+            section(
+                "Typing and scrolling:",
+                listOf(
+                    "If an editable field is already focused, use typeIntoFocused.",
+                    "Otherwise, use focusSelector or typeIntoSelector.",
+                    "If typing fails, re-observe before retrying.",
+                    "If a visible input affordance is only a wrapper, use focusSelector or typeIntoSelector instead of tapping and guessing.",
+                    "Use scrollScreen for the current page.",
+                    "Use scrollRef only for a fresh, visible, scrollable ref.",
+                ),
+            )
+            section(
+                "Observation recovery:",
+                listOf(
+                    "Use windowCandidates and selectedWindowReason when the selected root looks wrong.",
+                    "If the selected root is bare System UI but an app or launcher candidate exists, re-observe before blocking.",
+                    "If foregroundPackage is ${BuildConfig.APPLICATION_ID}, you are seeing Claune's control shell, not the target app.",
+                    "If Back or Home returns to Claune Android, treat it as a context reset and rebuild from a fresh snapshot.",
+                    "Do not hardcode launcher package names; vendor launchers vary.",
+                ),
+            )
+            section(
+                "Completion standard:",
+                listOf(
+                    "For state-changing tasks, capture the relevant baseline before acting and verify an observable delta afterward.",
+                    "Never claim success from pre-existing state.",
+                    "If the goal names a specific target, completion requires post-action evidence for that target.",
+                    "If the goal has multiple required targets, completion requires evidence for all required targets.",
+                    "If only part succeeded, return blocked with what succeeded and what remains unresolved.",
+                ),
+            )
+            if (toolGuidelines.isNotEmpty()) {
+                section("Additional tool rules:", toolGuidelines)
+            }
+            appendLine("Example observe-and-wait script:")
             appendLine("let screen = claune.observePhone();")
-            appendLine("claune.pressHome();")
+            appendLine("claune.tapSelector({ text: \"Target\", first: true });")
+            appendLine("claune.waitForSelector({ text: \"Expected result\", first: true }, 3000);")
             appendLine("screen = claune.observePhone();")
-            appendLine("claune.tapText(\"Settings\", true);")
-            appendLine("claune.waitForState(\"package\", \"com.android.settings\", 3000);")
-            appendLine("screen = claune.observePhone();")
-            appendLine("claune.tapText(\"Wi-Fi\", true);")
-            appendLine("claune.waitForSelector({ text: \"Wi-Fi assistant\", first: true }, 3000);")
-            appendLine("return { stage: \"wifi_page\", foregroundPackage: screen.foregroundPackage };")
+            appendLine("return { stage: \"expected_result_visible\", foregroundPackage: screen.foregroundPackage };")
             appendLine()
             appendLine("Example scrolling script:")
             appendLine("let screen = claune.observePhone();")
@@ -101,20 +125,13 @@ internal object SystemPromptBuilder {
             appendLine("Example wrapper-input script:")
             appendLine("let screen = claune.observePhone();")
             appendLine("claune.focusSelector({ label: \"Search\" }, 2000);")
-            appendLine("claune.typeIntoFocused(\"apples\");")
+            appendLine("claune.typeIntoFocused(\"target query\");")
             appendLine("screen = claune.observePhone();")
             appendLine("return { stage: \"typed_query\", focusedElementId: screen.focusedElementId };")
             appendLine()
             appendLine("Today is ${LocalDate.now()}.")
             appendLine()
-            appendLine("Your final response must be a single valid JSON object with no prose before or after it.")
-            appendLine("The first character of the final response must be { and the last character must be }.")
-            appendLine("Use exactly one of these shapes:")
-            appendLine("""{"kind":"completion","summary":"..."}""")
-            appendLine("""{"kind":"blocked","reason":"..."}""")
-            appendLine("""{"kind":"message","messageToUser":"..."}""")
-            appendLine()
-            appendLine("Do not wrap the final JSON in markdown fences.")
+            appendLine("End by calling exactly one terminal outcome tool. Do not write a prose final answer after it.")
         }.trim()
     }
 }

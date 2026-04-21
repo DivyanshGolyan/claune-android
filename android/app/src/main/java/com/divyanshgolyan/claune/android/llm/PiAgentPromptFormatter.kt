@@ -21,8 +21,35 @@ internal object PiAgentPromptFormatter {
         appendLine("Last known phone snapshot before your next action:")
         appendLine("This snapshot may already be stale. Observe the phone yourself before acting.")
         appendLine("lastKnownForegroundPackage: ${input.snapshot.foregroundPackage}")
+        input.snapshot.selectedWindowReason?.let { reason ->
+            appendLine("lastKnownSelectedWindowReason: $reason")
+        }
+        if (input.snapshot.windowCandidates.isNotEmpty()) {
+            appendLine("lastKnownWindowCandidates:")
+            input.snapshot.windowCandidates.take(8).forEach { candidate ->
+                append("- ")
+                if (candidate.selected) {
+                    append("selected ")
+                }
+                append(candidate.packageName)
+                append(", type=")
+                append(candidate.type)
+                append(", layer=")
+                append(candidate.layer)
+                append(", active=")
+                append(candidate.active)
+                append(", focused=")
+                append(candidate.focused)
+                append(", actionableCount=")
+                append(candidate.actionableElementCount)
+                append(", text=")
+                appendLine(candidate.visibleText.take(4).joinToString(" | ").ifBlank { "<none>" })
+            }
+        }
         if (input.snapshot.foregroundPackage == BuildConfig.APPLICATION_ID) {
-            appendLine("shellContext: The last known UI was Claune Android's own control shell. Leave Claune before operating the destination app.")
+            appendLine(
+                "shellContext: The last known UI was Claune Android's own control shell. Leave Claune before operating the destination app.",
+            )
         }
         appendLine("lastKnownFocusedElementId: ${input.snapshot.focusedElementId ?: "none"}")
         appendLine("lastKnownVisibleText:")
@@ -68,6 +95,6 @@ internal object PiAgentPromptFormatter {
             }
         }
         appendLine()
-        appendLine("Return final JSON only when the goal is complete or clearly blocked.")
+        appendLine("When the goal is complete, blocked, or needs the user, call exactly one terminal outcome tool.")
     }
 }
