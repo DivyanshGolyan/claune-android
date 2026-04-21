@@ -14,12 +14,9 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ClauneAndroid"
-include(":app")
+rootProject.name = "pi-agent-kotlin"
+
 include(":pi-ai-core")
 include(":pi-agent-core")
 include(":pi-coding-agent-core")
-
-project(":pi-ai-core").projectDir = file("vendor/pi-agent-kotlin/pi-ai-core")
-project(":pi-agent-core").projectDir = file("vendor/pi-agent-kotlin/pi-agent-core")
-project(":pi-coding-agent-core").projectDir = file("vendor/pi-agent-kotlin/pi-coding-agent-core")
+include(":android-consumer")

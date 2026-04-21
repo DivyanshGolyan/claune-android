@@ -108,6 +108,7 @@ dependencies {
     implementation(libs.quickjs.wrapper.android)
     implementation(libs.rhino)
     implementation(project(":pi-agent-core"))
+    implementation(project(":pi-coding-agent-core"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
