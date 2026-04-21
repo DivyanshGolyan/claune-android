@@ -11,16 +11,10 @@ import pi.ai.core.Model
 import pi.ai.core.StopReason
 import pi.ai.core.TextContent
 import pi.ai.core.ThinkingBudgets
-import pi.ai.core.ToolResultMessage
 import pi.ai.core.Transport
 import pi.ai.core.Usage
 import pi.ai.core.UsageCost
 import pi.ai.core.streamSimple
-
-private fun defaultConvertToLlm(messages: List<AgentMessage>): List<Message> =
-    messages.filter { message ->
-        message is pi.ai.core.UserMessage || message is AssistantMessage || message is ToolResultMessage
-    }
 
 private val emptyUsage: Usage =
     Usage(
@@ -135,7 +129,8 @@ public class Agent
         private val steeringQueue: PendingMessageQueue = PendingMessageQueue(options.steeringMode)
         private val followUpQueue: PendingMessageQueue = PendingMessageQueue(options.followUpMode)
 
-        public var convertToLlm: suspend (List<AgentMessage>) -> List<Message> = options.convertToLlm ?: ::defaultConvertToLlm
+        public var convertToLlm: suspend (List<AgentMessage>) -> List<Message> =
+            options.convertToLlm ?: { messages -> defaultConvertToLlm(messages, options.customMessageToLlm) }
         public var transformContext: (suspend (List<AgentMessage>, AbortSignal?) -> List<AgentMessage>)? = options.transformContext
         public var streamFn: StreamFn = options.streamFn ?: ::streamSimple
         public var getApiKey: (suspend (String) -> String?)? = options.getApiKey
