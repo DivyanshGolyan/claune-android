@@ -9,7 +9,6 @@ import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.content.Intent as AndroidIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -73,13 +72,16 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.app.clauneContainer
-import com.divyanshgolyan.claune.android.data.local.RunArtifactMetadata
+import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetail
+import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetailEntry
+import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetailKind
 import com.divyanshgolyan.claune.android.data.local.SettingsState
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
@@ -98,14 +100,28 @@ class MainActivity : ComponentActivity() {
                 val settingsState by container.settingsStore.state.collectAsStateWithLifecycle()
                 val historyEntries =
                     remember(sessionState) {
-                        artifactHistoryEntries(container.artifactStore.recentRunMetadata(limit = 8))
+                        sessionHistoryEntries(sessionState.recentSessions)
+                    }
+                val sessionDetail =
+                    remember(
+                        sessionState.selectedSessionPath,
+                        sessionState.timeline,
+                        sessionState.lastAssistantText,
+                        sessionState.status,
+                        sessionState.pendingSteeringCount,
+                        sessionState.isCompacting,
+                    ) {
+                        container.codingSessionStore.loadSessionDetail(sessionState.selectedSessionPath)
                     }
                 ClauneApp(
                     sessionState = sessionState,
                     settingsState = settingsState,
                     historyEntries = historyEntries,
+                    sessionDetail = sessionDetail,
                     onStartSession = { startAgentService(it) },
                     onStopSession = { stopAgentService() },
+                    onCreateSession = { container.sessionCoordinator.createSession("") },
+                    onSelectSession = { container.sessionCoordinator.selectSession(it) },
                     onOpenAccessibilitySettings = { openAccessibilitySettings() },
                     onUpdateAnthropicKey = { container.settingsStore.updateAnthropicApiKey(it) },
                 )
@@ -163,12 +179,6 @@ class MainActivity : ComponentActivity() {
         val intent = ClauneAgentService.startIntent(this, goal)
         ContextCompat.startForegroundService(this, intent)
         moveTaskToBack(true)
-        startActivity(
-            AndroidIntent(AndroidIntent.ACTION_MAIN).apply {
-                addCategory(AndroidIntent.CATEGORY_HOME)
-                flags = AndroidIntent.FLAG_ACTIVITY_NEW_TASK
-            },
-        )
     }
 
     private fun stopAgentService() {
@@ -187,6 +197,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class ClauneScreen {
     Home,
+    Session,
     Settings,
 }
 
@@ -200,15 +211,17 @@ private fun ClauneApp(
     sessionState: SessionUiState,
     settingsState: SettingsState,
     historyEntries: List<SessionHistoryEntry>,
+    sessionDetail: PersistedSessionDetail?,
     onStartSession: (String) -> Unit,
     onStopSession: () -> Unit,
+    onCreateSession: () -> com.divyanshgolyan.claune.android.data.local.PersistedSessionSummary,
+    onSelectSession: (String) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onUpdateAnthropicKey: (String) -> Unit,
 ) {
     val context = LocalContext.current
     var screen by rememberSaveable { mutableStateOf(ClauneScreen.Home.name) }
     var goal by rememberSaveable { mutableStateOf("") }
-    var homeMode by rememberSaveable { mutableStateOf(HomeMode.Idle.name) }
     var composerRequestsKeyboard by rememberSaveable { mutableStateOf(false) }
     var voiceUiState by remember { mutableStateOf(VoiceUiState()) }
     val speechRecognizer =
@@ -255,10 +268,7 @@ private fun ClauneApp(
                                 isListening = false,
                                 errorMessage = message,
                             )
-                        if (pendingVoiceSend) {
-                            pendingVoiceSend = false
-                            homeMode = HomeMode.Composer.name
-                        }
+                        pendingVoiceSend = false
                     }
 
                     override fun onResults(results: Bundle?) {
@@ -273,10 +283,8 @@ private fun ClauneApp(
                                 )
                             goal = transcript
                             pendingVoiceSend = false
-                            homeMode = HomeMode.Composer.name
                         } else {
                             pendingVoiceSend = false
-                            homeMode = HomeMode.Composer.name
                         }
                     }
 
@@ -301,7 +309,6 @@ private fun ClauneApp(
             ActivityResultContracts.RequestPermission(),
         ) { granted ->
             if (granted) {
-                homeMode = HomeMode.Composer.name
                 voiceUiState = VoiceUiState(startedAtMillis = SystemClock.elapsedRealtime())
                 startSpeechRecognition(speechRecognizer, context)
             } else {
@@ -309,7 +316,7 @@ private fun ClauneApp(
             }
         }
 
-    LaunchedEffect(homeMode, voiceUiState.isListening) {
+    LaunchedEffect(screen, voiceUiState.isListening) {
         if (voiceUiState.isListening) {
             while (voiceUiState.isListening) {
                 voiceUiState =
@@ -321,17 +328,16 @@ private fun ClauneApp(
         }
     }
 
-    BackHandler(enabled = screen != ClauneScreen.Home.name || homeMode != HomeMode.Idle.name) {
-        when {
-            screen != ClauneScreen.Home.name -> {
-                screen = ClauneScreen.Home.name
-            }
-
-            homeMode != HomeMode.Idle.name -> {
+    BackHandler(enabled = screen != ClauneScreen.Home.name) {
+        when (ClauneScreen.valueOf(screen)) {
+            ClauneScreen.Home -> Unit
+            ClauneScreen.Settings,
+            ClauneScreen.Session,
+            -> {
                 speechRecognizer?.cancel()
                 voiceUiState = VoiceUiState()
                 composerRequestsKeyboard = false
-                homeMode = HomeMode.Idle.name
+                screen = ClauneScreen.Home.name
             }
         }
     }
@@ -342,36 +348,53 @@ private fun ClauneApp(
     ) {
         when (ClauneScreen.valueOf(screen)) {
             ClauneScreen.Home ->
-                SoftKraftHomeScreen(
+                SessionChooserHomeScreen(
                     sessionState = sessionState,
                     settingsState = settingsState,
                     historyEntries = historyEntries,
-                    mode = HomeMode.valueOf(homeMode),
+                    onCreateSession = {
+                        onCreateSession()
+                        goal = ""
+                        composerRequestsKeyboard = true
+                        screen = ClauneScreen.Session.name
+                    },
+                    onOpenSession = { path ->
+                        onSelectSession(path)
+                        goal = ""
+                        composerRequestsKeyboard = false
+                        screen = ClauneScreen.Session.name
+                    },
+                    onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+                    onOpenSettings = { screen = ClauneScreen.Settings.name },
+                )
+
+            ClauneScreen.Session ->
+                SessionDetailScreen(
+                    sessionState = sessionState,
+                    sessionDetail = sessionDetail,
+                    settingsState = settingsState,
                     goal = goal,
-                    voiceUiState = voiceUiState,
+                    previewGoal = voiceUiState.previewTranscript,
+                    isListening = voiceUiState.isListening,
+                    listeningElapsedSeconds = voiceUiState.elapsedSeconds,
+                    listeningLevel = voiceUiState.level,
+                    listeningError = voiceUiState.errorMessage,
                     autoFocusInput = composerRequestsKeyboard,
                     onGoalChanged = { goal = it },
-                    onReuseGoal = { goal = it },
-                    onStart = {
+                    onSendMessage = {
                         composerRequestsKeyboard = false
-                        homeMode = HomeMode.Idle.name
                         onStartSession(goal)
-                    },
-                    onStop = onStopSession,
-                    onOpenTyping = {
-                        composerRequestsKeyboard = true
-                        homeMode = HomeMode.Composer.name
+                        goal = ""
+                        voiceUiState = VoiceUiState()
                     },
                     onStartVoiceCapture = {
-                        if (!sessionState.foregroundServiceRunning &&
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                             PackageManager.PERMISSION_GRANTED
                         ) {
                             composerRequestsKeyboard = false
-                            homeMode = HomeMode.Composer.name
                             voiceUiState = VoiceUiState(startedAtMillis = SystemClock.elapsedRealtime())
                             startSpeechRecognition(speechRecognizer, context)
-                        } else if (!sessionState.foregroundServiceRunning) {
+                        } else {
                             microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
                     },
@@ -379,8 +402,8 @@ private fun ClauneApp(
                         pendingVoiceSend = true
                         speechRecognizer?.stopListening()
                     },
-                    onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                     onOpenSettings = { screen = ClauneScreen.Settings.name },
+                    onStopSession = onStopSession,
                 )
 
             ClauneScreen.Settings ->
@@ -395,6 +418,165 @@ private fun ClauneApp(
 }
 
 @Composable
+private fun SessionChooserHomeScreen(
+    sessionState: SessionUiState,
+    settingsState: SettingsState,
+    historyEntries: List<SessionHistoryEntry>,
+    onCreateSession: () -> Unit,
+    onOpenSession: (String) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val isReady = settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
+    Box(
+        modifier =
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(SoftKraftPalette.Background, SoftKraftPalette.BackgroundDeep),
+                ),
+            ),
+    ) {
+        LazyColumn(
+            modifier =
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                IdleHeader(
+                    isReady = isReady,
+                    onOpenSettings = onOpenSettings,
+                )
+            }
+
+            if (!isReady) {
+                item {
+                    SetupRunwayCard(
+                        hasApiKey = settingsState.anthropicApiKey.isNotBlank(),
+                        accessibilityConnected = sessionState.accessibilityConnected,
+                        onOpenSettings = onOpenSettings,
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+                    )
+                }
+            } else {
+                item {
+                    NewSessionCard(onCreateSession = onCreateSession)
+                }
+
+                if (historyEntries.isNotEmpty()) {
+                    item {
+                        SectionLabel("Existing sessions")
+                    }
+                }
+
+                items(historyEntries.take(8)) { entry ->
+                    SessionHistoryRow(
+                        entry = entry,
+                        onReuseGoal = { onOpenSession(entry.sessionPath) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionDetailScreen(
+    sessionState: SessionUiState,
+    sessionDetail: PersistedSessionDetail?,
+    settingsState: SettingsState,
+    goal: String,
+    previewGoal: String,
+    isListening: Boolean,
+    listeningElapsedSeconds: Int,
+    listeningLevel: Float,
+    listeningError: String?,
+    autoFocusInput: Boolean,
+    onGoalChanged: (String) -> Unit,
+    onSendMessage: () -> Unit,
+    onStartVoiceCapture: () -> Unit,
+    onStopVoiceCapture: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onStopSession: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val canEdit = settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
+    val canSend = goal.isNotBlank() && settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
+
+    LaunchedEffect(autoFocusInput, isListening) {
+        if (autoFocusInput && !isListening) {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
+    Column(
+        modifier =
+        Modifier
+            .fillMaxSize()
+            .background(SoftKraftPalette.Background)
+            .statusBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        SessionDetailHeader(
+            title = sessionState.selectedSessionTitle ?: "Session",
+            status = sessionState.status,
+            lastKnownApp = sessionState.lastKnownApp,
+            onOpenSettings = onOpenSettings,
+        )
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (sessionState.isCompacting) {
+                item {
+                    SessionSystemChip("Compacting context…")
+                }
+            }
+            if (sessionState.pendingSteeringCount > 0) {
+                item {
+                    SessionSystemChip("Queued steering: ${sessionState.pendingSteeringCount}")
+                }
+            }
+            if (sessionDetail == null) {
+                item {
+                    SessionEmptyState()
+                }
+            } else {
+                items(sessionDetail.entries) { entry ->
+                    SessionTranscriptRow(entry = entry)
+                }
+            }
+        }
+
+        SessionComposerCard(
+            goal = goal,
+            previewGoal = previewGoal,
+            isListening = isListening,
+            listeningElapsedSeconds = listeningElapsedSeconds,
+            listeningLevel = listeningLevel,
+            listeningError = listeningError,
+            canEdit = canEdit && !isListening,
+            canSend = canSend && !isListening,
+            canStop = sessionState.status == SessionStatus.Running,
+            focusRequester = focusRequester,
+            onGoalChanged = onGoalChanged,
+            onSendMessage = onSendMessage,
+            onStartVoiceCapture = onStartVoiceCapture,
+            onStopVoiceCapture = onStopVoiceCapture,
+            onStopSession = onStopSession,
+        )
+    }
+}
+
+@Composable
 private fun SoftKraftHomeScreen(
     sessionState: SessionUiState,
     settingsState: SettingsState,
@@ -405,6 +587,7 @@ private fun SoftKraftHomeScreen(
     autoFocusInput: Boolean,
     onGoalChanged: (String) -> Unit,
     onReuseGoal: (String) -> Unit,
+    onSelectSession: (String) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onOpenTyping: () -> Unit,
@@ -435,6 +618,7 @@ private fun SoftKraftHomeScreen(
                     historyEntries = historyEntries,
                     isReady = isReady,
                     onReuseGoal = onReuseGoal,
+                    onSelectSession = onSelectSession,
                     onOpenTyping = onOpenTyping,
                     onStartVoiceCapture = onStartVoiceCapture,
                     onOpenAccessibilitySettings = onOpenAccessibilitySettings,
@@ -470,6 +654,7 @@ private fun IdleHomeScreen(
     historyEntries: List<SessionHistoryEntry>,
     isReady: Boolean,
     onReuseGoal: (String) -> Unit,
+    onSelectSession: (String) -> Unit,
     onOpenTyping: () -> Unit,
     onStartVoiceCapture: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
@@ -513,7 +698,10 @@ private fun IdleHomeScreen(
                     item {
                         ContinueSessionCard(
                             entry = latest,
-                            onReuseGoal = { onReuseGoal(latest.goal) },
+                            onReuseGoal = {
+                                onSelectSession(latest.sessionPath)
+                                onReuseGoal(latest.goal)
+                            },
                         )
                     }
                 }
@@ -536,7 +724,10 @@ private fun IdleHomeScreen(
                 items(recentEntries.take(3)) { entry ->
                     SessionHistoryRow(
                         entry = entry,
-                        onReuseGoal = { onReuseGoal(entry.goal) },
+                        onReuseGoal = {
+                            onSelectSession(entry.sessionPath)
+                            onReuseGoal(entry.goal)
+                        },
                     )
                 }
             }
@@ -1139,6 +1330,262 @@ private fun SettingsScreen(
 }
 
 @Composable
+private fun NewSessionCard(onCreateSession: () -> Unit) {
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onCreateSession)
+                .padding(horizontal = 18.dp, vertical = 18.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SectionLabel("New session")
+                Text(
+                    text = "Start something new",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = SoftKraftPalette.Ink,
+                )
+            }
+            Text(
+                text = "→",
+                color = SoftKraftPalette.AccentDeep,
+                style = MaterialTheme.typography.titleLarge,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SessionDetailHeader(
+    title: String,
+    status: SessionStatus,
+    lastKnownApp: String?,
+    onOpenSettings: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionLabel("Session")
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = SoftKraftPalette.Ink,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val statusLine =
+                when (status) {
+                    SessionStatus.Running -> "Working${lastKnownApp?.let { " in $it" } ?: ""}"
+                    SessionStatus.Blocked -> "Blocked"
+                    SessionStatus.Completed -> "Done"
+                    SessionStatus.Cancelled -> "Stopped"
+                    SessionStatus.Paused -> "Paused"
+                    SessionStatus.Idle -> "Ready"
+                }
+            Text(
+                text = statusLine,
+                style = MaterialTheme.typography.bodyMedium,
+                color = SoftKraftPalette.InkSoft,
+            )
+        }
+
+        TextButton(onClick = onOpenSettings) {
+            Text(
+                text = "Settings",
+                color = SoftKraftPalette.AccentDeep,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SessionSystemChip(text: String) {
+    Box(
+        modifier =
+        Modifier
+            .background(SoftKraftPalette.SurfaceMuted, RoundedCornerShape(16.dp))
+            .border(1.dp, SoftKraftPalette.RuleSoft, RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = SoftKraftPalette.InkSoft,
+        )
+    }
+}
+
+@Composable
+private fun SessionEmptyState() {
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "This session is empty.",
+                style = MaterialTheme.typography.titleMedium,
+                color = SoftKraftPalette.Ink,
+            )
+            Text(
+                text = "Type or dictate the first instruction below.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = SoftKraftPalette.InkSoft,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SessionTranscriptRow(entry: PersistedSessionDetailEntry) {
+    val background =
+        when (entry.kind) {
+            PersistedSessionDetailKind.User -> SoftKraftPalette.SurfaceRaised
+            PersistedSessionDetailKind.Assistant -> SoftKraftPalette.Surface
+            PersistedSessionDetailKind.Tool -> SoftKraftPalette.SurfaceMuted
+            PersistedSessionDetailKind.Custom,
+            PersistedSessionDetailKind.Compaction,
+            PersistedSessionDetailKind.BranchSummary,
+            PersistedSessionDetailKind.System,
+            -> SoftKraftPalette.SurfaceMuted
+        }
+    Card(
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = background),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            SectionLabel(entry.title)
+            Text(
+                text = entry.body,
+                style = MaterialTheme.typography.bodyLarge,
+                color = SoftKraftPalette.Ink,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SessionComposerCard(
+    goal: String,
+    previewGoal: String,
+    isListening: Boolean,
+    listeningElapsedSeconds: Int,
+    listeningLevel: Float,
+    listeningError: String?,
+    canEdit: Boolean,
+    canSend: Boolean,
+    canStop: Boolean,
+    focusRequester: FocusRequester,
+    onGoalChanged: (String) -> Unit,
+    onSendMessage: () -> Unit,
+    onStartVoiceCapture: () -> Unit,
+    onStopVoiceCapture: () -> Unit,
+    onStopSession: () -> Unit,
+) {
+    Card(
+        shape = RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
+        modifier =
+        Modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = 18.dp,
+                shape = RoundedCornerShape(30.dp),
+                ambientColor = SoftKraftPalette.AccentDeep.copy(alpha = 0.12f),
+                spotColor = SoftKraftPalette.Ink.copy(alpha = 0.08f),
+            ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (isListening) {
+                ComposerTopBar("Listening · ${elapsedLabel(listeningElapsedSeconds)}")
+            }
+            ComposerVoiceHero(isListening = isListening, level = listeningLevel)
+            BasicTextField(
+                value = if (isListening) previewGoal.ifBlank { goal } else goal,
+                onValueChange = onGoalChanged,
+                enabled = canEdit,
+                textStyle = TextStyle(color = SoftKraftPalette.Ink, fontSize = 24.sp, lineHeight = 30.sp),
+                modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(132.dp)
+                    .focusRequester(focusRequester)
+                    .background(SoftKraftPalette.SurfaceInput, RoundedCornerShape(22.dp))
+                    .border(1.dp, SoftKraftPalette.Rule, RoundedCornerShape(22.dp))
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                decorationBox = { innerTextField ->
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if ((if (isListening) previewGoal.ifBlank { goal } else goal).isBlank()) {
+                            Text(
+                                text = "Tell Claune what you need done.",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = SoftKraftPalette.InkFaint,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+            )
+            listeningError?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SoftKraftPalette.Warning,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(onClick = if (isListening) onStopVoiceCapture else onStartVoiceCapture) {
+                    Text(if (isListening) "Stop voice" else "Use voice")
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                if (canStop) {
+                    OutlinedButton(onClick = onStopSession) {
+                        Text("Stop")
+                    }
+                }
+                Button(
+                    onClick = onSendMessage,
+                    enabled = canSend,
+                    colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = SoftKraftPalette.Accent,
+                        contentColor = SoftKraftPalette.Background,
+                    ),
+                ) {
+                    Text("Send")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SectionLabel(text: String) {
     Text(
         text = text.uppercase(),
@@ -1221,13 +1668,21 @@ private object SoftKraftPalette {
     val Muted = Color(0xFF726A5F)
 }
 
-private data class SessionHistoryEntry(val sessionId: String, val goal: String, val summary: String)
+private data class SessionHistoryEntry(
+    val sessionId: String,
+    val sessionPath: String,
+    val goal: String,
+    val summary: String,
+)
 
-private fun artifactHistoryEntries(metadata: List<RunArtifactMetadata>): List<SessionHistoryEntry> = metadata.map { run ->
+private fun sessionHistoryEntries(
+    sessions: List<com.divyanshgolyan.claune.android.data.local.PersistedSessionSummary>,
+): List<SessionHistoryEntry> = sessions.map { session ->
     SessionHistoryEntry(
-        sessionId = run.runId,
-        goal = run.goal,
-        summary = run.latestSummary ?: "No summary available yet.",
+        sessionId = session.sessionId,
+        sessionPath = session.path,
+        goal = session.title,
+        summary = session.preview,
     )
 }
 
