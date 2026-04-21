@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.divyanshgolyan.claune.android.app.ClauneContainer
+import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetail
+import java.io.File
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +24,7 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
                 sessionState = sessionState,
                 settingsState = settingsState,
                 historyEntries = sessionHistoryEntries(sessionState.recentSessions),
-                sessionDetail = container.codingSessionStore.loadSessionDetail(sessionState.selectedSessionPath),
+                sessionDetail = loadSessionDetail(sessionState.selectedSessionPath),
             )
         }.stateIn(
             scope = viewModelScope,
@@ -32,7 +34,7 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
                 sessionState = container.sessionCoordinator.uiState.value,
                 settingsState = container.settingsStore.state.value,
                 historyEntries = sessionHistoryEntries(container.sessionCoordinator.uiState.value.recentSessions),
-                sessionDetail = container.codingSessionStore.loadSessionDetail(
+                sessionDetail = loadSessionDetail(
                     container.sessionCoordinator.uiState.value.selectedSessionPath,
                 ),
             ),
@@ -40,6 +42,8 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
 
     private val effectChannel = Channel<ClauneUiEffect>(Channel.BUFFERED)
     val effects = effectChannel.receiveAsFlow()
+
+    private var cachedSessionDetail: CachedSessionDetail? = null
 
     fun onEvent(event: ClauneUiEvent) {
         when (event) {
@@ -64,6 +68,21 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
         }
     }
 
+    private fun loadSessionDetail(path: String?): PersistedSessionDetail? {
+        if (path.isNullOrBlank()) {
+            cachedSessionDetail = null
+            return null
+        }
+        val modifiedAtMillis = File(path).lastModified()
+        cachedSessionDetail
+            ?.takeIf { it.path == path && it.modifiedAtMillis == modifiedAtMillis }
+            ?.let { return it.detail }
+
+        val detail = container.codingSessionStore.loadSessionDetail(path)
+        cachedSessionDetail = CachedSessionDetail(path, modifiedAtMillis, detail)
+        return detail
+    }
+
     class Factory(private val container: ClauneContainer) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -73,6 +92,8 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
             error("Unsupported ViewModel class: ${modelClass.name}")
         }
     }
+
+    private data class CachedSessionDetail(val path: String, val modifiedAtMillis: Long, val detail: PersistedSessionDetail?)
 }
 
 sealed interface ClauneUiEvent {

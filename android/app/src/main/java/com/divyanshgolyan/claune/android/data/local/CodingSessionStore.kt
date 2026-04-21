@@ -68,17 +68,18 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
     }
 
     fun loadSession(path: String?): PersistedSessionSummary? {
-        val resolvedPath = path?.takeIf(String::isNotBlank) ?: return null
-        val file = File(resolvedPath)
-        if (!file.exists()) {
-            return null
-        }
-        return SessionManager.open(resolvedPath, sessionDir = sessionDir, cwdOverride = cwd).toSummary()
+        val sessionFile = path?.existingSessionFile() ?: return null
+        return runCatching {
+            SessionManager.open(sessionFile.absolutePath, sessionDir = sessionDir, cwdOverride = cwd).toSummary()
+        }.getOrNull()
     }
 
-    fun sessionManager(path: String?): SessionManager = when {
-        path.isNullOrBlank() -> SessionManager.create(cwd, sessionDir)
-        else -> SessionManager.open(path, sessionDir = sessionDir, cwdOverride = cwd)
+    fun sessionManager(path: String?): SessionManager {
+        val sessionFile = path?.existingSessionFile()
+        return when (sessionFile) {
+            null -> SessionManager.create(cwd, sessionDir)
+            else -> SessionManager.open(sessionFile.absolutePath, sessionDir = sessionDir, cwdOverride = cwd)
+        }
     }
 
     fun loadSessionDetail(path: String?): PersistedSessionDetail? {
@@ -125,6 +126,10 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
             modifiedAt = Instant.ofEpochMilli(File(sessionFile).lastModified()),
         )
     }
+
+    private fun String.existingSessionFile(): File? = takeIf(String::isNotBlank)
+        ?.let(::File)
+        ?.takeIf(File::isFile)
 
     private fun SessionEntry.toDetailEntry(): PersistedSessionDetailEntry? = when (this) {
         is SessionMessageEntry -> messageEntry()

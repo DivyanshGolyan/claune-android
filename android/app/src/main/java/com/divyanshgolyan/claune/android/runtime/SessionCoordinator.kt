@@ -157,35 +157,59 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
     }
 
     fun setAccessibilityConnected(connected: Boolean) {
-        _uiState.value = _uiState.value.copy(accessibilityConnected = connected)
+        updateUiState { current ->
+            if (current.accessibilityConnected == connected) current else current.copy(accessibilityConnected = connected)
+        }
     }
 
     fun setForegroundServiceRunning(running: Boolean) {
-        _uiState.value = _uiState.value.copy(foregroundServiceRunning = running)
+        updateUiState { current ->
+            if (current.foregroundServiceRunning == running) current else current.copy(foregroundServiceRunning = running)
+        }
     }
 
     fun setLastKnownApp(packageName: String) {
-        _uiState.value = _uiState.value.copy(lastKnownApp = packageName)
+        updateUiState { current ->
+            if (current.lastKnownApp == packageName) current else current.copy(lastKnownApp = packageName)
+        }
     }
 
     fun setAppInForeground(inForeground: Boolean) {
-        _uiState.value = _uiState.value.copy(appInForeground = inForeground)
+        updateUiState { current ->
+            if (current.appInForeground == inForeground) current else current.copy(appInForeground = inForeground)
+        }
     }
 
     fun setStreaming(streaming: Boolean) {
-        _uiState.value = _uiState.value.copy(isStreaming = streaming)
+        updateUiState { current ->
+            if (current.isStreaming == streaming) current else current.copy(isStreaming = streaming)
+        }
     }
 
     fun setCompacting(compacting: Boolean) {
-        _uiState.value = _uiState.value.copy(isCompacting = compacting)
+        updateUiState { current ->
+            if (current.isCompacting == compacting) current else current.copy(isCompacting = compacting)
+        }
     }
 
     fun setPendingSteeringCount(count: Int) {
-        _uiState.value = _uiState.value.copy(pendingSteeringCount = count)
+        updateUiState { current ->
+            if (current.pendingSteeringCount == count) current else current.copy(pendingSteeringCount = count)
+        }
     }
 
     fun setLastAssistantText(text: String) {
-        _uiState.value = _uiState.value.copy(lastAssistantText = text)
+        updateUiState { current ->
+            if (current.lastAssistantText == text) current else current.copy(lastAssistantText = text)
+        }
+    }
+
+    private fun updateUiState(update: (SessionUiState) -> SessionUiState) {
+        val current = _uiState.value
+        val next = update(current)
+        if (next != current) {
+            _uiState.value = next
+        }
     }
 
     private fun refreshSessionList(selectedPath: String?): List<PersistedSessionSummary> {
