@@ -528,17 +528,6 @@ class ScriptHost(
         else -> null
     }
 
-    private fun UiSnapshot.toPayload(): UiSnapshotPayload = UiSnapshotPayload(
-        snapshotId = snapshotId,
-        capturedAt = capturedAt.toString(),
-        foregroundPackage = foregroundPackage,
-        visibleText = visibleText,
-        actionableElements = actionableElements.map { it.toPayload() },
-        focusedElementId = focusedElementId,
-        windowCandidates = windowCandidates.map { it.toPayload() },
-        selectedWindowReason = selectedWindowReason,
-    )
-
     private companion object {
         private const val POLL_INTERVAL_MS = 250L
         private const val DEFAULT_FOCUS_TIMEOUT_MS = 1500L
