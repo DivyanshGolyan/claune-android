@@ -1,23 +1,24 @@
 package com.divyanshgolyan.claune.android.runtime
 
 import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
+import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
 import com.divyanshgolyan.claune.android.data.local.RunArtifactMetadata
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.llm.ModelGateway
 import com.divyanshgolyan.claune.android.scripting.HostCallRecord
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRecord
+import java.nio.file.Files
 import java.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentLoopTest {
     @Test
-    fun `runSingleTurn blocks when the model turn times out`() = runTest {
-        val sessionCoordinator = SessionCoordinator(InMemorySessionLogStore())
+    fun `submitUserText completes without a product timeout`() = runTest {
+        val (sessionCoordinator, _) = testCoordinator()
         val loop =
             AgentLoop(
                 phoneObserver = FakePhoneObserver,
@@ -25,13 +26,12 @@ class AgentLoopTest {
                 sessionCoordinator = sessionCoordinator,
                 logStore = InMemorySessionLogStore(),
                 artifactStore = NoOpArtifactStore,
-                modelTurnTimeoutMs = 10,
             )
 
-        loop.runSingleTurn("Open Settings")
+        loop.submitUserText("Open Settings")
 
-        assertEquals(SessionStatus.Blocked, sessionCoordinator.uiState.value.status)
-        assertTrue(sessionCoordinator.uiState.value.summaryLine.contains("timed out"))
+        assertEquals(SessionStatus.Completed, sessionCoordinator.uiState.value.status)
+        assertEquals("Done", sessionCoordinator.uiState.value.summaryLine)
     }
 }
 
@@ -59,9 +59,13 @@ private object FakePhoneObserver : PhoneObserver {
 
 private object SlowModelGateway : ModelGateway {
     override suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput {
-        delay(1_000)
+        delay(50)
         return ModelTurnOutput.Completion("Done")
     }
+
+    override suspend fun steer(message: String): Boolean = false
+
+    override suspend fun abort() = Unit
 }
 
 private object NoOpArtifactStore : AgentRunArtifactStore {
@@ -88,4 +92,10 @@ private object NoOpArtifactStore : AgentRunArtifactStore {
     override fun writeAgentMessages(runId: String, messages: List<pi.ai.core.Message>) = Unit
 
     override fun writeAgentEvents(runId: String, events: List<SerializedAgentEvent>) = Unit
+}
+
+private fun testCoordinator(): Pair<SessionCoordinator, CodingSessionStore> {
+    val root = Files.createTempDirectory("claune-agent-loop").toFile()
+    val store = CodingSessionStore(cwd = root.absolutePath, agentDir = root.resolve("agent"))
+    return SessionCoordinator(InMemorySessionLogStore(), store) to store
 }

@@ -17,18 +17,23 @@ internal object SystemPromptBuilder {
                         "claune APIs are synchronous plain function calls. Do not use await, Promise syntax, or async functions.",
                         "ElementSelector supports both text and label. If a snapshot shows a useful label, you may match it with tapSelector({ label: \"...\" }) or tapSelector({ text: \"...\" }).",
                         "Every claune action except observePhone throws immediately if the host call fails. Do not assume a wait or tap succeeded unless the script continues past it.",
+                        "Start each new script by calling observePhone() unless the script is only returning a final value after a just-observed action. Do not trust injected snapshot refs as current truth.",
                         "Refs and element ids are snapshot-scoped. After navigation, scrolling, typing, tapping, or any UI-changing action, call observePhone() again before using new refs or ids.",
                         "waitForState(\"element\", value, timeoutMs) expects an element id from actionableElements, not a ref.",
                         "Use actionableElements.id only where an API explicitly expects an element id. Snapshot refs look like e... and are different from ids.",
                         "After navigation, prefer waitForState(\"package\", \"...\", timeoutMs) or waitForSelector({ ... }, timeoutMs) instead of waiting on a stale ref or element id.",
                         "Never invent refs or element IDs; use only values present in snapshots.",
                         "Never select elements by array index. Use selector matches, refs, ids, resource ids, or labels from the snapshot.",
+                        "If the target you need is already visible by text or label, tap it directly before trying search, scrolling, or deeper navigation.",
+                        "For stable named rows and buttons, prefer tapText(\"...\", true) or tapSelector({ text: \"...\" }) over tapRef(ref). Use refs mainly for transient unlabeled controls from the current snapshot.",
                         "Prefer tapSelector({ text: \"...\" }) when text is distinctive, and tapRef(ref) when you already have a fresh ref from the current snapshot.",
+                        "Use scrollScreen(direction) when you only need to reveal more of the current page. Use scrollRef(ref, direction) only when the current snapshot shows that specific ref is scrollable.",
                         "If you need to scroll something you identified by ref from the current snapshot, prefer scrollRef(ref, direction).",
                         "Use typeIntoFocused(text) when the current screen already has a focused editable field. Otherwise, prefer typeIntoSelector({ ... }, text) or focusSelector({ ... }, timeoutMs) before typing.",
                         "If typeIntoFocused(text) fails, do not call it again until a fresh snapshot confirms a focused editable element.",
                         "If a visible search or input affordance is a wrapper rather than the editable field itself, use focusSelector({ ... }, timeoutMs) or typeIntoSelector({ ... }, text) instead of manually tapping it and guessing.",
                         "After execute_script returns, treat the returned postActionSnapshot as the current truth for the next step.",
+                        "After a tap that should change screens inside the same app, verify a changed screen signature with waitForSelector({ ... }, timeoutMs) or another distinctive post-navigation check before acting on the new screen.",
                         "Prefer the fewest scripts possible. A single script may observe, take multiple actions, wait for state changes, and return a compact summary.",
                         "Keep scripts focused but not tiny; avoid spending iterations on trivial one-action probes when the next step is already clear.",
                         "If the current screen is confusing, off-plan, or repeated assumptions fail, re-establish a known state before continuing instead of persisting with a broken plan.",
@@ -56,7 +61,7 @@ internal object SystemPromptBuilder {
         return buildString {
             appendLine("You are Claune Android, a phone-control agent operating an Android 12 device.")
             appendLine()
-            appendLine("You must help the user achieve the goal by reasoning over the provided phone snapshot and recent session events.")
+            appendLine("You must help the user achieve the goal by reasoning over recent session events and by observing the live phone state yourself before acting.")
             appendLine()
             appendLine("Available tools:")
             appendLine(toolSnippets)
@@ -80,12 +85,18 @@ internal object SystemPromptBuilder {
             appendLine("let screen = claune.observePhone();")
             appendLine("claune.pressHome();")
             appendLine("screen = claune.observePhone();")
-            appendLine("claune.tapSelector({ text: \"Settings\" });")
+            appendLine("claune.tapText(\"Settings\", true);")
             appendLine("claune.waitForState(\"package\", \"com.android.settings\", 3000);")
             appendLine("screen = claune.observePhone();")
-            appendLine("claune.tapSelector({ text: \"Wi-Fi\" });")
+            appendLine("claune.tapText(\"Wi-Fi\", true);")
             appendLine("claune.waitForSelector({ text: \"Wi-Fi assistant\", first: true }, 3000);")
             appendLine("return { stage: \"wifi_page\", foregroundPackage: screen.foregroundPackage };")
+            appendLine()
+            appendLine("Example scrolling script:")
+            appendLine("let screen = claune.observePhone();")
+            appendLine("claune.scrollScreen(\"down\");")
+            appendLine("screen = claune.observePhone();")
+            appendLine("return { stage: \"scrolled_page\", visibleText: screen.visibleText.slice(0, 5) };")
             appendLine()
             appendLine("Example wrapper-input script:")
             appendLine("let screen = claune.observePhone();")

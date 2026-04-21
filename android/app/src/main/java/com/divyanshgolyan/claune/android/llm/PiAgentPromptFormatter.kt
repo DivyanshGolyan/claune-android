@@ -18,13 +18,14 @@ internal object PiAgentPromptFormatter {
             }
         }
         appendLine()
-        appendLine("Current phone snapshot:")
-        appendLine("foregroundPackage: ${input.snapshot.foregroundPackage}")
+        appendLine("Last known phone snapshot before your next action:")
+        appendLine("This snapshot may already be stale. Observe the phone yourself before acting.")
+        appendLine("lastKnownForegroundPackage: ${input.snapshot.foregroundPackage}")
         if (input.snapshot.foregroundPackage == BuildConfig.APPLICATION_ID) {
-            appendLine("shellContext: You are still inside Claune Android's own control UI. Leave Claune before operating the destination app.")
+            appendLine("shellContext: The last known UI was Claune Android's own control shell. Leave Claune before operating the destination app.")
         }
-        appendLine("focusedElementId: ${input.snapshot.focusedElementId ?: "none"}")
-        appendLine("visibleText:")
+        appendLine("lastKnownFocusedElementId: ${input.snapshot.focusedElementId ?: "none"}")
+        appendLine("lastKnownVisibleText:")
         if (input.snapshot.visibleText.isEmpty()) {
             appendLine("- none")
         } else {
@@ -33,7 +34,7 @@ internal object PiAgentPromptFormatter {
                 appendLine(line)
             }
         }
-        appendLine("actionableElements:")
+        appendLine("lastKnownActionableElements:")
         if (input.snapshot.actionableElements.isEmpty()) {
             appendLine("- none")
         } else {

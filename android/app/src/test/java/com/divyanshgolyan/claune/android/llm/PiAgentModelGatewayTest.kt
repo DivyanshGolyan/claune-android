@@ -33,6 +33,8 @@ class PiAgentModelGatewayTest {
             PiAgentPromptFormatter.format(
                 ModelTurnInput(
                     sessionId = "session-1",
+                    persistentSessionPath = null,
+                    persistentSessionId = null,
                     goal = "Open Wi-Fi settings",
                     snapshot = snapshot(),
                     recentEvents = listOf("Session started", "Observed Settings app"),
@@ -41,7 +43,9 @@ class PiAgentModelGatewayTest {
 
         assertTrue(prompt.contains("Open Wi-Fi settings"))
         assertTrue(prompt.contains("Session started"))
-        assertTrue(prompt.contains("foregroundPackage: com.android.settings"))
+        assertTrue(prompt.contains("Last known phone snapshot before your next action:"))
+        assertTrue(prompt.contains("This snapshot may already be stale. Observe the phone yourself before acting."))
+        assertTrue(prompt.contains("lastKnownForegroundPackage: com.android.settings"))
         assertTrue(prompt.contains("ref=el-1, role=button, label=Wi-Fi"))
         assertTrue(prompt.contains("idForIdOnlyApis=el-1"))
     }
@@ -52,13 +56,15 @@ class PiAgentModelGatewayTest {
             PiAgentPromptFormatter.format(
                 ModelTurnInput(
                     sessionId = "session-1",
+                    persistentSessionPath = null,
+                    persistentSessionId = null,
                     goal = "Find the current weather",
                     snapshot = snapshot(packageName = BuildConfig.APPLICATION_ID),
                     recentEvents = emptyList(),
                 ),
             )
 
-        assertTrue(prompt.contains("shellContext: You are still inside Claune Android's own control UI."))
+        assertTrue(prompt.contains("shellContext: The last known UI was Claune Android's own control shell."))
     }
 
     @Test
@@ -74,13 +80,17 @@ class PiAgentModelGatewayTest {
 
         assertTrue(prompt.contains("TypeScript contract for the global `claune` object"))
         assertTrue(prompt.contains("interface ClauneHost"))
+        assertTrue(prompt.contains("tapText(text: string, exact: boolean): HostSuccessOutcome;"))
         assertTrue(prompt.contains("tapSelector(selector: ElementSelector): HostSuccessOutcome;"))
         assertTrue(prompt.contains("focusSelector(selector: ElementSelector, timeoutMs: number): HostSuccessOutcome;"))
+        assertTrue(prompt.contains("scrollScreen(direction: \"up\" | \"down\"): HostSuccessOutcome;"))
         assertTrue(prompt.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
         assertTrue(prompt.contains("- execute_script:"))
         assertTrue(prompt.contains("- read_memory:"))
         assertTrue(prompt.contains("- edit_memory:"))
         assertTrue(prompt.contains("The TypeScript contract above is the source of truth"))
+        assertTrue(prompt.contains("If the target you need is already visible by text or label, tap it directly"))
+        assertTrue(prompt.contains("Use scrollScreen(direction) when you only need to reveal more of the current page."))
         assertTrue(prompt.contains("For any task that changes app or device state"))
         assertTrue(!prompt.contains("For mutation goals"))
         assertTrue(prompt.contains("Available tools:"))
@@ -88,6 +98,9 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("The user prefers Wi-Fi tasks to start from Settings."))
         assertTrue(prompt.contains("Only store durable facts in memory"))
         assertTrue(prompt.contains("Example wrapper-input script:"))
+        assertTrue(prompt.contains("Example scrolling script:"))
+        assertTrue(prompt.contains("claune.tapText(\"Settings\", true);"))
+        assertTrue(prompt.contains("claune.scrollScreen(\"down\");"))
         assertTrue(prompt.contains("claune.focusSelector({ label: \"Search\" }, 2000);"))
         assertTrue(prompt.contains("you are looking at Claune's own control shell for giving instructions"))
     }

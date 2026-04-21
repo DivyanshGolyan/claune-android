@@ -3,7 +3,10 @@ package com.divyanshgolyan.claune.android.llm
 import pi.agent.core.BeforeToolCallContext
 import pi.agent.core.BeforeToolCallResult
 
-internal class ToolBudget(private val maxToolCalls: Int, private val maxReflectionToolCalls: Int = 4) {
+internal class ToolBudget(
+    private val maxToolCalls: Int? = null,
+    private val maxReflectionToolCalls: Int = 4,
+) {
     private var inReflectionPhase: Boolean = false
     private var usedToolCalls: Int = 0
     private var usedReflectionToolCalls: Int = 0
@@ -31,10 +34,11 @@ internal class ToolBudget(private val maxToolCalls: Int, private val maxReflecti
             return null
         }
 
-        if (usedToolCalls >= maxToolCalls) {
+        val limit = maxToolCalls
+        if (limit != null && usedToolCalls >= limit) {
             return BeforeToolCallResult(
                 block = true,
-                reason = "Tool budget exceeded after $maxToolCalls tool calls while handling the goal.",
+                reason = "Tool budget exceeded after $limit tool calls while handling the goal.",
             )
         }
         usedToolCalls += 1

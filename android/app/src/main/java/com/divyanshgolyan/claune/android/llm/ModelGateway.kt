@@ -2,6 +2,7 @@ package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.AgentTranscriptSerializer
+import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
@@ -17,24 +18,29 @@ import com.divyanshgolyan.claune.android.runtime.PhoneObserver
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
+import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
-import pi.agent.core.Agent
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import pi.agent.core.AgentEvent
-import pi.agent.core.AgentOptions
 import pi.agent.core.AgentThinkingLevel
 import pi.ai.core.ANTHROPIC_PROVIDER
-import pi.ai.core.CacheRetention
 import pi.ai.core.Message
 import pi.ai.core.Model
 import pi.ai.core.TextContent
 import pi.ai.core.ThinkingBudgets
 import pi.ai.core.getModel
+import pi.coding.agent.core.AgentSession
 
 interface ModelGateway {
     suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput
+
+    suspend fun steer(message: String): Boolean
+
+    suspend fun abort()
 }
 
 class PiAgentModelGateway(
@@ -44,7 +50,19 @@ class PiAgentModelGateway(
     private val phoneObserver: PhoneObserver,
     private val sessionCoordinator: SessionCoordinator,
     private val artifactStore: AgentRunArtifactStore,
+    private val codingSessionStore: CodingSessionStore,
+    private val agentDir: File,
 ) : ModelGateway {
+    private val sessionFactory = ClauneAgentSessionFactory(codingSessionStore, agentDir)
+    private val activeSessionLock = Mutex()
+    private var activeAgentSession: AgentSession? = null
+    private var activeSessionPath: String? = null
+    private var activeSystemPrompt: String? = null
+    private var activeApiKey: String? = null
+    private var activeSessionUnsubscribe: (() -> Unit)? = null
+    private var activeRunId: String? = null
+    private var activeEventTrace = CopyOnWriteArrayList<SerializedAgentEvent>()
+
     override suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput {
         val prompt = PiAgentPromptFormatter.format(input)
         val systemPrompt = buildSystemPrompt(memoryStore.read())
@@ -66,36 +84,27 @@ class PiAgentModelGateway(
             )
         }
 
-        val eventTrace = CopyOnWriteArrayList<SerializedAgentEvent>()
-        val toolBudget = ToolBudget(MAX_ITERATIONS)
-        val agent = createAgent(input.sessionId, toolBudget, systemPrompt)
-        val unsubscribe =
-            agent.subscribe { event, _ ->
-                runCatching {
-                    eventTrace += AgentTranscriptSerializer.serializeEvent(event)
-                }
-                runCatching {
-                    logAgentEvent(event)
-                }
-            }
-
+        val agentSession = ensureMainSession(input, systemPrompt, apiKey)
+        activeRunId = input.sessionId
+        activeEventTrace = CopyOnWriteArrayList()
         sessionCoordinator.logEvent("Agent started.")
+        sessionCoordinator.setStreaming(true)
 
         val result =
             try {
-                agent.prompt(prompt)
-                val finalOutput = finalAssistantText(agent.state.messages)
+                agentSession.prompt(prompt)
+                val finalOutput = finalAssistantText(agentSession.messages)
                 runCatching { artifactStore.writeFinalOutput(input.sessionId, finalOutput) }
-                val assistantError = finalAssistantError(agent.state.messages)
+                val assistantError = finalAssistantError(agentSession.messages)
                 val parsedResult = if (!assistantError.isNullOrBlank()) {
                     ModelTurnOutput.Blocked("Model request failed. $assistantError")
                 } else {
                     PiAgentResultParser.parse(finalOutput)
                 }
-                runMemoryReflection(agent, input, toolBudget, parsedResult)
+                runMemoryReflection(input, parsedResult, apiKey)
                 parsedResult
             } catch (cancelled: CancellationException) {
-                agent.abort()
+                agentSession.abort()
                 throw cancelled
             } catch (throwable: Throwable) {
                 sessionCoordinator.logEvent(
@@ -105,39 +114,109 @@ class PiAgentModelGateway(
                     "Model request failed. ${throwable.message ?: throwable::class.simpleName ?: "Unknown failure."}",
                 )
             } finally {
-                unsubscribe()
+                sessionCoordinator.setStreaming(false)
                 withContext(NonCancellable) {
                     val messageSnapshot =
                         runCatching {
-                            agent.state.messages.toList().filterIsInstance<Message>()
+                            agentSession.messages.toList().filterIsInstance<Message>()
                         }.getOrElse { emptyList() }
                     runCatching {
                         artifactStore.writeAgentMessages(input.sessionId, messageSnapshot)
                     }
-                    runCatching { artifactStore.writeAgentEvents(input.sessionId, eventTrace.toList()) }
+                    runCatching { artifactStore.writeAgentEvents(input.sessionId, activeEventTrace.toList()) }
                 }
+                activeRunId = null
             }
 
         return result
     }
 
-    private fun createAgent(sessionId: String, toolBudget: ToolBudget, systemPrompt: String): Agent = Agent(
-        AgentOptions(
-            initialState =
-            pi.agent.core.InitialAgentState(
-                systemPrompt = systemPrompt,
-                model = model(),
-                thinkingLevel = AgentThinkingLevel.MEDIUM,
-                tools = toolDefinitions().map { toAgentTool(it) },
-            ),
-            getApiKey = { settingsStore.state.value.anthropicApiKey },
-            sessionId = sessionId,
-            cacheRetention = CacheRetention.SHORT,
-            thinkingBudgets = ThinkingBudgets(medium = 4096),
-            toolExecution = pi.agent.core.ToolExecutionMode.SEQUENTIAL,
-            beforeToolCall = { context, _ -> toolBudget.beforeToolCall(context) },
-        ),
+    override suspend fun steer(message: String): Boolean = activeSessionLock.withLock {
+        val session = activeAgentSession ?: return false
+        if (!session.isStreaming) {
+            return false
+        }
+        session.steer(message)
+        true
+    }
+
+    override suspend fun abort() {
+        activeSessionLock.withLock {
+            activeAgentSession?.abort()
+        }
+    }
+
+    private suspend fun createMainSession(
+        input: ModelTurnInput,
+        systemPrompt: String,
+        apiKey: String,
+    ): AgentSession = sessionFactory.create(
+        sessionPath = input.persistentSessionPath,
+        systemPrompt = systemPrompt,
+        model = model(),
+        tools = agentTools(toolDefinitions()),
+        apiKey = apiKey,
+        thinkingLevel = AgentThinkingLevel.MEDIUM,
+        thinkingBudgets = ThinkingBudgets(medium = 4096),
     )
+
+    private suspend fun ensureMainSession(
+        input: ModelTurnInput,
+        systemPrompt: String,
+        apiKey: String,
+    ): AgentSession = activeSessionLock.withLock {
+        val needsReplacement =
+            activeAgentSession == null ||
+                activeSessionPath != input.persistentSessionPath ||
+                activeSystemPrompt != systemPrompt ||
+                activeApiKey != apiKey
+        if (needsReplacement) {
+            activeSessionUnsubscribe?.invoke()
+            activeAgentSession?.dispose()
+            val session = createMainSession(input, systemPrompt, apiKey)
+            activeSessionPath = input.persistentSessionPath
+            activeSystemPrompt = systemPrompt
+            activeApiKey = apiKey
+            activeAgentSession = session
+            activeSessionUnsubscribe =
+                session.subscribe { sessionEvent ->
+                    when (sessionEvent) {
+                        is pi.coding.agent.core.AgentSessionEvent.Agent -> {
+                            runCatching {
+                                activeRunId?.let { runId ->
+                                    activeEventTrace += AgentTranscriptSerializer.serializeEvent(sessionEvent.event)
+                                }
+                            }
+                            runCatching {
+                                logAgentEvent(sessionEvent.event)
+                            }
+                            updateAssistantText(session)
+                        }
+
+                        is pi.coding.agent.core.AgentSessionEvent.QueueUpdate -> {
+                            sessionCoordinator.setPendingSteeringCount(sessionEvent.steering.size)
+                        }
+
+                        is pi.coding.agent.core.AgentSessionEvent.CompactionStart -> {
+                            sessionCoordinator.setCompacting(true)
+                            sessionCoordinator.logEvent("Compacting session context…")
+                        }
+
+                        is pi.coding.agent.core.AgentSessionEvent.CompactionEnd -> {
+                            sessionCoordinator.setCompacting(false)
+                            if (sessionEvent.aborted) {
+                                sessionCoordinator.logEvent("Compaction was aborted.")
+                            } else if (!sessionEvent.errorMessage.isNullOrBlank()) {
+                                sessionCoordinator.logEvent("Compaction failed. ${sessionEvent.errorMessage}")
+                            } else {
+                                sessionCoordinator.logEvent("Compaction finished.")
+                            }
+                        }
+                    }
+                }
+        }
+        activeAgentSession!!
+    }
 
     private fun model(): Model<String> = requireNotNull(getModel(ANTHROPIC_PROVIDER, MODEL_NAME)) {
         "Anthropic model $MODEL_NAME is not registered in pi-ai-core."
@@ -149,12 +228,17 @@ class PiAgentModelGateway(
         EditMemoryToolDefinition(memoryStore),
     )
 
+    @Suppress("UNCHECKED_CAST")
+    private fun agentTools(definitions: List<ToolDefinition<*>>) = definitions.map { definition ->
+        toAgentTool(definition as ToolDefinition<Any?>)
+    }
+
     private fun buildSystemPrompt(memoryContent: String): String = SystemPromptBuilder.build(
         memoryContent = memoryContent,
         tools = toolDefinitions(),
     )
 
-    private suspend fun runMemoryReflection(agent: Agent, input: ModelTurnInput, toolBudget: ToolBudget, result: ModelTurnOutput) {
+    private suspend fun runMemoryReflection(input: ModelTurnInput, result: ModelTurnOutput, apiKey: String) {
         if (result !is ModelTurnOutput.Completion && result !is ModelTurnOutput.Blocked) {
             return
         }
@@ -162,14 +246,30 @@ class PiAgentModelGateway(
             return
         }
 
-        toolBudget.enterReflectionPhase()
+        val reflectionBudget = ToolBudget(maxReflectionToolCalls = 4).apply { enterReflectionPhase() }
         val reflectionPrompt = MemoryReflectionPromptBuilder.format(input, result)
         runCatching { artifactStore.writeMemoryReflectionPrompt(input.sessionId, reflectionPrompt) }
         sessionCoordinator.logEvent("Agent memory reflection started.")
 
+        val reflectionSession =
+            sessionFactory.create(
+                sessionPath = input.persistentSessionPath,
+                systemPrompt = buildSystemPrompt(memoryStore.read()),
+                model = model(),
+                tools =
+                listOf(
+                    ReadMemoryToolDefinition(memoryStore),
+                    EditMemoryToolDefinition(memoryStore),
+                ).let(::agentTools),
+                apiKey = apiKey,
+                thinkingLevel = AgentThinkingLevel.MEDIUM,
+                thinkingBudgets = ThinkingBudgets(medium = 4096),
+                beforeToolCall = { context, _ -> reflectionBudget.beforeToolCall(context) },
+            )
+
         runCatching {
-            agent.prompt(reflectionPrompt)
-            val reflectionOutput = finalAssistantText(agent.state.messages)
+            reflectionSession.prompt(reflectionPrompt)
+            val reflectionOutput = finalAssistantText(reflectionSession.messages)
             runCatching { artifactStore.writeMemoryReflectionOutput(input.sessionId, reflectionOutput) }
             when (val parsed = MemoryReflectionResultParser.parse(reflectionOutput)) {
                 is MemoryReflectionResult.NoUpdate ->
@@ -190,8 +290,16 @@ class PiAgentModelGateway(
 
     private fun logAgentEvent(event: AgentEvent) {
         when (event) {
-            AgentEvent.AgentStart -> sessionCoordinator.logEvent("Agent loop started.")
-            is AgentEvent.AgentEnd -> sessionCoordinator.logEvent("Agent loop finished.")
+            AgentEvent.AgentStart -> {
+                sessionCoordinator.setStreaming(true)
+                sessionCoordinator.logEvent("Agent loop started.")
+            }
+
+            is AgentEvent.AgentEnd -> {
+                sessionCoordinator.setStreaming(false)
+                sessionCoordinator.logEvent("Agent loop finished.")
+            }
+
             AgentEvent.TurnStart -> sessionCoordinator.logEvent("Agent turn started.")
             is AgentEvent.ToolExecutionStart ->
                 sessionCoordinator.logEvent("Agent tool ${event.toolName} starting.")
@@ -211,9 +319,22 @@ class PiAgentModelGateway(
     private fun finalAssistantError(messages: List<Any>): String? =
         messages.filterIsInstance<pi.ai.core.AssistantMessage>().lastOrNull()?.errorMessage
 
+    private fun updateAssistantText(session: AgentSession) {
+        val lastAssistant =
+            session.messages
+                .filterIsInstance<pi.ai.core.AssistantMessage>()
+                .lastOrNull()
+                ?.content
+                ?.filterIsInstance<TextContent>()
+                ?.joinToString(separator = "\n") { it.text }
+                .orEmpty()
+        if (lastAssistant.isNotBlank()) {
+            sessionCoordinator.setLastAssistantText(lastAssistant)
+        }
+    }
+
     companion object {
         const val MODEL_NAME = "claude-haiku-4-5"
-        const val MAX_ITERATIONS = 100
         const val PROMPT_VERSION = "pi-agent-anthropic-v6"
 
         internal fun systemPromptForTests(memoryContent: String = "# Claune Memory\n\n"): String = SystemPromptBuilder.build(
