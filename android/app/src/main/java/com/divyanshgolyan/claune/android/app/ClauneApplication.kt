@@ -1,10 +1,13 @@
 package com.divyanshgolyan.claune.android.app
 
 import android.app.Application
+import android.app.Activity
 import android.content.Context
+import android.os.Bundle
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.accessibility.AccessibilityBridge
 import com.divyanshgolyan.claune.android.data.local.ArtifactSessionLogStore
+import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.FileAgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.FileMemoryStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
@@ -13,6 +16,7 @@ import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
 import com.divyanshgolyan.claune.android.data.local.SharedPreferencesSettingsStore
 import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
+import com.divyanshgolyan.claune.android.overlay.SessionOverlayController
 import com.divyanshgolyan.claune.android.runtime.AgentLoop
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.scripting.QuickJsScriptRuntime
@@ -22,12 +26,43 @@ class ClauneApplication : Application() {
     val container: ClauneContainer by lazy {
         ClauneContainer(this)
     }
+
+    override fun onCreate() {
+        super.onCreate()
+        registerActivityLifecycleCallbacks(
+            object : ActivityLifecycleCallbacks {
+                private var startedCount = 0
+
+                override fun onActivityStarted(activity: Activity) {
+                    startedCount += 1
+                    container.sessionCoordinator.setAppInForeground(true)
+                }
+
+                override fun onActivityStopped(activity: Activity) {
+                    startedCount = (startedCount - 1).coerceAtLeast(0)
+                    container.sessionCoordinator.setAppInForeground(startedCount > 0)
+                }
+
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+
+                override fun onActivityResumed(activity: Activity) = Unit
+
+                override fun onActivityPaused(activity: Activity) = Unit
+
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+
+                override fun onActivityDestroyed(activity: Activity) = Unit
+            },
+        )
+    }
 }
 
 class ClauneContainer(application: Application) {
+    private val agentDir = File(application.filesDir, "pi-agent")
     private val memoryLogStore = InMemorySessionLogStore()
     val artifactStore = FileAgentRunArtifactStore(File(application.filesDir, "agent-runs"))
     val memoryStore: MemoryStore = FileMemoryStore(File(application.filesDir, "memory.md"))
+    val codingSessionStore = CodingSessionStore(cwd = application.filesDir.absolutePath, agentDir = agentDir)
     val settingsStore: SettingsStore =
         SharedPreferencesSettingsStore(
             context = application,
@@ -40,8 +75,9 @@ class ClauneContainer(application: Application) {
             currentSessionIdProvider = { sessionCoordinator.uiState.value.sessionId },
         )
     }
-    val sessionCoordinator = SessionCoordinator(logStore)
+    val sessionCoordinator = SessionCoordinator(logStore, codingSessionStore)
     val accessibilityBridge = AccessibilityBridge(sessionCoordinator)
+    val overlayController = SessionOverlayController(application, sessionCoordinator.uiState)
     val scriptRuntime =
         QuickJsScriptRuntime(
             phoneObserver = accessibilityBridge,
@@ -57,6 +93,8 @@ class ClauneContainer(application: Application) {
             phoneObserver = accessibilityBridge,
             sessionCoordinator = sessionCoordinator,
             artifactStore = artifactStore,
+            codingSessionStore = codingSessionStore,
+            agentDir = agentDir,
         )
     val agentLoop =
         AgentLoop(

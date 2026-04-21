@@ -307,12 +307,14 @@ class ArtifactSessionLogStore(
 @Serializable
 data class RunArtifactMetadata(
     val runId: String,
+    val persistentSessionPath: String? = null,
+    val persistentSessionId: String? = null,
     val goal: String,
     val startedAt: String,
     val finishedAt: String? = null,
     val status: String = SessionStatus.Running.name,
     val model: String,
-    val maxIterations: Int,
+    val maxIterations: Int? = null,
     val promptVersion: String,
     val harness: String = "pi-agent-core",
     val latestSummary: String? = null,

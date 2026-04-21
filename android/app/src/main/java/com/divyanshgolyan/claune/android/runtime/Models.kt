@@ -1,20 +1,34 @@
 package com.divyanshgolyan.claune.android.runtime
 
+import com.divyanshgolyan.claune.android.data.local.PersistedSessionSummary
 import java.time.Instant
 
 data class SessionUiState(
     val sessionId: String? = null,
+    val selectedSessionPath: String? = null,
+    val selectedPersistentSessionId: String? = null,
+    val selectedSessionTitle: String? = null,
+    val activeSessionPath: String? = null,
+    val activePersistentSessionId: String? = null,
+    val activeSessionTitle: String? = null,
+    val recentSessions: List<PersistedSessionSummary> = emptyList(),
     val status: SessionStatus = SessionStatus.Idle,
     val summaryLine: String = "Idle and waiting for a goal.",
     val lastKnownApp: String? = null,
+    val appInForeground: Boolean = false,
     val accessibilityConnected: Boolean = false,
     val foregroundServiceRunning: Boolean = false,
+    val isStreaming: Boolean = false,
+    val isCompacting: Boolean = false,
+    val pendingSteeringCount: Int = 0,
+    val lastAssistantText: String = "",
     val timeline: List<String> = listOf("Prototype scaffold ready. Start a session to exercise the loop skeleton."),
 )
 
 enum class SessionStatus {
     Idle,
     Running,
+    Paused,
     Blocked,
     Completed,
     Cancelled,
@@ -63,7 +77,14 @@ sealed interface ActionResult {
     data class Blocked(val reason: String) : ActionResult
 }
 
-data class ModelTurnInput(val sessionId: String, val goal: String, val snapshot: UiSnapshot, val recentEvents: List<String>)
+data class ModelTurnInput(
+    val sessionId: String,
+    val persistentSessionPath: String?,
+    val persistentSessionId: String?,
+    val goal: String,
+    val snapshot: UiSnapshot,
+    val recentEvents: List<String>,
+)
 
 sealed interface ModelTurnOutput {
     data class Message(val messageToUser: String) : ModelTurnOutput
