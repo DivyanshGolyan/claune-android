@@ -535,6 +535,8 @@ class ScriptHost(
         visibleText = visibleText,
         actionableElements = actionableElements.map { it.toPayload() },
         focusedElementId = focusedElementId,
+        windowCandidates = windowCandidates.map { it.toPayload() },
+        selectedWindowReason = selectedWindowReason,
     )
 
     private companion object {

@@ -41,6 +41,22 @@ data class UiSnapshot(
     val visibleText: List<String>,
     val actionableElements: List<UiElement>,
     val focusedElementId: String?,
+    val windowCandidates: List<WindowCandidate> = emptyList(),
+    val selectedWindowReason: String? = null,
+)
+
+data class WindowCandidate(
+    val packageName: String,
+    val className: String?,
+    val type: String,
+    val layer: Int,
+    val active: Boolean,
+    val focused: Boolean,
+    val bounds: List<Int>,
+    val visibleText: List<String>,
+    val actionableElementCount: Int,
+    val selected: Boolean = false,
+    val selectionReason: String? = null,
 )
 
 data class UiElement(

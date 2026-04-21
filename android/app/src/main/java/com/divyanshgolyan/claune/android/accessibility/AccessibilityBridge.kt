@@ -1,10 +1,13 @@
 package com.divyanshgolyan.claune.android.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.graphics.Rect
 import android.os.Bundle
+import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.runtime.ActionResult
 import com.divyanshgolyan.claune.android.runtime.ElementRef
@@ -14,10 +17,11 @@ import com.divyanshgolyan.claune.android.runtime.ScrollDirection
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
+import com.divyanshgolyan.claune.android.runtime.WindowCandidate
 import java.time.Instant
 import java.util.Locale
 
-class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
+class AccessibilityBridge(private val context: Context, private val sessionCoordinator: SessionCoordinator) :
     PhoneObserver,
     PhoneActuator {
     @Volatile
@@ -27,18 +31,21 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
         this.service = service
     }
 
-    fun detach() {
-        service = null
+    fun detach(service: ClauneAccessibilityService) {
+        if (this.service === service) {
+            this.service = null
+        }
     }
 
     fun isConnected(): Boolean = service != null
 
     fun refreshConnectionState() {
-        sessionCoordinator.setAccessibilityConnected(isConnected())
+        sessionCoordinator.setAccessibilityConnected(isConnected() || isServiceEnabledInSettings())
     }
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString()
+        refreshConnectionState()
         if (!packageName.isNullOrBlank()) {
             sessionCoordinator.setLastKnownApp(packageName)
         }
@@ -46,7 +53,8 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
 
     override suspend fun captureSnapshot(): UiSnapshot {
         val activeService = service
-        val root = currentRoot(activeService)
+        val rootSelection = selectRoot(activeService)
+        val root = rootSelection?.root
         if (activeService == null || root == null) {
             return UiSnapshot(
                 snapshotId = "snapshot-${System.currentTimeMillis()}",
@@ -55,6 +63,8 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
                 visibleText = emptyList(),
                 actionableElements = emptyList(),
                 focusedElementId = null,
+                windowCandidates = rootSelection?.windowCandidates.orEmpty(),
+                selectedWindowReason = rootSelection?.reason,
             )
         }
 
@@ -80,6 +90,8 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
             visibleText = visibleText.toList(),
             actionableElements = elements.take(40),
             focusedElementId = elements.firstOrNull { it.focused }?.id,
+            windowCandidates = rootSelection.windowCandidates,
+            selectedWindowReason = rootSelection.reason,
         )
     }
 
@@ -176,18 +188,19 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
         visibleText: MutableSet<String>,
         path: List<Int>,
     ) {
+        val bounds = node.visibleSnapshotBounds()
         val ownText = node.text?.toString()?.trim().orEmpty().ifBlank { null }
         val ownContentDescription = node.contentDescription?.toString()?.trim().orEmpty().ifBlank { null }
         val label = deriveElementLabel(node)
 
-        if (!label.isNullOrBlank()) {
+        if (bounds != null && !label.isNullOrBlank()) {
             visibleText += label
         }
 
         val clickable = node.isClickable
         val editable = node.isEditable
         val scrollable = node.isScrollable
-        if (clickable || editable || scrollable) {
+        if (bounds != null && (clickable || editable || scrollable)) {
             val ref = buildElementRef(path)
             elements +=
                 UiElement(
@@ -206,7 +219,7 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
                     checked = node.isChecked,
                     selected = node.isSelected,
                     scrollable = scrollable,
-                    bounds = node.boundsRect(),
+                    bounds = bounds,
                 )
         }
 
@@ -228,39 +241,70 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
         return findNodeByElementId(root, elementId)
     }
 
-    private fun currentRoot(activeService: ClauneAccessibilityService?): AccessibilityNodeInfo? {
+    private fun currentRoot(activeService: ClauneAccessibilityService?): AccessibilityNodeInfo? = selectRoot(activeService)?.root
+
+    private fun selectRoot(activeService: ClauneAccessibilityService?): RootSelection? {
         if (activeService == null) {
             return null
         }
 
-        val windows = activeService.windows.orEmpty()
-        val roots =
-            windows.mapNotNull { it.root }
-                .distinctBy { root ->
+        val candidates =
+            activeService.windows.orEmpty()
+                .mapNotNull { window -> window.root?.let { root -> RootCandidate.from(window, root) } }
+                .distinctBy { candidate ->
                     listOf(
-                        root.packageName?.toString().orEmpty(),
-                        root.className?.toString().orEmpty(),
-                        root.windowId,
+                        candidate.packageName,
+                        candidate.className.orEmpty(),
+                        candidate.root.windowId,
                     ).joinToString("|")
+                }.ifEmpty {
+                    activeService.rootInActiveWindow?.let { root ->
+                        listOf(RootCandidate.fromActiveRoot(root))
+                    }.orEmpty()
                 }
 
-        if (roots.isEmpty()) {
-            return activeService.rootInActiveWindow
+        if (candidates.isEmpty()) {
+            return null
         }
 
         val preferExternalWindow =
             sessionCoordinator.uiState.value.foregroundServiceRunning &&
                 !sessionCoordinator.uiState.value.appInForeground
 
-        if (preferExternalWindow) {
-            roots.firstOrNull { root ->
-                root.packageName?.toString()?.isNotBlank() == true &&
-                    root.packageName?.toString() != BuildConfig.APPLICATION_ID
-            }?.let { return it }
-        }
+        val selected =
+            candidates
+                .maxWithOrNull(
+                    compareBy<RootCandidate> { candidate ->
+                        candidate.selectionScore(preferExternalWindow)
+                    }.thenBy { candidate -> candidate.layer },
+                )
+                ?: return null
+        val reason =
+            when {
+                selected.isBareSystemNavigationRoot() ->
+                    "Selected fallback System UI navigation root because no better app window was available."
+                selected.packageName == BuildConfig.APPLICATION_ID ->
+                    "Selected Claune app root because no better external app window was available."
+                else ->
+                    "Selected ${selected.packageName} over ${candidates.size - 1} other accessibility window(s)."
+            }
 
-        return activeService.rootInActiveWindow
-            ?: roots.firstOrNull()
+        return RootSelection(
+            root = selected.root,
+            reason = reason,
+            windowCandidates = candidates.map {
+                it.toWindowCandidate(
+                    selected = it === selected,
+                    reason = if (it ===
+                        selected
+                    ) {
+                        reason
+                    } else {
+                        null
+                    },
+                )
+            },
+        )
     }
 
     private fun findNodeByElementId(node: AccessibilityNodeInfo, elementId: String): AccessibilityNodeInfo? {
@@ -324,8 +368,12 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
         }
 
         val ownValues =
-            listOf(node.text, node.contentDescription)
-                .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotBlank) }
+            if (node.visibleSnapshotBounds() != null) {
+                listOf(node.text, node.contentDescription)
+                    .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotBlank) }
+            } else {
+                emptyList()
+            }
 
         ownValues.forEach { value ->
             if (collector.size < limit) {
@@ -353,6 +401,18 @@ class AccessibilityBridge(private val sessionCoordinator: SessionCoordinator) :
 
     private companion object {
         private const val DESCENDANT_TEXT_LIMIT = 4
+        private const val WINDOW_TEXT_LIMIT = 8
+        private const val CLAUNE_ACCESSIBILITY_SERVICE =
+            "${BuildConfig.APPLICATION_ID}/com.divyanshgolyan.claune.android.accessibility.ClauneAccessibilityService"
+    }
+
+    private fun isServiceEnabledInSettings(): Boolean {
+        val enabledServices =
+            Settings.Secure.getString(
+                context.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            ).orEmpty()
+        return enabledServices.split(':').any { it.equals(CLAUNE_ACCESSIBILITY_SERVICE, ignoreCase = true) }
     }
 }
 
@@ -362,4 +422,168 @@ private fun AccessibilityNodeInfo.boundsRect(): List<Int> {
     return listOf(rect.left, rect.top, rect.right, rect.bottom)
 }
 
+private fun AccessibilityNodeInfo.visibleSnapshotBounds(): List<Int>? {
+    if (!isVisibleToUser) {
+        return null
+    }
+    val rect = Rect()
+    getBoundsInScreen(rect)
+    if (rect.isEmpty || rect.width() <= 0 || rect.height() <= 0) {
+        return null
+    }
+    return listOf(rect.left, rect.top, rect.right, rect.bottom)
+}
+
+private data class RootSelection(val root: AccessibilityNodeInfo, val reason: String, val windowCandidates: List<WindowCandidate>)
+
+private data class RootCandidate(
+    val root: AccessibilityNodeInfo,
+    val packageName: String,
+    val className: String?,
+    val type: Int,
+    val typeLabel: String,
+    val layer: Int,
+    val active: Boolean,
+    val focused: Boolean,
+    val bounds: List<Int>,
+    val visibleText: List<String>,
+    val actionableElementCount: Int,
+) {
+    fun selectionScore(preferExternalWindow: Boolean): Int {
+        var score = boundsArea() / 100_000
+        score += actionableElementCount.coerceAtMost(40) * 3
+        score += visibleText.size.coerceAtMost(20) * 2
+        if (active) score += 40
+        if (focused) score += 50
+        if (type == AccessibilityWindowInfo.TYPE_APPLICATION) score += 500
+        if (packageName != SYSTEM_UI_PACKAGE) score += 1_000
+        if (preferExternalWindow && packageName != BuildConfig.APPLICATION_ID) score += 250
+        if (packageName == BuildConfig.APPLICATION_ID) score -= 8_000
+        if (type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) score -= 9_000
+        if (isBareSystemNavigationRoot()) score -= 10_000
+        return score
+    }
+
+    fun isBareSystemNavigationRoot(): Boolean = packageName == SYSTEM_UI_PACKAGE &&
+        actionableElementCount <= 3 &&
+        visibleText.isNotEmpty() &&
+        visibleText.all { it in SYSTEM_NAVIGATION_LABELS }
+
+    fun toWindowCandidate(selected: Boolean, reason: String?): WindowCandidate = WindowCandidate(
+        packageName = packageName,
+        className = className,
+        type = typeLabel,
+        layer = layer,
+        active = active,
+        focused = focused,
+        bounds = bounds,
+        visibleText = visibleText,
+        actionableElementCount = actionableElementCount,
+        selected = selected,
+        selectionReason = reason,
+    )
+
+    private fun boundsArea(): Int {
+        if (bounds.size < 4) return 0
+        val width = (bounds[2] - bounds[0]).coerceAtLeast(0)
+        val height = (bounds[3] - bounds[1]).coerceAtLeast(0)
+        return width * height
+    }
+
+    companion object {
+        fun from(window: AccessibilityWindowInfo, root: AccessibilityNodeInfo): RootCandidate {
+            val windowBounds = Rect()
+            window.getBoundsInScreen(windowBounds)
+            return RootCandidate(
+                root = root,
+                packageName = root.packageName?.toString().orEmpty().ifBlank { "unknown" },
+                className = root.className?.toString(),
+                type = window.type,
+                typeLabel = window.typeLabel(),
+                layer = window.layer,
+                active = window.isActive,
+                focused = window.isFocused,
+                bounds = windowBounds.toBoundsList().ifEmpty { root.boundsRect() },
+                visibleText = collectWindowText(root),
+                actionableElementCount = countActionableElements(root),
+            )
+        }
+
+        fun fromActiveRoot(root: AccessibilityNodeInfo): RootCandidate = RootCandidate(
+            root = root,
+            packageName = root.packageName?.toString().orEmpty().ifBlank { "unknown" },
+            className = root.className?.toString(),
+            type = -1,
+            typeLabel = "ROOT_IN_ACTIVE_WINDOW",
+            layer = 0,
+            active = true,
+            focused = root.isFocused,
+            bounds = root.boundsRect(),
+            visibleText = collectWindowText(root),
+            actionableElementCount = countActionableElements(root),
+        )
+
+        private fun collectWindowText(root: AccessibilityNodeInfo): List<String> {
+            val values = linkedSetOf<String>()
+            collectWindowText(root, values)
+            return values.toList()
+        }
+
+        private fun collectWindowText(node: AccessibilityNodeInfo, collector: MutableSet<String>) {
+            if (collector.size >= WINDOW_TEXT_LIMIT) {
+                return
+            }
+
+            if (node.visibleSnapshotBounds() != null) {
+                listOf(node.text, node.contentDescription)
+                    .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotBlank) }
+                    .forEach { value ->
+                        if (collector.size < WINDOW_TEXT_LIMIT) {
+                            collector += value
+                        }
+                    }
+            }
+            for (index in 0 until node.childCount) {
+                if (collector.size >= WINDOW_TEXT_LIMIT) {
+                    return
+                }
+                node.getChild(index)?.let { collectWindowText(it, collector) }
+            }
+        }
+
+        private fun countActionableElements(node: AccessibilityNodeInfo): Int {
+            var count =
+                if (node.visibleSnapshotBounds() != null && (node.isClickable || node.isEditable || node.isScrollable)) {
+                    1
+                } else {
+                    0
+                }
+            for (index in 0 until node.childCount) {
+                node.getChild(index)?.let { child ->
+                    count += countActionableElements(child)
+                }
+            }
+            return count
+        }
+    }
+}
+
+private fun AccessibilityWindowInfo.typeLabel(): String = when (type) {
+    AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "ACCESSIBILITY_OVERLAY"
+    AccessibilityWindowInfo.TYPE_APPLICATION -> "APPLICATION"
+    AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "INPUT_METHOD"
+    AccessibilityWindowInfo.TYPE_SPLIT_SCREEN_DIVIDER -> "SPLIT_SCREEN_DIVIDER"
+    AccessibilityWindowInfo.TYPE_SYSTEM -> "SYSTEM"
+    else -> "UNKNOWN_$type"
+}
+
+private fun Rect.toBoundsList(): List<Int> = if (isEmpty()) {
+    emptyList()
+} else {
+    listOf(left, top, right, bottom)
+}
+
 private const val MAX_PARENT_CLICK_SEARCH_DEPTH = 5
+private const val WINDOW_TEXT_LIMIT = 8
+private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+private val SYSTEM_NAVIGATION_LABELS = setOf("Overview", "Back", "Home")

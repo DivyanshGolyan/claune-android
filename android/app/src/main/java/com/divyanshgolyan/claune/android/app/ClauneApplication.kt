@@ -1,7 +1,7 @@
 package com.divyanshgolyan.claune.android.app
 
-import android.app.Application
 import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.os.Bundle
 import com.divyanshgolyan.claune.android.BuildConfig
@@ -76,7 +76,7 @@ class ClauneContainer(application: Application) {
         )
     }
     val sessionCoordinator = SessionCoordinator(logStore, codingSessionStore)
-    val accessibilityBridge = AccessibilityBridge(sessionCoordinator)
+    val accessibilityBridge = AccessibilityBridge(application, sessionCoordinator)
     val overlayController = SessionOverlayController(application, sessionCoordinator.uiState)
     val scriptRuntime =
         QuickJsScriptRuntime(

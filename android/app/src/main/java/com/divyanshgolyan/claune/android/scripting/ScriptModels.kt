@@ -55,6 +55,23 @@ data class UiSnapshotPayload(
     val visibleText: List<String>,
     val actionableElements: List<UiElementPayload>,
     val focusedElementId: String? = null,
+    val windowCandidates: List<WindowCandidatePayload> = emptyList(),
+    val selectedWindowReason: String? = null,
+)
+
+@Serializable
+data class WindowCandidatePayload(
+    val packageName: String,
+    val className: String? = null,
+    val type: String,
+    val layer: Int,
+    val active: Boolean,
+    val focused: Boolean,
+    val bounds: List<Int>,
+    val visibleText: List<String>,
+    val actionableElementCount: Int,
+    val selected: Boolean = false,
+    val selectionReason: String? = null,
 )
 
 @Serializable
