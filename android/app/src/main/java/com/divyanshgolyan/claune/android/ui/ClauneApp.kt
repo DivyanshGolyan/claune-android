@@ -49,6 +49,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -68,14 +69,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -83,7 +83,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
@@ -238,7 +238,7 @@ internal fun ClauneApp(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = SoftKraftPalette.Background,
+        color = ClaunePalette.Background,
     ) {
         NavHost(
             navController = navController,
@@ -336,17 +336,13 @@ private fun SessionChooserHomeScreen(
                 onPrimaryAction = onOpenSettings,
             )
         },
-        containerColor = SoftKraftPalette.Background,
+        containerColor = ClaunePalette.Background,
     ) { innerPadding ->
         LazyColumn(
             modifier =
             Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(SoftKraftPalette.Background, SoftKraftPalette.BackgroundDeep),
-                    ),
-                ),
+                .background(ClaunePalette.Background),
             contentPadding =
             PaddingValues(
                 start = ClauneLayout.ScreenPadding,
@@ -448,9 +444,9 @@ private fun SessionDetailScreen(
                     .fillMaxWidth()
                     .navigationBarsPadding()
                     .imePadding(),
-                color = SoftKraftPalette.Background,
-                tonalElevation = 2.dp,
-                shadowElevation = 8.dp,
+                color = ClaunePalette.Background,
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
             ) {
                 Box(modifier = Modifier.padding(horizontal = ClauneLayout.SurfacePadding, vertical = 12.dp)) {
                     SessionComposerCard(
@@ -473,13 +469,13 @@ private fun SessionDetailScreen(
                 }
             }
         },
-        containerColor = SoftKraftPalette.Background,
+        containerColor = ClaunePalette.Background,
     ) { innerPadding ->
         LazyColumn(
             modifier =
             Modifier
                 .fillMaxSize()
-                .background(SoftKraftPalette.Background),
+                .background(ClaunePalette.Background),
             contentPadding =
             PaddingValues(
                 start = ClauneLayout.ScreenPadding,
@@ -530,7 +526,7 @@ private fun ClauneTopAppBar(
         title = {
             Text(
                 text = title,
-                color = SoftKraftPalette.Ink,
+                color = ClaunePalette.Ink,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -545,9 +541,9 @@ private fun ClauneTopAppBar(
         },
         colors =
         TopAppBarDefaults.topAppBarColors(
-            containerColor = SoftKraftPalette.Background,
-            titleContentColor = SoftKraftPalette.Ink,
-            actionIconContentColor = SoftKraftPalette.AccentDeep,
+            containerColor = ClaunePalette.Background,
+            titleContentColor = ClaunePalette.Ink,
+            actionIconContentColor = ClaunePalette.AccentDeep,
         ),
     )
 }
@@ -566,8 +562,8 @@ private fun ClaunePrimaryButton(
         shape = ClauneShapes.Control,
         colors =
         ButtonDefaults.buttonColors(
-            containerColor = SoftKraftPalette.Accent,
-            contentColor = SoftKraftPalette.Background,
+            containerColor = ClaunePalette.Accent,
+            contentColor = ClaunePalette.Background,
         ),
         modifier = modifier,
     ) {
@@ -604,7 +600,7 @@ private fun ClauneSecondaryButton(
 @Composable
 private fun ClauneTextAction(text: String, onClick: () -> Unit) {
     TextButton(onClick = onClick, shape = ClauneShapes.Control) {
-        Text(text, color = SoftKraftPalette.AccentDeep)
+        Text(text, color = ClaunePalette.AccentDeep)
     }
 }
 
@@ -613,24 +609,24 @@ private fun ClauneRowChevron(contentDescription: String? = null) {
     Icon(
         imageVector = Icons.AutoMirrored.Filled.ArrowForward,
         contentDescription = contentDescription,
-        tint = SoftKraftPalette.AccentDeep,
+        tint = ClaunePalette.AccentDeep,
     )
 }
 
 @Composable
 private fun SessionStatusBanner(text: String) {
     Card(
-        shape = ClauneShapes.Control,
-        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceMuted),
+        shape = ClauneShapes.Card,
+        colors = CardDefaults.cardColors(containerColor = ClaunePalette.SurfaceMuted),
         modifier =
         Modifier
             .fillMaxWidth()
-            .border(1.dp, SoftKraftPalette.RuleSoft, ClauneShapes.Control),
+            .border(1.dp, ClaunePalette.RuleSoft, ClauneShapes.Card),
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
-            color = SoftKraftPalette.InkSoft,
+            color = ClaunePalette.InkSoft,
             modifier = Modifier.padding(horizontal = ClauneLayout.SurfacePadding, vertical = 10.dp),
         )
     }
@@ -640,7 +636,7 @@ private fun SessionStatusBanner(text: String) {
 private fun IdleHeader(isReady: Boolean) {
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (!isReady) {
             SectionLabel("Setup")
@@ -648,18 +644,18 @@ private fun IdleHeader(isReady: Boolean) {
         Text(
             text =
             if (isReady) {
-                "what do you\nneed done?"
+                "What needs\ndoing?"
             } else {
-                "before we\nstart"
+                "Before you\nstart"
             },
             style = MaterialTheme.typography.headlineLarge,
-            color = SoftKraftPalette.Ink,
+            color = ClaunePalette.Ink,
         )
         if (!isReady) {
             Text(
-                text = "Finish these two steps and Claune will be ready to use your phone.",
+                text = "Finish setup and Claune will be ready to use your phone.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = SoftKraftPalette.InkSoft,
+                color = ClaunePalette.InkSoft,
             )
         }
     }
@@ -674,11 +670,12 @@ private fun ComposerTopBar(statusText: String?) {
     ) {
         if (statusText != null) {
             Text(
-                text = statusText.uppercase(),
-                color = SoftKraftPalette.AccentDeep,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-                letterSpacing = 1.4.sp,
+                text = statusText,
+                color = ClaunePalette.AccentDeep,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.05.em,
+                ),
             )
         }
     }
@@ -693,11 +690,11 @@ private fun SetupRunwayCard(
 ) {
     Card(
         shape = ClauneShapes.Card,
-        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceMuted),
+        colors = CardDefaults.cardColors(containerColor = ClaunePalette.BackgroundDeep),
         modifier =
         Modifier
             .fillMaxWidth()
-            .border(1.dp, SoftKraftPalette.Rule, ClauneShapes.Card),
+            .border(1.dp, ClaunePalette.Rule, ClauneShapes.Card),
     ) {
         Column(
             modifier =
@@ -708,9 +705,9 @@ private fun SetupRunwayCard(
         ) {
             SectionLabel("Setup")
             Text(
-                text = "Two quick things before Claune can drive the phone.",
+                text = "Two quick things before Claune can use the phone.",
                 style = MaterialTheme.typography.titleMedium,
-                color = SoftKraftPalette.Ink,
+                color = ClaunePalette.Ink,
             )
             SetupStepRow(
                 title = "Anthropic API key",
@@ -735,20 +732,20 @@ private fun SessionHistoryRow(entry: SessionHistoryEntry, onReuseGoal: () -> Uni
             Text(
                 text = entry.goal.ifBlank { entry.summary },
                 style = MaterialTheme.typography.bodyLarge,
-                color = SoftKraftPalette.Ink,
+                color = ClaunePalette.Ink,
                 maxLines = 2,
             )
         },
         trailingContent = {
             ClauneRowChevron(contentDescription = "Open session")
         },
-        colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.Background),
+        colors = ListItemDefaults.colors(containerColor = ClaunePalette.Background),
         modifier =
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onReuseGoal),
     )
-    HorizontalDivider(color = SoftKraftPalette.RuleSoft.copy(alpha = 0.7f))
+    HorizontalDivider(color = ClaunePalette.RuleSoft)
 }
 
 @Composable
@@ -776,13 +773,13 @@ private fun SettingsScreen(
                 onPrimaryAction = onNavigateBack,
             )
         },
-        containerColor = SoftKraftPalette.Background,
+        containerColor = ClaunePalette.Background,
     ) { innerPadding ->
         LazyColumn(
             modifier =
             Modifier
                 .fillMaxSize()
-                .background(SoftKraftPalette.Background)
+                .background(ClaunePalette.Background)
                 .imePadding(),
             contentPadding =
             PaddingValues(
@@ -798,12 +795,12 @@ private fun SettingsScreen(
                     Text(
                         text = "Control room",
                         style = MaterialTheme.typography.headlineLarge,
-                        color = SoftKraftPalette.Ink,
+                        color = ClaunePalette.Ink,
                     )
                     Text(
                         text = "Keep the agent key on-device and check whether phone control is ready.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = SoftKraftPalette.InkSoft,
+                        color = ClaunePalette.InkSoft,
                     )
                 }
             }
@@ -811,7 +808,8 @@ private fun SettingsScreen(
             item {
                 Card(
                     shape = ClauneShapes.Card,
-                    colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
+                    colors = CardDefaults.cardColors(containerColor = ClaunePalette.BackgroundDeep),
+                    modifier = Modifier.border(1.dp, ClaunePalette.Rule, ClauneShapes.Card),
                 ) {
                     Column(
                         modifier =
@@ -824,7 +822,7 @@ private fun SettingsScreen(
                         Text(
                             text = "The app now reads the API key from here instead of requiring a rebuild.",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = SoftKraftPalette.InkSoft,
+                            color = ClaunePalette.InkSoft,
                         )
                         OutlinedTextField(
                             value = apiKeyDraft,
@@ -862,7 +860,8 @@ private fun SettingsScreen(
             item {
                 Card(
                     shape = ClauneShapes.Card,
-                    colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
+                    colors = CardDefaults.cardColors(containerColor = ClaunePalette.BackgroundDeep),
+                    modifier = Modifier.border(1.dp, ClaunePalette.Rule, ClauneShapes.Card),
                 ) {
                     Column(
                         modifier =
@@ -880,7 +879,7 @@ private fun SettingsScreen(
                                 "Claune accessibility is off. Enable it before starting a live run."
                             },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = SoftKraftPalette.InkSoft,
+                            color = ClaunePalette.InkSoft,
                         )
                         ClauneSecondaryButton(
                             text = "Open accessibility settings",
@@ -894,7 +893,8 @@ private fun SettingsScreen(
                 item {
                     Card(
                         shape = ClauneShapes.Card,
-                        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
+                        colors = CardDefaults.cardColors(containerColor = ClaunePalette.BackgroundDeep),
+                        modifier = Modifier.border(1.dp, ClaunePalette.Rule, ClauneShapes.Card),
                     ) {
                         Column(
                             modifier =
@@ -907,7 +907,7 @@ private fun SettingsScreen(
                             Text(
                                 text = "Show the same accessibility overlay without starting an agent run.",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = SoftKraftPalette.InkSoft,
+                                color = ClaunePalette.InkSoft,
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -917,7 +917,7 @@ private fun SettingsScreen(
                                 Text(
                                     text = "Test overlay",
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = SoftKraftPalette.Ink,
+                                    color = ClaunePalette.Ink,
                                 )
                                 Switch(
                                     checked = debugOverlayVisible,
@@ -940,8 +940,11 @@ private fun SettingsScreen(
 private fun NewSessionCard(onCreateSession: () -> Unit) {
     Card(
         shape = ClauneShapes.Card,
-        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
-        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = ClaunePalette.Background),
+        modifier =
+        Modifier
+            .fillMaxWidth()
+            .border(1.dp, ClaunePalette.Rule, ClauneShapes.Card),
     ) {
         ListItem(
             overlineContent = {
@@ -951,13 +954,13 @@ private fun NewSessionCard(onCreateSession: () -> Unit) {
                 Text(
                     text = "Start something new",
                     style = MaterialTheme.typography.titleMedium,
-                    color = SoftKraftPalette.Ink,
+                    color = ClaunePalette.Ink,
                 )
             },
             trailingContent = {
                 ClauneRowChevron(contentDescription = "Start new session")
             },
-            colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.SurfaceRaised),
+            colors = ListItemDefaults.colors(containerColor = ClaunePalette.Background),
             modifier = Modifier.clickable(onClick = onCreateSession),
         )
     }
@@ -968,14 +971,14 @@ private fun SessionSystemChip(text: String) {
     Box(
         modifier =
         Modifier
-            .background(SoftKraftPalette.SurfaceMuted, ClauneShapes.Control)
-            .border(1.dp, SoftKraftPalette.RuleSoft, ClauneShapes.Control)
+            .background(ClaunePalette.SurfaceMuted, ClauneShapes.Control)
+            .border(1.dp, ClaunePalette.RuleSoft, ClauneShapes.Control)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
-            color = SoftKraftPalette.InkSoft,
+            color = ClaunePalette.InkSoft,
         )
     }
 }
@@ -984,8 +987,11 @@ private fun SessionSystemChip(text: String) {
 private fun SessionEmptyState() {
     Card(
         shape = ClauneShapes.Card,
-        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
-        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = ClaunePalette.Background),
+        modifier =
+        Modifier
+            .fillMaxWidth()
+            .border(1.dp, ClaunePalette.Rule, ClauneShapes.Card),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(ClauneLayout.CardPadding),
@@ -994,12 +1000,12 @@ private fun SessionEmptyState() {
             Text(
                 text = "This session is empty.",
                 style = MaterialTheme.typography.titleMedium,
-                color = SoftKraftPalette.Ink,
+                color = ClaunePalette.Ink,
             )
             Text(
                 text = "Type or dictate the first instruction below.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = SoftKraftPalette.InkSoft,
+                color = ClaunePalette.InkSoft,
             )
         }
     }
@@ -1010,9 +1016,9 @@ private fun SessionTranscriptRow(entry: PersistedSessionDetailEntry) {
     val isUser = entry.kind == PersistedSessionDetailKind.User
     val background =
         if (isUser) {
-            SoftKraftPalette.AccentSoft.copy(alpha = 0.7f)
+            ClaunePalette.AccentSoft
         } else {
-            SoftKraftPalette.Surface
+            ClaunePalette.BackgroundDeep
         }
     val shape =
         if (isUser) {
@@ -1027,7 +1033,10 @@ private fun SessionTranscriptRow(entry: PersistedSessionDetailEntry) {
         Card(
             shape = shape,
             colors = CardDefaults.cardColors(containerColor = background),
-            modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.94f),
+            modifier =
+            Modifier
+                .fillMaxWidth(if (isUser) 0.84f else 0.94f)
+                .border(1.dp, ClaunePalette.RuleSoft, shape),
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -1044,7 +1053,7 @@ private fun SessionTranscriptRow(entry: PersistedSessionDetailEntry) {
                 )
                 MarkdownText(
                     markdown = entry.body,
-                    color = SoftKraftPalette.Ink,
+                    color = ClaunePalette.Ink,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -1067,12 +1076,12 @@ private fun MarkdownText(markdown: String, color: Color, modifier: Modifier = Mo
                 textSize = 16f
                 setLineSpacing(0f, 1.08f)
                 setTextColor(color.toArgb())
-                setLinkTextColor(SoftKraftPalette.AccentDeep.toArgb())
+                setLinkTextColor(ClaunePalette.AccentDeep.toArgb())
             }
         },
         update = { textView ->
             textView.setTextColor(color.toArgb())
-            textView.setLinkTextColor(SoftKraftPalette.AccentDeep.toArgb())
+            textView.setLinkTextColor(ClaunePalette.AccentDeep.toArgb())
             MarkdownRenderer.render(markwon, textView, markdown)
         },
     )
@@ -1100,9 +1109,12 @@ private fun SessionComposerCard(
 
     Card(
         shape = ClauneShapes.Card,
-        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = ClaunePalette.Background),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier =
+        Modifier
+            .fillMaxWidth()
+            .border(1.dp, ClaunePalette.Rule, ClauneShapes.Card),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(ClauneLayout.SurfacePadding),
@@ -1134,6 +1146,16 @@ private fun SessionComposerCard(
                 maxLines = 6,
                 shape = ClauneShapes.Control,
                 textStyle = MaterialTheme.typography.bodyLarge,
+                colors =
+                OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = ClaunePalette.Accent,
+                    unfocusedBorderColor = ClaunePalette.RuleSoft,
+                    focusedContainerColor = ClaunePalette.Background,
+                    unfocusedContainerColor = ClaunePalette.Background,
+                    focusedTextColor = ClaunePalette.Ink,
+                    unfocusedTextColor = ClaunePalette.Ink,
+                    cursorColor = ClaunePalette.AccentDeep,
+                ),
                 keyboardOptions =
                 KeyboardOptions(
                     capitalization = KeyboardCapitalization.Sentences,
@@ -1186,10 +1208,11 @@ private fun SessionComposerCard(
 private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercase(),
-        color = SoftKraftPalette.InkFaint,
-        fontFamily = FontFamily.Monospace,
-        fontSize = 11.sp,
-        letterSpacing = 1.4.sp,
+        color = ClaunePalette.InkFaint,
+        style = MaterialTheme.typography.bodySmall.copy(
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.08.em,
+        ),
         modifier = modifier,
     )
 }
@@ -1262,15 +1285,17 @@ private fun SetupStepRow(title: String, complete: Boolean, actionLabel: String, 
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
-                color = SoftKraftPalette.Ink,
+                color = ClaunePalette.Ink,
             )
         },
         supportingContent = {
             Text(
                 text = if (complete) "Ready" else "Needs attention",
-                color = SoftKraftPalette.InkSoft,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
+                color = ClaunePalette.InkSoft,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.05.em,
+                ),
             )
         },
         trailingContent = {
@@ -1279,21 +1304,23 @@ private fun SetupStepRow(title: String, complete: Boolean, actionLabel: String, 
                     Icon(
                         imageVector = Icons.Filled.Check,
                         contentDescription = "Ready",
-                        tint = SoftKraftPalette.AccentDeep,
+                        tint = ClaunePalette.AccentDeep,
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "done",
-                        color = SoftKraftPalette.AccentDeep,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
+                        color = ClaunePalette.AccentDeep,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 0.05.em,
+                        ),
                     )
                 }
             } else {
                 ClauneTextAction(actionLabel, onAction)
             }
         },
-        colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.SurfaceMuted),
+        colors = ListItemDefaults.colors(containerColor = ClaunePalette.BackgroundDeep),
         modifier = Modifier.fillMaxWidth(),
     )
 }
