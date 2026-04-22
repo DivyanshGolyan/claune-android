@@ -28,8 +28,13 @@ private val ClauneLightScheme =
         onBackground = Color(0xFF1D2A22),
         surface = Color(0xFFF9F4EC),
         onSurface = Color(0xFF1D2A22),
+        surfaceContainer = Color(0xFFFFFBF5),
+        surfaceContainerLow = Color(0xFFFBF7F0),
+        surfaceContainerHigh = Color(0xFFF0E8DA),
         surfaceVariant = Color(0xFFE6DCCC),
         onSurfaceVariant = Color(0xFF59675E),
+        outline = Color(0xFFD4C9B0),
+        outlineVariant = Color(0xFFDDD3C1),
     )
 
 @Composable

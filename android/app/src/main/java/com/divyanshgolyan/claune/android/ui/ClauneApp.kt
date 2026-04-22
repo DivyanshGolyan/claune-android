@@ -26,17 +26,24 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -64,6 +71,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -341,12 +349,12 @@ private fun SessionChooserHomeScreen(
                 ),
             contentPadding =
             PaddingValues(
-                start = 20.dp,
+                start = ClauneLayout.ScreenPadding,
                 top = innerPadding.calculateTopPadding() + 16.dp,
-                end = 20.dp,
+                end = ClauneLayout.ScreenPadding,
                 bottom = innerPadding.calculateBottomPadding() + 24.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(ClauneLayout.SectionGap),
         ) {
             item {
                 IdleHeader(isReady = isReady)
@@ -444,7 +452,7 @@ private fun SessionDetailScreen(
                 tonalElevation = 2.dp,
                 shadowElevation = 8.dp,
             ) {
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Box(modifier = Modifier.padding(horizontal = ClauneLayout.SurfacePadding, vertical = 12.dp)) {
                     SessionComposerCard(
                         goal = goal,
                         previewGoal = previewGoal,
@@ -474,12 +482,12 @@ private fun SessionDetailScreen(
                 .background(SoftKraftPalette.Background),
             contentPadding =
             PaddingValues(
-                start = 20.dp,
+                start = ClauneLayout.ScreenPadding,
                 top = innerPadding.calculateTopPadding() + 16.dp,
-                end = 20.dp,
+                end = ClauneLayout.ScreenPadding,
                 bottom = innerPadding.calculateBottomPadding() + 16.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
         ) {
             if (statusBannerText != null) {
                 item {
@@ -529,14 +537,10 @@ private fun ClauneTopAppBar(
         },
         actions = {
             if (secondaryActionLabel != null && onSecondaryAction != null) {
-                TextButton(onClick = onSecondaryAction) {
-                    Text(secondaryActionLabel, color = SoftKraftPalette.AccentDeep)
-                }
+                ClauneTextAction(secondaryActionLabel, onSecondaryAction)
             }
             if (primaryActionLabel != null && onPrimaryAction != null) {
-                TextButton(onClick = onPrimaryAction) {
-                    Text(primaryActionLabel, color = SoftKraftPalette.AccentDeep)
-                }
+                ClauneTextAction(primaryActionLabel, onPrimaryAction)
             }
         },
         colors =
@@ -549,20 +553,85 @@ private fun ClauneTopAppBar(
 }
 
 @Composable
+private fun ClaunePrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    icon: ImageVector? = null,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        shape = ClauneShapes.Control,
+        colors =
+        ButtonDefaults.buttonColors(
+            containerColor = SoftKraftPalette.Accent,
+            contentColor = SoftKraftPalette.Background,
+        ),
+        modifier = modifier,
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Text(text)
+    }
+}
+
+@Composable
+private fun ClauneSecondaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    icon: ImageVector? = null,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        shape = ClauneShapes.Control,
+        modifier = modifier,
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        Text(text)
+    }
+}
+
+@Composable
+private fun ClauneTextAction(text: String, onClick: () -> Unit) {
+    TextButton(onClick = onClick, shape = ClauneShapes.Control) {
+        Text(text, color = SoftKraftPalette.AccentDeep)
+    }
+}
+
+@Composable
+private fun ClauneRowChevron(contentDescription: String? = null) {
+    Icon(
+        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+        contentDescription = contentDescription,
+        tint = SoftKraftPalette.AccentDeep,
+    )
+}
+
+@Composable
 private fun SessionStatusBanner(text: String) {
     Card(
-        shape = RoundedCornerShape(18.dp),
+        shape = ClauneShapes.Control,
         colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceMuted),
         modifier =
         Modifier
             .fillMaxWidth()
-            .border(1.dp, SoftKraftPalette.RuleSoft, RoundedCornerShape(18.dp)),
+            .border(1.dp, SoftKraftPalette.RuleSoft, ClauneShapes.Control),
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
             color = SoftKraftPalette.InkSoft,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = ClauneLayout.SurfacePadding, vertical = 10.dp),
         )
     }
 }
@@ -623,19 +692,19 @@ private fun SetupRunwayCard(
     onOpenAccessibilitySettings: () -> Unit,
 ) {
     Card(
-        shape = RoundedCornerShape(26.dp),
+        shape = ClauneShapes.Card,
         colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceMuted),
         modifier =
         Modifier
             .fillMaxWidth()
-            .border(1.dp, SoftKraftPalette.Rule, RoundedCornerShape(26.dp)),
+            .border(1.dp, SoftKraftPalette.Rule, ClauneShapes.Card),
     ) {
         Column(
             modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(ClauneLayout.CardPadding),
+            verticalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
         ) {
             SectionLabel("Setup")
             Text(
@@ -671,11 +740,7 @@ private fun SessionHistoryRow(entry: SessionHistoryEntry, onReuseGoal: () -> Uni
             )
         },
         trailingContent = {
-            Text(
-                text = "→",
-                color = SoftKraftPalette.InkSoft,
-                style = MaterialTheme.typography.titleMedium,
-            )
+            ClauneRowChevron(contentDescription = "Open session")
         },
         colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.Background),
         modifier =
@@ -721,12 +786,12 @@ private fun SettingsScreen(
                 .imePadding(),
             contentPadding =
             PaddingValues(
-                start = 20.dp,
+                start = ClauneLayout.ScreenPadding,
                 top = innerPadding.calculateTopPadding() + 16.dp,
-                end = 20.dp,
+                end = ClauneLayout.ScreenPadding,
                 bottom = innerPadding.calculateBottomPadding() + 24.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(ClauneLayout.SectionGap),
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -745,15 +810,15 @@ private fun SettingsScreen(
 
             item {
                 Card(
-                    shape = RoundedCornerShape(28.dp),
+                    shape = ClauneShapes.Card,
                     colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
                 ) {
                     Column(
                         modifier =
                         Modifier
                             .fillMaxWidth()
-                            .padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                            .padding(ClauneLayout.CardPadding),
+                        verticalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
                     ) {
                         SectionLabel("Anthropic key")
                         Text(
@@ -766,7 +831,7 @@ private fun SettingsScreen(
                             onValueChange = { apiKeyDraft = it },
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 2,
-                            shape = RoundedCornerShape(22.dp),
+                            shape = ClauneShapes.Control,
                             label = { Text("Anthropic API key") },
                             visualTransformation =
                             if (showKey) {
@@ -780,20 +845,15 @@ private fun SettingsScreen(
                                 keyboardType = KeyboardType.Password,
                             ),
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(
+                        Row(horizontalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap)) {
+                            ClaunePrimaryButton(
+                                text = "Save key",
                                 onClick = { onSaveKey(apiKeyDraft) },
-                                colors =
-                                ButtonDefaults.buttonColors(
-                                    containerColor = SoftKraftPalette.Accent,
-                                    contentColor = SoftKraftPalette.Background,
-                                ),
-                            ) {
-                                Text("Save key")
-                            }
-                            OutlinedButton(onClick = { showKey = !showKey }) {
-                                Text(if (showKey) "Hide" else "Show")
-                            }
+                            )
+                            ClauneSecondaryButton(
+                                text = if (showKey) "Hide" else "Show",
+                                onClick = { showKey = !showKey },
+                            )
                         }
                     }
                 }
@@ -801,15 +861,15 @@ private fun SettingsScreen(
 
             item {
                 Card(
-                    shape = RoundedCornerShape(28.dp),
+                    shape = ClauneShapes.Card,
                     colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
                 ) {
                     Column(
                         modifier =
                         Modifier
                             .fillMaxWidth()
-                            .padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                            .padding(ClauneLayout.CardPadding),
+                        verticalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
                     ) {
                         SectionLabel("Phone control")
                         Text(
@@ -822,9 +882,10 @@ private fun SettingsScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = SoftKraftPalette.InkSoft,
                         )
-                        OutlinedButton(onClick = onOpenAccessibilitySettings) {
-                            Text("Open accessibility settings")
-                        }
+                        ClauneSecondaryButton(
+                            text = "Open accessibility settings",
+                            onClick = onOpenAccessibilitySettings,
+                        )
                     }
                 }
             }
@@ -832,15 +893,15 @@ private fun SettingsScreen(
             if (BuildConfig.DEBUG) {
                 item {
                     Card(
-                        shape = RoundedCornerShape(28.dp),
+                        shape = ClauneShapes.Card,
                         colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
                     ) {
                         Column(
                             modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                                .padding(ClauneLayout.CardPadding),
+                            verticalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
                         ) {
                             SectionLabel("Debug")
                             Text(
@@ -878,7 +939,7 @@ private fun SettingsScreen(
 @Composable
 private fun NewSessionCard(onCreateSession: () -> Unit) {
     Card(
-        shape = RoundedCornerShape(24.dp),
+        shape = ClauneShapes.Card,
         colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -894,11 +955,7 @@ private fun NewSessionCard(onCreateSession: () -> Unit) {
                 )
             },
             trailingContent = {
-                Text(
-                    text = "→",
-                    color = SoftKraftPalette.AccentDeep,
-                    style = MaterialTheme.typography.titleLarge,
-                )
+                ClauneRowChevron(contentDescription = "Start new session")
             },
             colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.SurfaceRaised),
             modifier = Modifier.clickable(onClick = onCreateSession),
@@ -911,8 +968,8 @@ private fun SessionSystemChip(text: String) {
     Box(
         modifier =
         Modifier
-            .background(SoftKraftPalette.SurfaceMuted, RoundedCornerShape(16.dp))
-            .border(1.dp, SoftKraftPalette.RuleSoft, RoundedCornerShape(16.dp))
+            .background(SoftKraftPalette.SurfaceMuted, ClauneShapes.Control)
+            .border(1.dp, SoftKraftPalette.RuleSoft, ClauneShapes.Control)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Text(
@@ -926,13 +983,13 @@ private fun SessionSystemChip(text: String) {
 @Composable
 private fun SessionEmptyState() {
     Card(
-        shape = RoundedCornerShape(24.dp),
+        shape = ClauneShapes.Card,
         colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(ClauneLayout.CardPadding),
+            verticalArrangement = Arrangement.spacedBy(ClauneLayout.TightGap),
         ) {
             Text(
                 text = "This session is empty.",
@@ -959,9 +1016,9 @@ private fun SessionTranscriptRow(entry: PersistedSessionDetailEntry) {
         }
     val shape =
         if (isUser) {
-            RoundedCornerShape(topStart = 22.dp, topEnd = 8.dp, bottomStart = 22.dp, bottomEnd = 22.dp)
+            ClauneShapes.UserBubble
         } else {
-            RoundedCornerShape(topStart = 8.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 22.dp)
+            ClauneShapes.AssistantBubble
         }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1042,14 +1099,14 @@ private fun SessionComposerCard(
     val visibleGoal = if (isListening) previewGoal.ifBlank { goal } else goal
 
     Card(
-        shape = RoundedCornerShape(30.dp),
+        shape = ClauneShapes.Card,
         colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(ClauneLayout.SurfacePadding),
+            verticalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
         ) {
             if (isListening) {
                 ComposerTopBar("Listening · ${elapsedLabel(listeningElapsedSeconds)}")
@@ -1075,7 +1132,7 @@ private fun SessionComposerCard(
                 isError = listeningError != null,
                 minLines = 3,
                 maxLines = 6,
-                shape = RoundedCornerShape(22.dp),
+                shape = ClauneShapes.Control,
                 textStyle = MaterialTheme.typography.bodyLarge,
                 keyboardOptions =
                 KeyboardOptions(
@@ -1098,29 +1155,28 @@ private fun SessionComposerCard(
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedButton(onClick = if (isListening) onStopVoiceCapture else onStartVoiceCapture) {
-                    Text(if (isListening) "Done" else "Voice")
-                }
+                ClauneSecondaryButton(
+                    text = if (isListening) "Done" else "Voice",
+                    onClick = if (isListening) onStopVoiceCapture else onStartVoiceCapture,
+                    icon = if (isListening) Icons.Filled.Check else Icons.Filled.Mic,
+                )
                 Spacer(modifier = Modifier.weight(1f))
                 if (canStop) {
-                    OutlinedButton(onClick = onStopSession) {
-                        Text("Stop")
-                    }
+                    ClauneSecondaryButton(
+                        text = "Stop",
+                        onClick = onStopSession,
+                        icon = Icons.Filled.Stop,
+                    )
                 }
-                Button(
+                ClaunePrimaryButton(
+                    text = "Start on phone",
                     onClick = onSendMessage,
                     enabled = canSend,
-                    colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor = SoftKraftPalette.Accent,
-                        contentColor = SoftKraftPalette.Background,
-                    ),
-                ) {
-                    Text("Start on phone")
-                }
+                    icon = Icons.AutoMirrored.Filled.Send,
+                )
             }
         }
     }
@@ -1219,16 +1275,22 @@ private fun SetupStepRow(title: String, complete: Boolean, actionLabel: String, 
         },
         trailingContent = {
             if (complete) {
-                Text(
-                    text = "done",
-                    color = SoftKraftPalette.AccentDeep,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                )
-            } else {
-                TextButton(onClick = onAction) {
-                    Text(actionLabel, color = SoftKraftPalette.AccentDeep)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = "Ready",
+                        tint = SoftKraftPalette.AccentDeep,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "done",
+                        color = SoftKraftPalette.AccentDeep,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                    )
                 }
+            } else {
+                ClauneTextAction(actionLabel, onAction)
             }
         },
         colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.SurfaceMuted),
