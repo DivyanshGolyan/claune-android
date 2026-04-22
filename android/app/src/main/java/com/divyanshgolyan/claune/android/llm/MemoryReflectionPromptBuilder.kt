@@ -73,7 +73,5 @@ internal object MemoryReflectionPromptBuilder {
         appendLine()
         appendLine("""Bad: "This run succeeded after tapping the third result." """)
         appendLine("Why: one-off tactic.")
-        appendLine()
-        appendLine("Do not report task progress to the user here; this is only an internal memory reflection step.")
     }.trim()
 }
