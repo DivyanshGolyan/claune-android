@@ -21,8 +21,8 @@ import androidx.core.content.ContextCompat
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import com.divyanshgolyan.claune.android.service.ClauneAgentService
+import com.divyanshgolyan.claune.android.ui.ClaunePalette
 import com.divyanshgolyan.claune.android.ui.MarkdownRenderer
-import com.divyanshgolyan.claune.android.ui.SoftKraftPalette
 import io.noties.markwon.Markwon
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -147,26 +147,26 @@ class SessionOverlayController(
                 background =
                     roundedRect(
                         context = service,
-                        radiusDp = 24,
-                        fillColor = SoftKraftPalette.SurfaceArgb,
-                        strokeColor = SoftKraftPalette.RuleArgb,
+                        radiusDp = 16,
+                        fillColor = ClaunePalette.BackgroundArgb,
+                        strokeColor = ClaunePalette.RuleArgb,
                     )
-                elevation = dp(service, 10).toFloat()
+                elevation = dp(service, 6).toFloat()
             }
 
         val title =
             TextView(service).apply {
                 includeFontPadding = false
-                textSize = 14f
+                textSize = 15f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(SoftKraftPalette.InkArgb)
+                setTextColor(ClaunePalette.InkArgb)
             }
         val body =
             TextView(service).apply {
                 includeFontPadding = false
                 textSize = 13f
-                setTextColor(SoftKraftPalette.InkSoftArgb)
-                setLinkTextColor(SoftKraftPalette.AccentDeepArgb)
+                setTextColor(ClaunePalette.InkSoftArgb)
+                setLinkTextColor(ClaunePalette.AccentDeepArgb)
                 setPadding(0, dp(service, 6), 0, dp(service, 10))
                 maxLines = 5
                 ellipsize = TextUtils.TruncateAt.END
@@ -178,14 +178,14 @@ class SessionOverlayController(
                 imeOptions = EditorInfo.IME_ACTION_SEND
                 includeFontPadding = false
                 textSize = 14f
-                setTextColor(SoftKraftPalette.InkArgb)
-                setHintTextColor(SoftKraftPalette.InkFaintArgb)
+                setTextColor(ClaunePalette.InkArgb)
+                setHintTextColor(ClaunePalette.InkFaintArgb)
                 background =
                     roundedRect(
                         context = service,
-                        radiusDp = 16,
-                        fillColor = SoftKraftPalette.SurfaceRaisedArgb,
-                        strokeColor = SoftKraftPalette.RuleArgb,
+                        radiusDp = 12,
+                        fillColor = ClaunePalette.BackgroundArgb,
+                        strokeColor = ClaunePalette.RuleArgb,
                     )
                 setPadding(dp(service, 12), dp(service, 10), dp(service, 12), dp(service, 10))
                 setOnEditorActionListener { _, actionId, _ ->
@@ -216,8 +216,8 @@ class SessionOverlayController(
             Button(service).apply {
                 text = "Stop"
                 setAllCaps(false)
-                setTextColor(SoftKraftPalette.AccentDeepArgb)
-                backgroundTintList = ColorStateList.valueOf(SoftKraftPalette.SurfaceRaisedArgb)
+                setTextColor(ClaunePalette.AccentDeepArgb)
+                backgroundTintList = ColorStateList.valueOf(ClaunePalette.BackgroundArgb)
                 setOnClickListener {
                     service.startService(ClauneAgentService.stopIntent(service))
                 }
@@ -226,8 +226,8 @@ class SessionOverlayController(
             Button(service).apply {
                 text = "Send"
                 setAllCaps(false)
-                setTextColor(SoftKraftPalette.BackgroundArgb)
-                backgroundTintList = ColorStateList.valueOf(SoftKraftPalette.AccentArgb)
+                setTextColor(ClaunePalette.BackgroundArgb)
+                backgroundTintList = ColorStateList.valueOf(ClaunePalette.AccentArgb)
                 setOnClickListener { submitSteerText() }
             }
 
@@ -258,7 +258,7 @@ class SessionOverlayController(
             insets
         }
 
-        overlayBottomOffsetPx = dp(service, 16)
+        overlayBottomOffsetPx = dp(service, 12)
         val layoutParams =
             WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
