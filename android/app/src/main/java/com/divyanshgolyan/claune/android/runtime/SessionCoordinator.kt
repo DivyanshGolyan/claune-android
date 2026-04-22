@@ -17,7 +17,7 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
 
     fun createSession(name: String = ""): PersistedSessionSummary {
         val created = codingSessionStore.createSession(name)
-        selectSession(created.path)
+        selectSessionSummary(created, "Started new session: ${created.title}")
         return created
     }
 
@@ -50,16 +50,10 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
         return selectedSession
     }
 
-    fun selectSession(path: String) {
-        val selected = codingSessionStore.loadSession(path) ?: return
-        _uiState.value =
-            _uiState.value.copy(
-                selectedSessionPath = selected.path,
-                selectedPersistentSessionId = selected.sessionId,
-                selectedSessionTitle = selected.title,
-                recentSessions = refreshSessionList(selected.path),
-                summaryLine = "Selected session: ${selected.title}",
-            )
+    fun selectSession(path: String): PersistedSessionSummary? {
+        val selected = codingSessionStore.loadSession(path) ?: return null
+        selectSessionSummary(selected, "Selected session: ${selected.title}")
+        return selected
     }
 
     fun refreshSessions() {
@@ -210,6 +204,17 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
         if (next != current) {
             _uiState.value = next
         }
+    }
+
+    private fun selectSessionSummary(selected: PersistedSessionSummary, summaryLine: String) {
+        _uiState.value =
+            _uiState.value.copy(
+                selectedSessionPath = selected.path,
+                selectedPersistentSessionId = selected.sessionId,
+                selectedSessionTitle = selected.title,
+                recentSessions = refreshSessionList(selected.path),
+                summaryLine = summaryLine,
+            )
     }
 
     private fun refreshSessionList(selectedPath: String?): List<PersistedSessionSummary> {

@@ -64,6 +64,7 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
         if (trimmedName.isNotBlank()) {
             manager.appendSessionInfo(trimmedName)
         }
+        manager.ensureSessionFileWritten()
         return manager.toSummary()
     }
 
@@ -93,7 +94,12 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
     }
 
     private fun toSummary(info: SessionInfo): PersistedSessionSummary {
-        val firstMessage = userFacingText(info.firstMessage)
+        val firstMessage =
+            if (info.messageCount == 0) {
+                ""
+            } else {
+                userFacingText(info.firstMessage)
+            }
         val fallbackTitle = info.name?.trim().orEmpty().ifBlank { firstMessage }
         val title = sessionTitle(fallbackTitle)
         val preview = firstMessage.ifBlank { title }

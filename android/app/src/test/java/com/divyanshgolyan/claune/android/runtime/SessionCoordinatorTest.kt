@@ -11,6 +11,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import pi.ai.core.AssistantMessage
 import pi.ai.core.StopReason
@@ -104,6 +105,21 @@ class SessionCoordinatorTest {
         assertNotEquals(stale.path, selected.path)
         assertEquals(selected.path, coordinator.uiState.value.selectedSessionPath)
         assertFalse(File(stale.path).exists())
+    }
+
+    @Test
+    fun `create session replaces previously selected coding session`() {
+        val (coordinator, store) = coordinatorWithStore()
+        val previous = persistedSession(store)
+        coordinator.selectSession(previous.path)
+
+        val created = coordinator.createSession()
+
+        assertNotEquals(previous.path, created.path)
+        assertTrue(File(created.path).isFile)
+        assertEquals(created.path, store.loadSession(created.path)?.path)
+        assertEquals(created.path, coordinator.uiState.value.selectedSessionPath)
+        assertEquals(created.sessionId, coordinator.uiState.value.selectedPersistentSessionId)
     }
 
     @Test
