@@ -1,44 +1,74 @@
 package com.divyanshgolyan.claune.android.data.local
 
 import android.content.Context
-import android.content.SharedPreferences
-import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.datastore.preferences.SharedPreferencesMigration
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 data class SettingsState(val anthropicApiKey: String = "")
 
 interface SettingsStore {
     val state: StateFlow<SettingsState>
 
-    fun updateAnthropicApiKey(value: String)
+    suspend fun updateAnthropicApiKey(value: String)
 }
 
-class SharedPreferencesSettingsStore(context: Context, defaultAnthropicApiKey: String) : SettingsStore {
-    private val preferences: SharedPreferences =
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    private val mutableState = MutableStateFlow(readState())
+private const val SETTINGS_PREFERENCES_NAME = "claune_settings"
 
-    override val state: StateFlow<SettingsState> = mutableState.asStateFlow()
+private val Context.settingsDataStore by preferencesDataStore(
+    name = SETTINGS_PREFERENCES_NAME,
+    produceMigrations = { context ->
+        listOf(SharedPreferencesMigration(context, SETTINGS_PREFERENCES_NAME))
+    },
+)
+
+class DataStoreSettingsStore(
+    context: Context,
+    defaultAnthropicApiKey: String,
+    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+) : SettingsStore {
+    private val dataStore = context.applicationContext.settingsDataStore
+
+    override val state: StateFlow<SettingsState> =
+        dataStore.data
+            .map { preferences ->
+                SettingsState(
+                    anthropicApiKey = preferences[KEY_ANTHROPIC_API_KEY].orEmpty(),
+                )
+            }.stateIn(
+                scope = scope,
+                started = SharingStarted.Eagerly,
+                initialValue = SettingsState(),
+            )
 
     init {
-        if (!preferences.contains(KEY_ANTHROPIC_API_KEY) && defaultAnthropicApiKey.isNotBlank()) {
-            preferences.edit().putString(KEY_ANTHROPIC_API_KEY, defaultAnthropicApiKey).apply()
-            mutableState.value = readState()
+        if (defaultAnthropicApiKey.isNotBlank()) {
+            scope.launch {
+                dataStore.edit { preferences ->
+                    if (!preferences.contains(KEY_ANTHROPIC_API_KEY)) {
+                        preferences[KEY_ANTHROPIC_API_KEY] = defaultAnthropicApiKey
+                    }
+                }
+            }
         }
     }
 
-    override fun updateAnthropicApiKey(value: String) {
-        preferences.edit().putString(KEY_ANTHROPIC_API_KEY, value.trim()).apply()
-        mutableState.value = readState()
+    override suspend fun updateAnthropicApiKey(value: String) {
+        dataStore.edit { preferences ->
+            preferences[KEY_ANTHROPIC_API_KEY] = value.trim()
+        }
     }
 
-    private fun readState(): SettingsState = SettingsState(
-        anthropicApiKey = preferences.getString(KEY_ANTHROPIC_API_KEY, "").orEmpty(),
-    )
-
     private companion object {
-        private const val PREFS_NAME = "claune_settings"
-        private const val KEY_ANTHROPIC_API_KEY = "anthropic_api_key"
+        private val KEY_ANTHROPIC_API_KEY = stringPreferencesKey("anthropic_api_key")
     }
 }

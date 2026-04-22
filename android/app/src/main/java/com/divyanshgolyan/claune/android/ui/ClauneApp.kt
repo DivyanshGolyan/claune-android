@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,27 +23,32 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -53,16 +59,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -70,6 +76,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -81,20 +88,28 @@ import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetailKind
 import com.divyanshgolyan.claune.android.data.local.SettingsState
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
+import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
 
-private enum class HomeMode {
-    Idle,
-    Composer,
-}
+@Serializable
+private data object HomeRoute
 
-private object ClauneRoute {
-    const val HOME = "home"
-    const val SESSION = "session"
-    const val SETTINGS = "settings"
-}
+@Serializable
+private data object SessionRoute
 
+@Serializable
+private data object SettingsRoute
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ClauneApp(uiState: ClauneUiState, onEvent: (ClauneUiEvent) -> Unit) {
+internal fun ClauneApp(
+    uiState: ClauneUiState,
+    effects: Flow<ClauneUiEffect>,
+    onEvent: (ClauneUiEvent) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    onStartSession: (String) -> Unit,
+    onStopSession: () -> Unit,
+) {
     val context = LocalContext.current
     val navController = rememberNavController()
     var goal by rememberSaveable { mutableStateOf("") }
@@ -122,9 +137,7 @@ internal fun ClauneApp(uiState: ClauneUiState, onEvent: (ClauneUiEvent) -> Unit)
 
                     override fun onBeginningOfSpeech() = Unit
 
-                    override fun onRmsChanged(rmsdB: Float) {
-                        voiceUiState = voiceUiState.copy(level = rmsdB.coerceAtLeast(0f))
-                    }
+                    override fun onRmsChanged(rmsdB: Float) = Unit
 
                     override fun onBufferReceived(buffer: ByteArray?) = Unit
 
@@ -204,15 +217,26 @@ internal fun ClauneApp(uiState: ClauneUiState, onEvent: (ClauneUiEvent) -> Unit)
         }
     }
 
+    LaunchedEffect(effects) {
+        effects.collect { effect ->
+            when (effect) {
+                ClauneUiEffect.OpenAccessibilitySettings -> onOpenAccessibilitySettings()
+                is ClauneUiEffect.NavigateToSession -> navController.navigate(SessionRoute)
+                is ClauneUiEffect.StartSession -> onStartSession(effect.goal)
+                ClauneUiEffect.StopSession -> onStopSession()
+            }
+        }
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = SoftKraftPalette.Background,
     ) {
         NavHost(
             navController = navController,
-            startDestination = ClauneRoute.HOME,
+            startDestination = HomeRoute,
         ) {
-            composable(ClauneRoute.HOME) {
+            composable<HomeRoute> {
                 SessionChooserHomeScreen(
                     sessionState = uiState.sessionState,
                     settingsState = uiState.settingsState,
@@ -221,20 +245,18 @@ internal fun ClauneApp(uiState: ClauneUiState, onEvent: (ClauneUiEvent) -> Unit)
                         onEvent(ClauneUiEvent.CreateSession)
                         goal = ""
                         composerRequestsKeyboard = true
-                        navController.navigate(ClauneRoute.SESSION)
                     },
                     onOpenSession = { path ->
                         onEvent(ClauneUiEvent.SelectSession(path))
                         goal = ""
                         composerRequestsKeyboard = false
-                        navController.navigate(ClauneRoute.SESSION)
                     },
                     onOpenAccessibilitySettings = { onEvent(ClauneUiEvent.OpenAccessibilitySettings) },
-                    onOpenSettings = { navController.navigate(ClauneRoute.SETTINGS) },
+                    onOpenSettings = { navController.navigate(SettingsRoute) },
                 )
             }
 
-            composable(ClauneRoute.SESSION) {
+            composable<SessionRoute> {
                 SessionDetailScreen(
                     sessionState = uiState.sessionState,
                     sessionDetail = uiState.sessionDetail,
@@ -243,7 +265,6 @@ internal fun ClauneApp(uiState: ClauneUiState, onEvent: (ClauneUiEvent) -> Unit)
                     previewGoal = voiceUiState.previewTranscript,
                     isListening = voiceUiState.isListening,
                     listeningElapsedSeconds = voiceUiState.elapsedSeconds,
-                    listeningLevel = voiceUiState.level,
                     listeningError = voiceUiState.errorMessage,
                     autoFocusInput = composerRequestsKeyboard,
                     onGoalChanged = { goal = it },
@@ -268,18 +289,20 @@ internal fun ClauneApp(uiState: ClauneUiState, onEvent: (ClauneUiEvent) -> Unit)
                         pendingVoiceSend = true
                         speechRecognizer?.stopListening()
                     },
-                    onOpenSettings = { navController.navigate(ClauneRoute.SETTINGS) },
+                    onOpenSettings = { navController.navigate(SettingsRoute) },
+                    onOpenSessions = { navController.navigate(HomeRoute) },
                     onStopSession = { onEvent(ClauneUiEvent.StopSession) },
                 )
             }
 
-            composable(ClauneRoute.SETTINGS) {
+            composable<SettingsRoute> {
                 SettingsScreen(
                     settingsState = uiState.settingsState,
                     accessibilityConnected = uiState.sessionState.accessibilityConnected,
                     onSaveKey = { onEvent(ClauneUiEvent.UpdateAnthropicKey(it)) },
                     onOpenAccessibilitySettings = { onEvent(ClauneUiEvent.OpenAccessibilitySettings) },
                     onDebugOverlayVisibleChanged = { onEvent(ClauneUiEvent.SetDebugOverlayVisible(it)) },
+                    onNavigateBack = { navController.navigateUp() },
                 )
             }
         }
@@ -297,29 +320,36 @@ private fun SessionChooserHomeScreen(
     onOpenSettings: () -> Unit,
 ) {
     val isReady = settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
-    Box(
-        modifier =
-        Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(SoftKraftPalette.Background, SoftKraftPalette.BackgroundDeep),
-                ),
-            ),
-    ) {
+    Scaffold(
+        topBar = {
+            ClauneTopAppBar(
+                title = "Claune",
+                primaryActionLabel = "Settings",
+                onPrimaryAction = onOpenSettings,
+            )
+        },
+        containerColor = SoftKraftPalette.Background,
+    ) { innerPadding ->
         LazyColumn(
             modifier =
             Modifier
                 .fillMaxSize()
-                .statusBarsPadding(),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(SoftKraftPalette.Background, SoftKraftPalette.BackgroundDeep),
+                    ),
+                ),
+            contentPadding =
+            PaddingValues(
+                start = 20.dp,
+                top = innerPadding.calculateTopPadding() + 16.dp,
+                end = 20.dp,
+                bottom = innerPadding.calculateBottomPadding() + 24.dp,
+            ),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item {
-                IdleHeader(
-                    isReady = isReady,
-                    onOpenSettings = onOpenSettings,
-                )
+                IdleHeader(isReady = isReady)
             }
 
             if (!isReady) {
@@ -362,7 +392,6 @@ private fun SessionDetailScreen(
     previewGoal: String,
     isListening: Boolean,
     listeningElapsedSeconds: Int,
-    listeningLevel: Float,
     listeningError: String?,
     autoFocusInput: Boolean,
     onGoalChanged: (String) -> Unit,
@@ -370,12 +399,22 @@ private fun SessionDetailScreen(
     onStartVoiceCapture: () -> Unit,
     onStopVoiceCapture: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenSessions: () -> Unit,
     onStopSession: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val canEdit = settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
     val canSend = goal.isNotBlank() && settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
+    val inputHelpText =
+        when {
+            settingsState.anthropicApiKey.isBlank() -> "Add an Anthropic API key before starting."
+            !sessionState.accessibilityConnected -> "Turn on accessibility access before starting."
+            else -> "Claune starts only after you tap Start on phone."
+        }
+    val statusBannerText = sessionStatusBannerText(sessionState.status, sessionState.lastKnownApp)
+    val visibleSessionDetail = sessionDetail?.takeIf { it.summary.path == sessionState.selectedSessionPath }
+    val visibleChatEntries = visibleSessionDetail?.entries.orEmpty().filter(::isChatTranscriptEntry)
 
     LaunchedEffect(autoFocusInput, isListening) {
         if (autoFocusInput && !isListening) {
@@ -384,26 +423,69 @@ private fun SessionDetailScreen(
         }
     }
 
-    Column(
-        modifier =
-        Modifier
-            .fillMaxSize()
-            .background(SoftKraftPalette.Background)
-            .statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        SessionDetailHeader(
-            title = sessionState.selectedSessionTitle ?: "Session",
-            status = sessionState.status,
-            lastKnownApp = sessionState.lastKnownApp,
-            onOpenSettings = onOpenSettings,
-        )
-
+    Scaffold(
+        topBar = {
+            ClauneTopAppBar(
+                title = sessionState.selectedSessionTitle ?: "Session",
+                primaryActionLabel = "Settings",
+                onPrimaryAction = onOpenSettings,
+                secondaryActionLabel = "Sessions",
+                onSecondaryAction = onOpenSessions,
+            )
+        },
+        bottomBar = {
+            Surface(
+                modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .imePadding(),
+                color = SoftKraftPalette.Background,
+                tonalElevation = 2.dp,
+                shadowElevation = 8.dp,
+            ) {
+                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    SessionComposerCard(
+                        goal = goal,
+                        previewGoal = previewGoal,
+                        isListening = isListening,
+                        listeningElapsedSeconds = listeningElapsedSeconds,
+                        listeningError = listeningError,
+                        canEdit = canEdit && !isListening,
+                        canSend = canSend && !isListening,
+                        canStop = sessionState.status == SessionStatus.Running,
+                        inputHelpText = inputHelpText,
+                        focusRequester = focusRequester,
+                        onGoalChanged = onGoalChanged,
+                        onSendMessage = onSendMessage,
+                        onStartVoiceCapture = onStartVoiceCapture,
+                        onStopVoiceCapture = onStopVoiceCapture,
+                        onStopSession = onStopSession,
+                    )
+                }
+            }
+        },
+        containerColor = SoftKraftPalette.Background,
+    ) { innerPadding ->
         LazyColumn(
-            modifier = Modifier.weight(1f),
+            modifier =
+            Modifier
+                .fillMaxSize()
+                .background(SoftKraftPalette.Background),
+            contentPadding =
+            PaddingValues(
+                start = 20.dp,
+                top = innerPadding.calculateTopPadding() + 16.dp,
+                end = 20.dp,
+                bottom = innerPadding.calculateBottomPadding() + 16.dp,
+            ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (statusBannerText != null) {
+                item {
+                    SessionStatusBanner(statusBannerText)
+                }
+            }
             if (sessionState.isCompacting) {
                 item {
                     SessionSystemChip("Compacting context…")
@@ -414,456 +496,102 @@ private fun SessionDetailScreen(
                     SessionSystemChip("Queued steering: ${sessionState.pendingSteeringCount}")
                 }
             }
-            if (sessionDetail == null) {
+            if (visibleSessionDetail == null || visibleChatEntries.isEmpty()) {
                 item {
                     SessionEmptyState()
                 }
             } else {
-                items(sessionDetail.entries) { entry ->
+                items(visibleChatEntries) { entry ->
                     SessionTranscriptRow(entry = entry)
                 }
             }
         }
-
-        SessionComposerCard(
-            goal = goal,
-            previewGoal = previewGoal,
-            isListening = isListening,
-            listeningElapsedSeconds = listeningElapsedSeconds,
-            listeningLevel = listeningLevel,
-            listeningError = listeningError,
-            canEdit = canEdit && !isListening,
-            canSend = canSend && !isListening,
-            canStop = sessionState.status == SessionStatus.Running,
-            focusRequester = focusRequester,
-            onGoalChanged = onGoalChanged,
-            onSendMessage = onSendMessage,
-            onStartVoiceCapture = onStartVoiceCapture,
-            onStopVoiceCapture = onStopVoiceCapture,
-            onStopSession = onStopSession,
-        )
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SoftKraftHomeScreen(
-    sessionState: SessionUiState,
-    settingsState: SettingsState,
-    historyEntries: List<SessionHistoryEntry>,
-    mode: HomeMode,
-    goal: String,
-    voiceUiState: VoiceUiState,
-    autoFocusInput: Boolean,
-    onGoalChanged: (String) -> Unit,
-    onReuseGoal: (String) -> Unit,
-    onSelectSession: (String) -> Unit,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    onOpenTyping: () -> Unit,
-    onStartVoiceCapture: () -> Unit,
-    onStopVoiceCapture: () -> Unit,
-    onOpenAccessibilitySettings: () -> Unit,
-    onOpenSettings: () -> Unit,
+private fun ClauneTopAppBar(
+    title: String,
+    primaryActionLabel: String? = null,
+    onPrimaryAction: (() -> Unit)? = null,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null,
 ) {
-    val gradient =
-        remember {
-            Brush.verticalGradient(
-                colors = listOf(SoftKraftPalette.Background, SoftKraftPalette.BackgroundDeep),
-            )
-        }
-    val isReady = settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
-
-    Box(
-        modifier =
-        Modifier
-            .fillMaxSize()
-            .background(gradient),
-    ) {
-        when (mode) {
-            HomeMode.Idle ->
-                IdleHomeScreen(
-                    sessionState = sessionState,
-                    settingsState = settingsState,
-                    historyEntries = historyEntries,
-                    isReady = isReady,
-                    onReuseGoal = onReuseGoal,
-                    onSelectSession = onSelectSession,
-                    onOpenTyping = onOpenTyping,
-                    onStartVoiceCapture = onStartVoiceCapture,
-                    onOpenAccessibilitySettings = onOpenAccessibilitySettings,
-                    onOpenSettings = onOpenSettings,
-                )
-
-            HomeMode.Composer ->
-                TaskComposerScreen(
-                    goal = goal,
-                    previewGoal = voiceUiState.previewTranscript,
-                    isListening = voiceUiState.isListening,
-                    listeningElapsedSeconds = voiceUiState.elapsedSeconds,
-                    listeningLevel = voiceUiState.level,
-                    listeningError = voiceUiState.errorMessage,
-                    autoFocusInput = autoFocusInput,
-                    canEdit = !sessionState.foregroundServiceRunning && isReady,
-                    canStart = goal.isNotBlank() && !sessionState.foregroundServiceRunning && isReady,
-                    canStop = sessionState.foregroundServiceRunning,
-                    onGoalChanged = onGoalChanged,
-                    onStartVoiceCapture = onStartVoiceCapture,
-                    onStopVoiceCapture = onStopVoiceCapture,
-                    onStart = onStart,
-                    onStop = onStop,
-                )
-        }
-    }
-}
-
-@Composable
-private fun IdleHomeScreen(
-    sessionState: SessionUiState,
-    settingsState: SettingsState,
-    historyEntries: List<SessionHistoryEntry>,
-    isReady: Boolean,
-    onReuseGoal: (String) -> Unit,
-    onSelectSession: (String) -> Unit,
-    onOpenTyping: () -> Unit,
-    onStartVoiceCapture: () -> Unit,
-    onOpenAccessibilitySettings: () -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier =
-            Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .testTag("main_feed"),
-            contentPadding =
-            PaddingValues(
-                start = 20.dp,
-                top = 24.dp,
-                end = 20.dp,
-                bottom = 164.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            item {
-                IdleHeader(
-                    isReady = isReady,
-                    onOpenSettings = onOpenSettings,
-                )
-            }
-
-            if (!isReady) {
-                item {
-                    SetupRunwayCard(
-                        hasApiKey = settingsState.anthropicApiKey.isNotBlank(),
-                        accessibilityConnected = sessionState.accessibilityConnected,
-                        onOpenSettings = onOpenSettings,
-                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
-                    )
-                }
-            } else {
-                val latestEntry = historyEntries.firstOrNull { it.goal.isNotBlank() }
-                latestEntry?.let { latest ->
-                    item {
-                        ContinueSessionCard(
-                            entry = latest,
-                            onReuseGoal = {
-                                onSelectSession(latest.sessionPath)
-                                onReuseGoal(latest.goal)
-                            },
-                        )
-                    }
-                }
-
-                val recentEntries =
-                    if (latestEntry != null) {
-                        historyEntries.filterNot {
-                            it.sessionId == latestEntry.sessionId || it.goal == latestEntry.goal
-                        }
-                    } else {
-                        historyEntries
-                    }
-
-                if (recentEntries.isNotEmpty()) {
-                    item {
-                        SectionLabel("Recent")
-                    }
-                }
-
-                items(recentEntries.take(3)) { entry ->
-                    SessionHistoryRow(
-                        entry = entry,
-                        onReuseGoal = {
-                            onSelectSession(entry.sessionPath)
-                            onReuseGoal(entry.goal)
-                        },
-                    )
-                }
-            }
-        }
-
-        if (isReady) {
-            IdleDock(
-                modifier =
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 14.dp)
-                    .navigationBarsPadding()
-                    .padding(bottom = 16.dp),
-                listeningEnabled = !sessionState.foregroundServiceRunning,
-                onOpenTyping = onOpenTyping,
-                onStartVoiceCapture = onStartVoiceCapture,
-            )
-        }
-    }
-}
-
-@Composable
-private fun IdleHeader(isReady: Boolean, onOpenSettings: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (!isReady) {
-                SectionLabel("Setup")
-            }
+    TopAppBar(
+        title = {
             Text(
-                text =
-                if (isReady) {
-                    "what do you\nneed done?"
-                } else {
-                    "before we\nstart"
-                },
-                style = MaterialTheme.typography.headlineLarge,
+                text = title,
                 color = SoftKraftPalette.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (!isReady) {
-                Text(
-                    text = "Finish these two steps and Claune will be ready to use your phone.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = SoftKraftPalette.InkSoft,
-                )
+        },
+        actions = {
+            if (secondaryActionLabel != null && onSecondaryAction != null) {
+                TextButton(onClick = onSecondaryAction) {
+                    Text(secondaryActionLabel, color = SoftKraftPalette.AccentDeep)
+                }
             }
-        }
-
-        TextButton(onClick = onOpenSettings) {
-            Text(
-                text = "Settings",
-                color = SoftKraftPalette.AccentDeep,
-                fontFamily = FontFamily.Monospace,
-            )
-        }
-    }
+            if (primaryActionLabel != null && onPrimaryAction != null) {
+                TextButton(onClick = onPrimaryAction) {
+                    Text(primaryActionLabel, color = SoftKraftPalette.AccentDeep)
+                }
+            }
+        },
+        colors =
+        TopAppBarDefaults.topAppBarColors(
+            containerColor = SoftKraftPalette.Background,
+            titleContentColor = SoftKraftPalette.Ink,
+            actionIconContentColor = SoftKraftPalette.AccentDeep,
+        ),
+    )
 }
 
 @Composable
-private fun IdleDock(modifier: Modifier = Modifier, listeningEnabled: Boolean, onOpenTyping: () -> Unit, onStartVoiceCapture: () -> Unit) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Card(
-            modifier =
-            Modifier
-                .weight(1f)
-                .shadow(
-                    elevation = 22.dp,
-                    shape = RoundedCornerShape(34.dp),
-                    ambientColor = SoftKraftPalette.AccentDeep.copy(alpha = 0.14f),
-                    spotColor = SoftKraftPalette.Ink.copy(alpha = 0.1f),
-                )
-                .alpha(if (listeningEnabled) 1f else 0.6f)
-                .clickable(enabled = listeningEnabled, onClick = onStartVoiceCapture),
-            shape = RoundedCornerShape(34.dp),
-            colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
-        ) {
-            Row(
-                modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 22.dp, vertical = 18.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "MIC",
-                    color = SoftKraftPalette.InkSoft,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                )
-                Spacer(modifier = Modifier.size(10.dp))
-                Text(
-                    text = "tap to talk",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = SoftKraftPalette.Ink,
-                )
-            }
-        }
-
-        Card(
-            modifier =
-            Modifier
-                .size(68.dp)
-                .clickable(onClick = onOpenTyping),
-            shape = CircleShape,
-            colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
-        ) {
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                Text(
-                    text = "TYPE",
-                    color = SoftKraftPalette.InkSoft,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TaskComposerScreen(
-    goal: String,
-    previewGoal: String,
-    isListening: Boolean,
-    listeningElapsedSeconds: Int,
-    listeningLevel: Float,
-    listeningError: String?,
-    autoFocusInput: Boolean,
-    canEdit: Boolean,
-    canStart: Boolean,
-    canStop: Boolean,
-    onGoalChanged: (String) -> Unit,
-    onStartVoiceCapture: () -> Unit,
-    onStopVoiceCapture: () -> Unit,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-) {
-    val focusRequester = remember { FocusRequester() }
-    val keyboardController = LocalSoftwareKeyboardController.current
-
-    LaunchedEffect(autoFocusInput, isListening) {
-        if (autoFocusInput && !isListening) {
-            focusRequester.requestFocus()
-            keyboardController?.show()
-        }
-    }
-
-    Column(
+private fun SessionStatusBanner(text: String) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceMuted),
         modifier =
         Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .fillMaxWidth()
+            .border(1.dp, SoftKraftPalette.RuleSoft, RoundedCornerShape(18.dp)),
     ) {
-        ComposerTopBar(
-            statusText = if (isListening) "Listening · ${elapsedLabel(listeningElapsedSeconds)}" else null,
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = SoftKraftPalette.InkSoft,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
         )
-        Card(
-            modifier =
-            Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .shadow(
-                    elevation = 22.dp,
-                    shape = RoundedCornerShape(30.dp),
-                    ambientColor = SoftKraftPalette.AccentDeep.copy(alpha = 0.14f),
-                    spotColor = SoftKraftPalette.Ink.copy(alpha = 0.1f),
-                ),
-            shape = RoundedCornerShape(30.dp),
-            colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
-        ) {
-            Column(
-                modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                ComposerVoiceHero(
-                    isListening = isListening,
-                    level = listeningLevel,
-                )
-                BasicTextField(
-                    value = if (isListening) previewGoal.ifBlank { goal } else goal,
-                    onValueChange = onGoalChanged,
-                    enabled = canEdit && !isListening,
-                    textStyle =
-                    TextStyle(
-                        color = SoftKraftPalette.Ink,
-                        fontSize = 28.sp,
-                        lineHeight = 34.sp,
-                    ),
-                    modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .focusRequester(focusRequester)
-                        .testTag("goal_input"),
-                    decorationBox = { innerTextField ->
-                        Box(
-                            modifier =
-                            Modifier
-                                .fillMaxSize()
-                                .background(SoftKraftPalette.SurfaceInput, RoundedCornerShape(24.dp))
-                                .border(1.dp, SoftKraftPalette.Rule, RoundedCornerShape(24.dp))
-                                .padding(horizontal = 18.dp, vertical = 18.dp),
-                        ) {
-                            if ((if (isListening) previewGoal.ifBlank { goal } else goal).isBlank()) {
-                                Text(
-                                    text = "Tell Claune what you need done.",
-                                    style = MaterialTheme.typography.headlineLarge,
-                                    color = SoftKraftPalette.InkFaint,
-                                )
-                            }
-                            innerTextField()
-                        }
-                    },
-                )
+    }
+}
 
-                listeningError?.let { message ->
-                    Text(
-                        text = message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SoftKraftPalette.Warning,
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedButton(
-                        onClick = if (isListening) onStopVoiceCapture else onStartVoiceCapture,
-                    ) {
-                        Text(if (isListening) "Stop voice" else "Use voice")
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    if (canStop) {
-                        OutlinedButton(onClick = onStop) {
-                            Text("Stop")
-                        }
-                    } else {
-                        Button(
-                            onClick = onStart,
-                            enabled = canStart && !isListening,
-                            colors =
-                            ButtonDefaults.buttonColors(
-                                containerColor = SoftKraftPalette.Accent,
-                                contentColor = SoftKraftPalette.Background,
-                            ),
-                        ) {
-                            Text("Start")
-                        }
-                    }
-                }
-            }
+@Composable
+private fun IdleHeader(isReady: Boolean) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (!isReady) {
+            SectionLabel("Setup")
+        }
+        Text(
+            text =
+            if (isReady) {
+                "what do you\nneed done?"
+            } else {
+                "before we\nstart"
+            },
+            style = MaterialTheme.typography.headlineLarge,
+            color = SoftKraftPalette.Ink,
+        )
+        if (!isReady) {
+            Text(
+                text = "Finish these two steps and Claune will be ready to use your phone.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = SoftKraftPalette.InkSoft,
+            )
         }
     }
 }
@@ -883,64 +611,6 @@ private fun ComposerTopBar(statusText: String?) {
                 fontSize = 11.sp,
                 letterSpacing = 1.4.sp,
             )
-        }
-    }
-}
-
-@Composable
-private fun ComposerVoiceHero(isListening: Boolean, level: Float) {
-    val bars =
-        remember(isListening, level) {
-            val scale = if (isListening) (0.82f + (level / 12f)).coerceIn(0.82f, 1.35f) else 0.42f
-            listOf(0.22f, 0.34f, 0.48f, 0.62f, 0.76f, 0.9f, 1f, 0.86f, 0.7f, 0.56f, 0.42f, 0.3f)
-                .map { base -> (base * scale).coerceIn(0.12f, 1f) }
-        }
-
-    Box(
-        modifier =
-        Modifier
-            .fillMaxWidth()
-            .height(148.dp)
-            .background(
-                if (isListening) {
-                    SoftKraftPalette.AccentSoft.copy(alpha = 0.32f)
-                } else {
-                    SoftKraftPalette.AccentSoft.copy(alpha = 0.16f)
-                },
-                RoundedCornerShape(22.dp),
-            )
-            .border(
-                1.dp,
-                if (isListening) {
-                    SoftKraftPalette.Accent.copy(alpha = 0.22f)
-                } else {
-                    SoftKraftPalette.RuleSoft
-                },
-                RoundedCornerShape(22.dp),
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            bars.forEachIndexed { index, bar ->
-                Box(
-                    modifier =
-                    Modifier
-                        .padding(horizontal = 4.dp)
-                        .height((bar * 72f).dp)
-                        .width(6.dp)
-                        .background(
-                            if (index == bars.size / 2 || index == (bars.size / 2) - 1) {
-                                SoftKraftPalette.AccentDeep.copy(alpha = if (isListening) 1f else 0.72f)
-                            } else {
-                                SoftKraftPalette.Accent.copy(alpha = if (isListening) 0.78f else 0.42f)
-                            },
-                            RoundedCornerShape(12.dp),
-                        ),
-                )
-            }
         }
     }
 }
@@ -990,83 +660,30 @@ private fun SetupRunwayCard(
 }
 
 @Composable
-private fun ContinueSessionCard(entry: SessionHistoryEntry, onReuseGoal: () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceMuted),
-        modifier =
-        Modifier.fillMaxWidth().border(
-            1.dp,
-            SoftKraftPalette.Rule,
-            RoundedCornerShape(24.dp),
-        ),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            SectionLabel("Pick up where you left off")
-            Text(
-                text = entry.goal,
-                style = MaterialTheme.typography.titleMedium,
-                color = SoftKraftPalette.Ink,
-                maxLines = 2,
-            )
-            Text(
-                text = entry.summary,
-                style = MaterialTheme.typography.bodyMedium,
-                color = SoftKraftPalette.InkSoft,
-                maxLines = 2,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onReuseGoal),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Text(
-                    text = "→",
-                    color = SoftKraftPalette.AccentDeep,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun SessionHistoryRow(entry: SessionHistoryEntry, onReuseGoal: () -> Unit) {
-    Row(
-        modifier =
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onReuseGoal)
-            .padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+    ListItem(
+        headlineContent = {
             Text(
                 text = entry.goal.ifBlank { entry.summary },
                 style = MaterialTheme.typography.bodyLarge,
                 color = SoftKraftPalette.Ink,
                 maxLines = 2,
             )
-        }
-        Text(
-            text = "→",
-            color = SoftKraftPalette.InkSoft,
-            style = MaterialTheme.typography.titleMedium,
-        )
-    }
-    Box(
+        },
+        trailingContent = {
+            Text(
+                text = "→",
+                color = SoftKraftPalette.InkSoft,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        },
+        colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.Background),
         modifier =
         Modifier
             .fillMaxWidth()
-            .height(1.dp)
-            .background(SoftKraftPalette.RuleSoft.copy(alpha = 0.7f)),
-    ) { }
+            .clickable(onClick = onReuseGoal),
+    )
+    HorizontalDivider(color = SoftKraftPalette.RuleSoft.copy(alpha = 0.7f))
 }
 
 @Composable
@@ -1076,6 +693,7 @@ private fun SettingsScreen(
     onSaveKey: (String) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onDebugOverlayVisibleChanged: (Boolean) -> Unit,
+    onNavigateBack: () -> Unit,
 ) {
     var apiKeyDraft by rememberSaveable { mutableStateOf(settingsState.anthropicApiKey) }
     var showKey by rememberSaveable { mutableStateOf(false) }
@@ -1085,19 +703,33 @@ private fun SettingsScreen(
         apiKeyDraft = settingsState.anthropicApiKey
     }
 
-    LazyColumn(
-        modifier =
-        Modifier
-            .fillMaxSize()
-            .background(SoftKraftPalette.Background)
-            .statusBarsPadding(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-    ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Scaffold(
+        topBar = {
+            ClauneTopAppBar(
+                title = "Settings",
+                primaryActionLabel = "Done",
+                onPrimaryAction = onNavigateBack,
+            )
+        },
+        containerColor = SoftKraftPalette.Background,
+    ) { innerPadding ->
+        LazyColumn(
+            modifier =
+            Modifier
+                .fillMaxSize()
+                .background(SoftKraftPalette.Background)
+                .imePadding(),
+            contentPadding =
+            PaddingValues(
+                start = 20.dp,
+                top = innerPadding.calculateTopPadding() + 16.dp,
+                end = 20.dp,
+                bottom = innerPadding.calculateBottomPadding() + 24.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("Settings")
                     Text(
                         text = "Control room",
                         style = MaterialTheme.typography.headlineLarge,
@@ -1110,95 +742,7 @@ private fun SettingsScreen(
                     )
                 }
             }
-        }
 
-        item {
-            Card(
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
-            ) {
-                Column(
-                    modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    SectionLabel("Anthropic key")
-                    Text(
-                        text = "The app now reads the API key from here instead of requiring a rebuild.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SoftKraftPalette.InkSoft,
-                    )
-                    OutlinedTextField(
-                        value = apiKeyDraft,
-                        onValueChange = { apiKeyDraft = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        shape = RoundedCornerShape(22.dp),
-                        label = { Text("Anthropic API key") },
-                        visualTransformation =
-                        if (showKey) {
-                            VisualTransformation.None
-                        } else {
-                            PasswordVisualTransformation()
-                        },
-                        keyboardOptions =
-                        androidx.compose.foundation.text.KeyboardOptions(
-                            capitalization = KeyboardCapitalization.None,
-                            keyboardType = KeyboardType.Password,
-                        ),
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(
-                            onClick = { onSaveKey(apiKeyDraft) },
-                            colors =
-                            ButtonDefaults.buttonColors(
-                                containerColor = SoftKraftPalette.Accent,
-                                contentColor = SoftKraftPalette.Background,
-                            ),
-                        ) {
-                            Text("Save key")
-                        }
-                        OutlinedButton(onClick = { showKey = !showKey }) {
-                            Text(if (showKey) "Hide" else "Show")
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
-            ) {
-                Column(
-                    modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    SectionLabel("Phone control")
-                    Text(
-                        text =
-                        if (accessibilityConnected) {
-                            "Claune accessibility is connected. No action needed."
-                        } else {
-                            "Claune accessibility is off. Enable it before starting a live run."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = SoftKraftPalette.InkSoft,
-                    )
-                    OutlinedButton(onClick = onOpenAccessibilitySettings) {
-                        Text("Open accessibility settings")
-                    }
-                }
-            }
-        }
-
-        if (BuildConfig.DEBUG) {
             item {
                 Card(
                     shape = RoundedCornerShape(28.dp),
@@ -1211,20 +755,118 @@ private fun SettingsScreen(
                             .padding(18.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        SectionLabel("Debug")
+                        SectionLabel("Anthropic key")
                         Text(
-                            text = "Show the same accessibility overlay without starting an agent run.",
+                            text = "The app now reads the API key from here instead of requiring a rebuild.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = SoftKraftPalette.InkSoft,
                         )
-                        OutlinedButton(
-                            onClick = {
-                                debugOverlayVisible = !debugOverlayVisible
-                                onDebugOverlayVisibleChanged(debugOverlayVisible)
+                        OutlinedTextField(
+                            value = apiKeyDraft,
+                            onValueChange = { apiKeyDraft = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 2,
+                            shape = RoundedCornerShape(22.dp),
+                            label = { Text("Anthropic API key") },
+                            visualTransformation =
+                            if (showKey) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
                             },
-                            enabled = accessibilityConnected,
+                            keyboardOptions =
+                            KeyboardOptions(
+                                capitalization = KeyboardCapitalization.None,
+                                keyboardType = KeyboardType.Password,
+                            ),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(
+                                onClick = { onSaveKey(apiKeyDraft) },
+                                colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor = SoftKraftPalette.Accent,
+                                    contentColor = SoftKraftPalette.Background,
+                                ),
+                            ) {
+                                Text("Save key")
+                            }
+                            OutlinedButton(onClick = { showKey = !showKey }) {
+                                Text(if (showKey) "Hide" else "Show")
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
+                ) {
+                    Column(
+                        modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        SectionLabel("Phone control")
+                        Text(
+                            text =
+                            if (accessibilityConnected) {
+                                "Claune accessibility is connected. No action needed."
+                            } else {
+                                "Claune accessibility is off. Enable it before starting a live run."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SoftKraftPalette.InkSoft,
+                        )
+                        OutlinedButton(onClick = onOpenAccessibilitySettings) {
+                            Text("Open accessibility settings")
+                        }
+                    }
+                }
+            }
+
+            if (BuildConfig.DEBUG) {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(28.dp),
+                        colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.Surface),
+                    ) {
+                        Column(
+                            modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Text(if (debugOverlayVisible) "Hide test overlay" else "Show test overlay")
+                            SectionLabel("Debug")
+                            Text(
+                                text = "Show the same accessibility overlay without starting an agent run.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = SoftKraftPalette.InkSoft,
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "Test overlay",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = SoftKraftPalette.Ink,
+                                )
+                                Switch(
+                                    checked = debugOverlayVisible,
+                                    onCheckedChange = { visible ->
+                                        debugOverlayVisible = visible
+                                        onDebugOverlayVisibleChanged(visible)
+                                    },
+                                    enabled = accessibilityConnected,
+                                )
+                            }
                         }
                     }
                 }
@@ -1240,71 +882,27 @@ private fun NewSessionCard(onCreateSession: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onCreateSession)
-                .padding(horizontal = 18.dp, vertical = 18.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        ListItem(
+            overlineContent = {
                 SectionLabel("New session")
+            },
+            headlineContent = {
                 Text(
                     text = "Start something new",
                     style = MaterialTheme.typography.titleMedium,
                     color = SoftKraftPalette.Ink,
                 )
-            }
-            Text(
-                text = "→",
-                color = SoftKraftPalette.AccentDeep,
-                style = MaterialTheme.typography.titleLarge,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SessionDetailHeader(title: String, status: SessionStatus, lastKnownApp: String?, onOpenSettings: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionLabel("Session")
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                color = SoftKraftPalette.Ink,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val statusLine =
-                when (status) {
-                    SessionStatus.Running -> "Working${lastKnownApp?.let { " in $it" } ?: ""}"
-                    SessionStatus.Blocked -> "Blocked"
-                    SessionStatus.Completed -> "Done"
-                    SessionStatus.Cancelled -> "Stopped"
-                    SessionStatus.Paused -> "Paused"
-                    SessionStatus.Idle -> "Ready"
-                }
-            Text(
-                text = statusLine,
-                style = MaterialTheme.typography.bodyMedium,
-                color = SoftKraftPalette.InkSoft,
-            )
-        }
-
-        TextButton(onClick = onOpenSettings) {
-            Text(
-                text = "Settings",
-                color = SoftKraftPalette.AccentDeep,
-                fontFamily = FontFamily.Monospace,
-            )
-        }
+            },
+            trailingContent = {
+                Text(
+                    text = "→",
+                    color = SoftKraftPalette.AccentDeep,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            },
+            colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.SurfaceRaised),
+            modifier = Modifier.clickable(onClick = onCreateSession),
+        )
     }
 }
 
@@ -1352,34 +950,75 @@ private fun SessionEmptyState() {
 
 @Composable
 private fun SessionTranscriptRow(entry: PersistedSessionDetailEntry) {
+    val isUser = entry.kind == PersistedSessionDetailKind.User
     val background =
-        when (entry.kind) {
-            PersistedSessionDetailKind.User -> SoftKraftPalette.SurfaceRaised
-            PersistedSessionDetailKind.Assistant -> SoftKraftPalette.Surface
-            PersistedSessionDetailKind.Tool -> SoftKraftPalette.SurfaceMuted
-            PersistedSessionDetailKind.Custom,
-            PersistedSessionDetailKind.Compaction,
-            PersistedSessionDetailKind.BranchSummary,
-            PersistedSessionDetailKind.System,
-            -> SoftKraftPalette.SurfaceMuted
+        if (isUser) {
+            SoftKraftPalette.AccentSoft.copy(alpha = 0.7f)
+        } else {
+            SoftKraftPalette.Surface
         }
-    Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = background),
+    val shape =
+        if (isUser) {
+            RoundedCornerShape(topStart = 22.dp, topEnd = 8.dp, bottomStart = 22.dp, bottomEnd = 22.dp)
+        } else {
+            RoundedCornerShape(topStart = 8.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 22.dp)
+        }
+    Row(
         modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+        Card(
+            shape = shape,
+            colors = CardDefaults.cardColors(containerColor = background),
+            modifier = Modifier.fillMaxWidth(if (isUser) 0.84f else 0.94f),
         ) {
-            SectionLabel(entry.title)
-            Text(
-                text = entry.body,
-                style = MaterialTheme.typography.bodyLarge,
-                color = SoftKraftPalette.Ink,
-            )
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                SectionLabel(
+                    text = entry.title,
+                    modifier =
+                    if (isUser) {
+                        Modifier.align(Alignment.End)
+                    } else {
+                        Modifier
+                    },
+                )
+                MarkdownText(
+                    markdown = entry.body,
+                    color = SoftKraftPalette.Ink,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
+}
+
+private fun isChatTranscriptEntry(entry: PersistedSessionDetailEntry): Boolean =
+    entry.kind == PersistedSessionDetailKind.User || entry.kind == PersistedSessionDetailKind.Assistant
+
+@Composable
+private fun MarkdownText(markdown: String, color: Color, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val markwon = remember(context) { MarkdownRenderer.create(context) }
+    AndroidView(
+        modifier = modifier,
+        factory = { viewContext ->
+            TextView(viewContext).apply {
+                includeFontPadding = false
+                textSize = 16f
+                setLineSpacing(0f, 1.08f)
+                setTextColor(color.toArgb())
+                setLinkTextColor(SoftKraftPalette.AccentDeep.toArgb())
+            }
+        },
+        update = { textView ->
+            textView.setTextColor(color.toArgb())
+            textView.setLinkTextColor(SoftKraftPalette.AccentDeep.toArgb())
+            MarkdownRenderer.render(markwon, textView, markdown)
+        },
+    )
 }
 
 @Composable
@@ -1388,11 +1027,11 @@ private fun SessionComposerCard(
     previewGoal: String,
     isListening: Boolean,
     listeningElapsedSeconds: Int,
-    listeningLevel: Float,
     listeningError: String?,
     canEdit: Boolean,
     canSend: Boolean,
     canStop: Boolean,
+    inputHelpText: String,
     focusRequester: FocusRequester,
     onGoalChanged: (String) -> Unit,
     onSendMessage: () -> Unit,
@@ -1400,18 +1039,13 @@ private fun SessionComposerCard(
     onStopVoiceCapture: () -> Unit,
     onStopSession: () -> Unit,
 ) {
+    val visibleGoal = if (isListening) previewGoal.ifBlank { goal } else goal
+
     Card(
         shape = RoundedCornerShape(30.dp),
         colors = CardDefaults.cardColors(containerColor = SoftKraftPalette.SurfaceRaised),
-        modifier =
-        Modifier
-            .fillMaxWidth()
-            .shadow(
-                elevation = 18.dp,
-                shape = RoundedCornerShape(30.dp),
-                ambientColor = SoftKraftPalette.AccentDeep.copy(alpha = 0.12f),
-                spotColor = SoftKraftPalette.Ink.copy(alpha = 0.08f),
-            ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -1420,47 +1054,55 @@ private fun SessionComposerCard(
             if (isListening) {
                 ComposerTopBar("Listening · ${elapsedLabel(listeningElapsedSeconds)}")
             }
-            ComposerVoiceHero(isListening = isListening, level = listeningLevel)
-            BasicTextField(
-                value = if (isListening) previewGoal.ifBlank { goal } else goal,
+            OutlinedTextField(
+                value = visibleGoal,
                 onValueChange = onGoalChanged,
-                enabled = canEdit,
-                textStyle = TextStyle(color = SoftKraftPalette.Ink, fontSize = 24.sp, lineHeight = 30.sp),
+                enabled = canEdit || isListening,
+                readOnly = isListening,
+                label = { Text("Instruction") },
+                placeholder = { Text("What should Claune do on your phone?") },
+                supportingText = {
+                    Text(
+                        text =
+                        listeningError
+                            ?: if (isListening) {
+                                "Tap Done to review the text before Claune starts using the phone."
+                            } else {
+                                inputHelpText
+                            },
+                    )
+                },
+                isError = listeningError != null,
+                minLines = 3,
+                maxLines = 6,
+                shape = RoundedCornerShape(22.dp),
+                textStyle = MaterialTheme.typography.bodyLarge,
+                keyboardOptions =
+                KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Sentences,
+                    imeAction = ImeAction.Send,
+                ),
+                keyboardActions =
+                KeyboardActions(
+                    onSend = {
+                        if (canSend) {
+                            onSendMessage()
+                        }
+                    },
+                ),
                 modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(132.dp)
                     .focusRequester(focusRequester)
-                    .background(SoftKraftPalette.SurfaceInput, RoundedCornerShape(22.dp))
-                    .border(1.dp, SoftKraftPalette.Rule, RoundedCornerShape(22.dp))
-                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                decorationBox = { innerTextField ->
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        if ((if (isListening) previewGoal.ifBlank { goal } else goal).isBlank()) {
-                            Text(
-                                text = "Tell Claune what you need done.",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = SoftKraftPalette.InkFaint,
-                            )
-                        }
-                        innerTextField()
-                    }
-                },
+                    .testTag("goal_input"),
             )
-            listeningError?.let { message ->
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = SoftKraftPalette.Warning,
-                )
-            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(onClick = if (isListening) onStopVoiceCapture else onStartVoiceCapture) {
-                    Text(if (isListening) "Stop voice" else "Use voice")
+                    Text(if (isListening) "Done" else "Voice")
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 if (canStop) {
@@ -1477,7 +1119,7 @@ private fun SessionComposerCard(
                         contentColor = SoftKraftPalette.Background,
                     ),
                 ) {
-                    Text("Send")
+                    Text("Start on phone")
                 }
             }
         }
@@ -1485,13 +1127,14 @@ private fun SessionComposerCard(
 }
 
 @Composable
-private fun SectionLabel(text: String) {
+private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercase(),
         color = SoftKraftPalette.InkFaint,
         fontFamily = FontFamily.Monospace,
         fontSize = 11.sp,
         letterSpacing = 1.4.sp,
+        modifier = modifier,
     )
 }
 
@@ -1499,7 +1142,6 @@ private data class VoiceUiState(
     val transcript: String = "",
     val previewTranscript: String = "",
     val elapsedSeconds: Int = 0,
-    val level: Float = 0f,
     val isListening: Boolean = false,
     val errorMessage: String? = null,
     val startedAtMillis: Long = 0L,
@@ -1547,40 +1189,49 @@ private fun elapsedLabel(seconds: Int): String {
     return "%02d:%02d".format(minutes, remainder)
 }
 
+private fun sessionStatusBannerText(status: SessionStatus, lastKnownApp: String?): String? = when (status) {
+    SessionStatus.Running -> "Working${lastKnownApp?.let { " in $it" } ?: ""}"
+    SessionStatus.Blocked -> "Blocked"
+    SessionStatus.Paused -> "Paused"
+    SessionStatus.Completed,
+    SessionStatus.Cancelled,
+    SessionStatus.Idle,
+    -> null
+}
+
 @Composable
 private fun SetupStepRow(title: String, complete: Boolean, actionLabel: String, onAction: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
+    ListItem(
+        headlineContent = {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
                 color = SoftKraftPalette.Ink,
             )
+        },
+        supportingContent = {
             Text(
                 text = if (complete) "Ready" else "Needs attention",
                 color = SoftKraftPalette.InkSoft,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
             )
-        }
-        if (complete) {
-            Text(
-                text = "done",
-                color = SoftKraftPalette.AccentDeep,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-            )
-        } else {
-            TextButton(onClick = onAction) {
-                Text(actionLabel, color = SoftKraftPalette.AccentDeep)
+        },
+        trailingContent = {
+            if (complete) {
+                Text(
+                    text = "done",
+                    color = SoftKraftPalette.AccentDeep,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                )
+            } else {
+                TextButton(onClick = onAction) {
+                    Text(actionLabel, color = SoftKraftPalette.AccentDeep)
+                }
             }
-        }
-    }
+        },
+        colors = ListItemDefaults.colors(containerColor = SoftKraftPalette.SurfaceMuted),
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

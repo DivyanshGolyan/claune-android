@@ -3,8 +3,10 @@ package com.divyanshgolyan.claune.android.overlay
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.PixelFormat
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -16,6 +18,8 @@ import androidx.core.content.ContextCompat
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import com.divyanshgolyan.claune.android.service.ClauneAgentService
+import com.divyanshgolyan.claune.android.ui.MarkdownRenderer
+import io.noties.markwon.Markwon
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,11 +39,15 @@ class SessionOverlayController(
     private var titleView: TextView? = null
     private var bodyView: TextView? = null
     private var inputView: EditText? = null
+    private var overlayLayoutParams: WindowManager.LayoutParams? = null
+    private var overlayBottomOffsetPx = 0
+    private var markwon: Markwon? = null
     private var debugOverlayVisible = false
 
     fun attach(service: AccessibilityService) {
         this.service = service
         this.windowManager = service.getSystemService(WindowManager::class.java)
+        this.markwon = MarkdownRenderer.create(service)
         collectionJob?.cancel()
         collectionJob =
             scope.launch {
@@ -55,6 +63,7 @@ class SessionOverlayController(
         hide()
         service = null
         windowManager = null
+        markwon = null
     }
 
     fun setDebugOverlayVisible(visible: Boolean) {
@@ -72,10 +81,10 @@ class SessionOverlayController(
         }
         if (debugOverlayVisible) {
             titleView?.text = "Debug overlay"
-            bodyView?.text = "Test overlay is visible without an agent run."
+            renderBodyMarkdown("Test overlay is visible without an agent run.")
         } else {
             titleView?.text = state.activeSessionTitle ?: state.selectedSessionTitle ?: "Current session"
-            bodyView?.text = state.lastAssistantText.ifBlank { state.summaryLine }.take(220)
+            renderBodyMarkdown(state.lastAssistantText.ifBlank { state.summaryLine })
         }
     }
 
@@ -114,7 +123,10 @@ class SessionOverlayController(
             TextView(service).apply {
                 textSize = 13f
                 setTextColor(0xFF4A574D.toInt())
+                setLinkTextColor(0xFF1A3D28.toInt())
                 setPadding(0, dp(service, 6), 0, dp(service, 10))
+                maxLines = 5
+                ellipsize = TextUtils.TruncateAt.END
             }
         val input =
             EditText(service).apply {
@@ -135,6 +147,13 @@ class SessionOverlayController(
                         true
                     } else {
                         false
+                    }
+                }
+                setOnFocusChangeListener { _, hasFocus ->
+                    if (hasFocus) {
+                        overlay.requestApplyInsets()
+                    } else {
+                        updateOverlayBottomOffset(0)
                     }
                 }
             }
@@ -164,6 +183,13 @@ class SessionOverlayController(
         overlay.addView(input)
         overlay.addView(buttons)
 
+        overlay.setOnApplyWindowInsetsListener { _, insets ->
+            val imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
+            updateOverlayBottomOffset(imeBottom)
+            insets
+        }
+
+        overlayBottomOffsetPx = dp(service, 16)
         val layoutParams =
             WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -175,15 +201,20 @@ class SessionOverlayController(
             ).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
                 x = 0
-                y = dp(service, 16)
+                y = overlayBottomOffsetPx
                 horizontalMargin = 0.04f
+                softInputMode =
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED
             }
 
         manager.addView(overlay, layoutParams)
         overlayView = overlay
+        overlayLayoutParams = layoutParams
         titleView = title
         bodyView = body
         inputView = input
+        overlay.requestApplyInsets()
     }
 
     private fun hide() {
@@ -194,6 +225,28 @@ class SessionOverlayController(
         titleView = null
         bodyView = null
         inputView = null
+        overlayLayoutParams = null
+        overlayBottomOffsetPx = 0
+    }
+
+    private fun renderBodyMarkdown(markdown: String) {
+        val renderer = markwon ?: return
+        val body = bodyView ?: return
+        MarkdownRenderer.render(renderer, body, markdown)
+    }
+
+    private fun updateOverlayBottomOffset(imeBottom: Int) {
+        val manager = windowManager ?: return
+        val overlay = overlayView ?: return
+        val params = overlayLayoutParams ?: return
+        val nextY = overlayBottomOffsetPx + imeBottom
+        if (params.y == nextY) {
+            return
+        }
+        params.y = nextY
+        runCatching {
+            manager.updateViewLayout(overlay, params)
+        }
     }
 
     private fun submitSteerText() {

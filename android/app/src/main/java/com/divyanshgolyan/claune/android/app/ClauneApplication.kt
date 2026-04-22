@@ -1,20 +1,21 @@
 package com.divyanshgolyan.claune.android.app
 
-import android.app.Activity
 import android.app.Application
 import android.content.Context
-import android.os.Bundle
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.accessibility.AccessibilityBridge
 import com.divyanshgolyan.claune.android.data.local.ArtifactSessionLogStore
 import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
+import com.divyanshgolyan.claune.android.data.local.DataStoreSettingsStore
 import com.divyanshgolyan.claune.android.data.local.FileAgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.FileMemoryStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
-import com.divyanshgolyan.claune.android.data.local.SharedPreferencesSettingsStore
 import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
 import com.divyanshgolyan.claune.android.overlay.SessionOverlayController
 import com.divyanshgolyan.claune.android.runtime.AgentLoop
@@ -29,29 +30,15 @@ class ClauneApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        registerActivityLifecycleCallbacks(
-            object : ActivityLifecycleCallbacks {
-                private var startedCount = 0
-
-                override fun onActivityStarted(activity: Activity) {
-                    startedCount += 1
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) {
                     container.sessionCoordinator.setAppInForeground(true)
                 }
 
-                override fun onActivityStopped(activity: Activity) {
-                    startedCount = (startedCount - 1).coerceAtLeast(0)
-                    container.sessionCoordinator.setAppInForeground(startedCount > 0)
+                override fun onStop(owner: LifecycleOwner) {
+                    container.sessionCoordinator.setAppInForeground(false)
                 }
-
-                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-
-                override fun onActivityResumed(activity: Activity) = Unit
-
-                override fun onActivityPaused(activity: Activity) = Unit
-
-                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
-
-                override fun onActivityDestroyed(activity: Activity) = Unit
             },
         )
     }
@@ -64,7 +51,7 @@ class ClauneContainer(application: Application) {
     val memoryStore: MemoryStore = FileMemoryStore(File(application.filesDir, "memory.md"))
     val codingSessionStore = CodingSessionStore(cwd = application.filesDir.absolutePath, agentDir = agentDir)
     val settingsStore: SettingsStore =
-        SharedPreferencesSettingsStore(
+        DataStoreSettingsStore(
             context = application,
             defaultAnthropicApiKey = BuildConfig.ANTHROPIC_API_KEY,
         )

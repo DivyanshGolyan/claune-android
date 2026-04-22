@@ -9,7 +9,6 @@ internal object SoftKraftPalette {
     val Surface = Color(0xFFFBF7F0)
     val SurfaceMuted = Color(0xFFF0E8DA)
     val SurfaceRaised = Color(0xFFFFFBF5)
-    val SurfaceInput = Color(0xFFF8F1E3)
     val Rule = Color(0xFFD4C9B0)
     val RuleSoft = Color(0xFFDDD3C1)
     val Ink = Color(0xFF1D2A22)

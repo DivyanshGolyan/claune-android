@@ -6,7 +6,6 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -28,19 +27,13 @@ class MainActivity : ComponentActivity() {
                 val clauneViewModel: ClauneViewModel = viewModel(factory = ClauneViewModel.Factory(container))
                 val uiState by clauneViewModel.uiState.collectAsStateWithLifecycle()
 
-                LaunchedEffect(clauneViewModel) {
-                    clauneViewModel.effects.collect { effect ->
-                        when (effect) {
-                            ClauneUiEffect.OpenAccessibilitySettings -> openAccessibilitySettings()
-                            is ClauneUiEffect.StartSession -> startAgentService(effect.goal)
-                            ClauneUiEffect.StopSession -> stopAgentService()
-                        }
-                    }
-                }
-
                 ClauneApp(
                     uiState = uiState,
+                    effects = clauneViewModel.effects,
                     onEvent = clauneViewModel::onEvent,
+                    onOpenAccessibilitySettings = ::openAccessibilitySettings,
+                    onStartSession = ::startAgentService,
+                    onStopSession = ::stopAgentService,
                 )
             }
         }

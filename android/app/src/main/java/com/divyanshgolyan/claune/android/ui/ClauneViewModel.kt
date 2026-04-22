@@ -47,9 +47,17 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
 
     fun onEvent(event: ClauneUiEvent) {
         when (event) {
-            ClauneUiEvent.CreateSession -> container.sessionCoordinator.createSession("")
+            ClauneUiEvent.CreateSession -> {
+                val created = container.sessionCoordinator.createSession("")
+                sendEffect(ClauneUiEffect.NavigateToSession(created.path))
+            }
             ClauneUiEvent.OpenAccessibilitySettings -> sendEffect(ClauneUiEffect.OpenAccessibilitySettings)
-            is ClauneUiEvent.SelectSession -> container.sessionCoordinator.selectSession(event.path)
+            is ClauneUiEvent.SelectSession -> {
+                val selected = container.sessionCoordinator.selectSession(event.path)
+                if (selected != null) {
+                    sendEffect(ClauneUiEffect.NavigateToSession(selected.path))
+                }
+            }
             is ClauneUiEvent.SendGoal -> {
                 val goal = event.goal.trim()
                 if (goal.isNotBlank()) {
@@ -57,7 +65,7 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
                 }
             }
             ClauneUiEvent.StopSession -> sendEffect(ClauneUiEffect.StopSession)
-            is ClauneUiEvent.UpdateAnthropicKey -> container.settingsStore.updateAnthropicApiKey(event.value)
+            is ClauneUiEvent.UpdateAnthropicKey -> viewModelScope.launch { container.settingsStore.updateAnthropicApiKey(event.value) }
             is ClauneUiEvent.SetDebugOverlayVisible -> container.overlayController.setDebugOverlayVisible(event.visible)
         }
     }
@@ -113,6 +121,8 @@ sealed interface ClauneUiEvent {
 }
 
 sealed interface ClauneUiEffect {
+    data class NavigateToSession(val path: String) : ClauneUiEffect
+
     data class StartSession(val goal: String) : ClauneUiEffect
 
     data object StopSession : ClauneUiEffect
