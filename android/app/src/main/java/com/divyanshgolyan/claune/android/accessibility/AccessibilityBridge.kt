@@ -46,10 +46,15 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString()
         refreshConnectionState()
-        if (!packageName.isNullOrBlank()) {
+        val shouldTrack = !packageName.isNullOrBlank() && shouldTrackForegroundPackage(packageName)
+        if (shouldTrack) {
             sessionCoordinator.setLastKnownApp(packageName)
         }
     }
+
+    private fun shouldTrackForegroundPackage(packageName: String): Boolean = packageName != context.packageName &&
+        packageName != SYSTEM_UI_PACKAGE &&
+        KEYBOARD_PACKAGE_PREFIXES.none(packageName::startsWith)
 
     override suspend fun captureSnapshot(): UiSnapshot {
         val activeService = service
@@ -585,5 +590,11 @@ private fun Rect.toBoundsList(): List<Int> = if (isEmpty()) {
 
 private const val MAX_PARENT_CLICK_SEARCH_DEPTH = 5
 private const val WINDOW_TEXT_LIMIT = 8
+private val KEYBOARD_PACKAGE_PREFIXES =
+    listOf(
+        "com.android.inputmethod",
+        "com.google.android.inputmethod",
+        "com.samsung.android.honeyboard",
+    )
 private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
 private val SYSTEM_NAVIGATION_LABELS = setOf("Overview", "Back", "Home")
