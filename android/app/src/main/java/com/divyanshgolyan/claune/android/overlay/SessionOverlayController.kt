@@ -2,7 +2,10 @@ package com.divyanshgolyan.claune.android.overlay
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -19,6 +22,7 @@ import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import com.divyanshgolyan.claune.android.service.ClauneAgentService
 import com.divyanshgolyan.claune.android.ui.MarkdownRenderer
+import com.divyanshgolyan.claune.android.ui.SoftKraftPalette
 import io.noties.markwon.Markwon
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +45,10 @@ class SessionOverlayController(
     private var inputView: EditText? = null
     private var overlayLayoutParams: WindowManager.LayoutParams? = null
     private var overlayBottomOffsetPx = 0
+    private var stableImeBottomPx = 0
+    private var overlayInputFocused = false
     private var markwon: Markwon? = null
+    private var renderedState: RenderedOverlayState? = null
     private var debugOverlayVisible = false
 
     fun attach(service: AccessibilityService) {
@@ -72,20 +79,52 @@ class SessionOverlayController(
     }
 
     private fun render(state: SessionUiState) {
-        if (!shouldShow(state)) {
+        val show = shouldShow(state)
+        if (!show) {
             hide()
             return
         }
         if (overlayView == null) {
             show()
         }
-        if (debugOverlayVisible) {
-            titleView?.text = "Debug overlay"
-            renderBodyMarkdown("Test overlay is visible without an agent run.")
-        } else {
-            titleView?.text = state.activeSessionTitle ?: state.selectedSessionTitle ?: "Current session"
-            renderBodyMarkdown(state.lastAssistantText.ifBlank { state.summaryLine })
+        val nextRenderedState =
+            if (debugOverlayVisible) {
+                RenderedOverlayState(
+                    title = "Debug overlay",
+                    bodyMarkdown = "Test overlay is visible without an agent run.",
+                    inputHint = "Steer Claune",
+                )
+            } else {
+                RenderedOverlayState(
+                    title = state.activeSessionTitle ?: state.selectedSessionTitle ?: "Current session",
+                    bodyMarkdown = state.lastAssistantText.ifBlank { state.summaryLine },
+                    inputHint = state.overlayInputHint(),
+                )
+            }
+        renderOverlayState(nextRenderedState)
+    }
+
+    private fun renderOverlayState(nextState: RenderedOverlayState) {
+        val previousState = renderedState
+        if (previousState?.title != nextState.title) {
+            titleView?.text = nextState.title
         }
+        if (previousState?.inputHint != nextState.inputHint) {
+            inputView?.hint = nextState.inputHint
+        }
+        if (previousState?.bodyMarkdown != nextState.bodyMarkdown) {
+            renderBodyMarkdown(nextState.bodyMarkdown)
+        }
+        renderedState = nextState
+    }
+
+    private fun SessionUiState.overlayInputHint(): String = when (status) {
+        SessionStatus.Running -> "Steer Claune"
+        SessionStatus.Paused -> "Reply to Claune"
+        SessionStatus.Completed,
+        SessionStatus.Blocked,
+        -> "Tell Claune what next"
+        else -> "Tell Claune what next"
     }
 
     private fun shouldShow(state: SessionUiState): Boolean {
@@ -95,8 +134,7 @@ class SessionOverlayController(
         if (debugOverlayVisible) {
             return true
         }
-        return state.foregroundServiceRunning &&
-            (state.status == SessionStatus.Running || state.status == SessionStatus.Paused)
+        return state.foregroundServiceRunning && state.status in OPEN_OVERLAY_STATUSES
     }
 
     private fun show() {
@@ -106,24 +144,29 @@ class SessionOverlayController(
             LinearLayout(service).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(service, 16), dp(service, 14), dp(service, 16), dp(service, 14))
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = dp(service, 20).toFloat()
-                    setColor(0xFFF8F1E3.toInt())
-                    setStroke(dp(service, 1), 0xFFD4C9B0.toInt())
-                }
+                background =
+                    roundedRect(
+                        context = service,
+                        radiusDp = 24,
+                        fillColor = SoftKraftPalette.SurfaceArgb,
+                        strokeColor = SoftKraftPalette.RuleArgb,
+                    )
                 elevation = dp(service, 10).toFloat()
             }
 
         val title =
             TextView(service).apply {
+                includeFontPadding = false
                 textSize = 14f
-                setTextColor(0xFF1D2A22.toInt())
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(SoftKraftPalette.InkArgb)
             }
         val body =
             TextView(service).apply {
+                includeFontPadding = false
                 textSize = 13f
-                setTextColor(0xFF4A574D.toInt())
-                setLinkTextColor(0xFF1A3D28.toInt())
+                setTextColor(SoftKraftPalette.InkSoftArgb)
+                setLinkTextColor(SoftKraftPalette.AccentDeepArgb)
                 setPadding(0, dp(service, 6), 0, dp(service, 10))
                 maxLines = 5
                 ellipsize = TextUtils.TruncateAt.END
@@ -133,13 +176,17 @@ class SessionOverlayController(
                 hint = "Steer Claune"
                 setSingleLine()
                 imeOptions = EditorInfo.IME_ACTION_SEND
-                setTextColor(0xFF1D2A22.toInt())
-                setHintTextColor(0xFF8A8777.toInt())
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = dp(service, 14).toFloat()
-                    setColor(0xFFFFFBF5.toInt())
-                    setStroke(dp(service, 1), 0xFFD4C9B0.toInt())
-                }
+                includeFontPadding = false
+                textSize = 14f
+                setTextColor(SoftKraftPalette.InkArgb)
+                setHintTextColor(SoftKraftPalette.InkFaintArgb)
+                background =
+                    roundedRect(
+                        context = service,
+                        radiusDp = 16,
+                        fillColor = SoftKraftPalette.SurfaceRaisedArgb,
+                        strokeColor = SoftKraftPalette.RuleArgb,
+                    )
                 setPadding(dp(service, 12), dp(service, 10), dp(service, 12), dp(service, 10))
                 setOnEditorActionListener { _, actionId, _ ->
                     if (actionId == EditorInfo.IME_ACTION_SEND) {
@@ -150,9 +197,11 @@ class SessionOverlayController(
                     }
                 }
                 setOnFocusChangeListener { _, hasFocus ->
+                    overlayInputFocused = hasFocus
                     if (hasFocus) {
                         overlay.requestApplyInsets()
                     } else {
+                        stableImeBottomPx = 0
                         updateOverlayBottomOffset(0)
                     }
                 }
@@ -166,6 +215,9 @@ class SessionOverlayController(
         val stopButton =
             Button(service).apply {
                 text = "Stop"
+                setAllCaps(false)
+                setTextColor(SoftKraftPalette.AccentDeepArgb)
+                backgroundTintList = ColorStateList.valueOf(SoftKraftPalette.SurfaceRaisedArgb)
                 setOnClickListener {
                     service.startService(ClauneAgentService.stopIntent(service))
                 }
@@ -173,11 +225,28 @@ class SessionOverlayController(
         val sendButton =
             Button(service).apply {
                 text = "Send"
+                setAllCaps(false)
+                setTextColor(SoftKraftPalette.BackgroundArgb)
+                backgroundTintList = ColorStateList.valueOf(SoftKraftPalette.AccentArgb)
                 setOnClickListener { submitSteerText() }
             }
 
-        buttons.addView(stopButton)
-        buttons.addView(sendButton)
+        buttons.addView(
+            stopButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                marginEnd = dp(service, 8)
+            },
+        )
+        buttons.addView(
+            sendButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         overlay.addView(title)
         overlay.addView(body)
         overlay.addView(input)
@@ -227,6 +296,9 @@ class SessionOverlayController(
         inputView = null
         overlayLayoutParams = null
         overlayBottomOffsetPx = 0
+        stableImeBottomPx = 0
+        overlayInputFocused = false
+        renderedState = null
     }
 
     private fun renderBodyMarkdown(markdown: String) {
@@ -239,7 +311,21 @@ class SessionOverlayController(
         val manager = windowManager ?: return
         val overlay = overlayView ?: return
         val params = overlayLayoutParams ?: return
-        val nextY = overlayBottomOffsetPx + imeBottom
+        val effectiveImeBottom =
+            when {
+                imeBottom <= 0 -> {
+                    stableImeBottomPx = 0
+                    0
+                }
+
+                overlayInputFocused -> {
+                    stableImeBottomPx = maxOf(stableImeBottomPx, imeBottom)
+                    stableImeBottomPx
+                }
+
+                else -> imeBottom
+            }
+        val nextY = overlayBottomOffsetPx + effectiveImeBottom
         if (params.y == nextY) {
             return
         }
@@ -261,5 +347,24 @@ class SessionOverlayController(
         imm?.hideSoftInputFromWindow(inputView?.windowToken, 0)
     }
 
+    private fun roundedRect(context: Context, radiusDp: Int, fillColor: Int, strokeColor: Int): GradientDrawable =
+        GradientDrawable().apply {
+            cornerRadius = dp(context, radiusDp).toFloat()
+            setColor(fillColor)
+            setStroke(dp(context, 1), strokeColor)
+        }
+
     private fun dp(context: Context, value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
+
+    private data class RenderedOverlayState(val title: String, val bodyMarkdown: String, val inputHint: String)
+
+    private companion object {
+        private val OPEN_OVERLAY_STATUSES =
+            setOf(
+                SessionStatus.Running,
+                SessionStatus.Paused,
+                SessionStatus.Completed,
+                SessionStatus.Blocked,
+            )
+    }
 }
