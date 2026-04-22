@@ -96,7 +96,8 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("- read_memory:"))
         assertTrue(prompt.contains("- edit_memory:"))
         assertTrue(prompt.contains("Terminal outcome contract:"))
-        assertTrue(prompt.contains("After calling a terminal outcome tool, do not call more tools"))
+        assertTrue(prompt.contains("After calling a terminal outcome tool, do not call more phone-control tools"))
+        assertTrue(prompt.contains("You may send a concise user-facing final message after the terminal tool call"))
         assertTrue(prompt.contains("The TypeScript contract below is the source of truth"))
         assertTrue(prompt.contains("Prefer visible direct controls by text or label."))
         assertTrue(prompt.contains("Use scrollScreen for the current page."))
@@ -112,6 +113,28 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("claune.scrollScreen(\"down\");"))
         assertTrue(prompt.contains("claune.focusSelector({ label: \"Search\" }, 2000);"))
         assertTrue(prompt.contains("you are seeing Claune's control shell"))
+    }
+
+    @Test
+    fun `memory reflection prompt uses memory tools instead of final json`() {
+        val prompt =
+            MemoryReflectionPromptBuilder.format(
+                ModelTurnInput(
+                    sessionId = "session-1",
+                    persistentSessionPath = null,
+                    persistentSessionId = null,
+                    goal = "Open Settings",
+                    snapshot = snapshot(),
+                    recentEvents = emptyList(),
+                ),
+                ModelTurnOutput.Completion("Opened Settings."),
+            )
+
+        assertTrue(prompt.contains("If there is no durable learning, do not call memory tools"))
+        assertTrue(prompt.contains("Use edit_memory for one surgical update"))
+        assertTrue(prompt.contains("After any memory tool call, you may send a short internal note if useful"))
+        assertTrue(!prompt.contains("Return final JSON only"))
+        assertTrue(!prompt.contains("Your entire final answer must be exactly the JSON object"))
     }
 
     @Test

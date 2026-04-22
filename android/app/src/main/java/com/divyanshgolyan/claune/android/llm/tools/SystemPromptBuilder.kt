@@ -27,11 +27,18 @@ internal object SystemPromptBuilder {
             appendLine(toolSnippets)
             appendLine()
             appendLine("Terminal outcome contract:")
-            appendLine("When the goal is complete, blocked, or needs the user, call exactly one terminal outcome tool.")
+            appendLine(
+                "When the goal is complete, blocked, or needs the user, " +
+                    "record the outcome by calling exactly one terminal outcome tool.",
+            )
             appendLine("Use complete_task only after verifying the requested outcome on the phone.")
             appendLine("Use block_task when progress is impossible, unsafe, or only partially complete.")
             appendLine("Use ask_user when you need a user decision or clarification.")
-            appendLine("After calling a terminal outcome tool, do not call more tools and do not write a prose final answer.")
+            appendLine("After calling a terminal outcome tool, do not call more phone-control tools.")
+            appendLine(
+                "You may send a concise user-facing final message after the terminal tool call " +
+                    "if it helps the user; otherwise keep it minimal.",
+            )
             appendLine()
             section(
                 "Script contract:",
@@ -131,7 +138,7 @@ internal object SystemPromptBuilder {
             appendLine()
             appendLine("Today is ${LocalDate.now()}.")
             appendLine()
-            appendLine("End by calling exactly one terminal outcome tool. Do not write a prose final answer after it.")
+            appendLine("Before ending a resolved turn, call exactly one terminal outcome tool to record the outcome.")
         }.trim()
     }
 }

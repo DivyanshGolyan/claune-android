@@ -266,6 +266,7 @@ class PiAgentModelGateway(
         val reflectionPrompt = MemoryReflectionPromptBuilder.format(input, result)
         runCatching { artifactStore.writeMemoryReflectionPrompt(input.sessionId, reflectionPrompt) }
         sessionCoordinator.logEvent("Agent memory reflection started.")
+        val memoryBeforeReflection = memoryStore.read()
         val reflectionTools =
             listOf(
                 ReadMemoryToolDefinition(memoryStore),
@@ -275,7 +276,7 @@ class PiAgentModelGateway(
         val reflectionSession =
             sessionFactory.create(
                 sessionPath = input.persistentSessionPath,
-                systemPrompt = MemoryReflectionPromptBuilder.systemPrompt(memoryStore.read()),
+                systemPrompt = MemoryReflectionPromptBuilder.systemPrompt(memoryBeforeReflection),
                 model = model(),
                 tools = agentTools(reflectionTools),
                 apiKey = apiKey,
@@ -288,12 +289,16 @@ class PiAgentModelGateway(
             reflectionSession.prompt(reflectionPrompt)
             val reflectionOutput = finalAssistantText(reflectionSession.messages)
             runCatching { artifactStore.writeMemoryReflectionOutput(input.sessionId, reflectionOutput) }
-            when (val parsed = MemoryReflectionResultParser.parse(reflectionOutput)) {
-                is MemoryReflectionResult.NoUpdate ->
-                    sessionCoordinator.logEvent("Memory reflection made no durable update. ${parsed.summary}")
-
-                is MemoryReflectionResult.Updated ->
-                    sessionCoordinator.logEvent("Memory reflection updated memory.md. ${parsed.summary}")
+            val memoryChanged = memoryStore.read() != memoryBeforeReflection
+            val note = reflectionOutput.trim().take(180)
+            if (memoryChanged) {
+                sessionCoordinator.logEvent(
+                    "Memory reflection updated memory.md.${note.takeIf(String::isNotBlank)?.let { " $it" } ?: ""}",
+                )
+            } else {
+                sessionCoordinator.logEvent(
+                    "Memory reflection made no durable update.${note.takeIf(String::isNotBlank)?.let { " $it" } ?: ""}",
+                )
             }
         }.onFailure { throwable ->
             if (throwable is CancellationException) {

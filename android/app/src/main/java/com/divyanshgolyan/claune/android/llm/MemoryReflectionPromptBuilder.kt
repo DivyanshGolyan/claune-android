@@ -2,7 +2,6 @@ package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
-import kotlinx.serialization.Serializable
 
 internal object MemoryReflectionPromptBuilder {
     fun systemPrompt(memoryContent: String): String = buildString {
@@ -51,10 +50,16 @@ internal object MemoryReflectionPromptBuilder {
         appendLine("- A single named item/entity from one task unless it reveals a stable app/device fact.")
         appendLine()
         appendLine("Procedure:")
-        appendLine("1. If there is no durable learning, return no_update without reading memory.md.")
+        appendLine(
+            "1. If there is no durable learning, do not call memory tools. " +
+                "You may reply with a short note or no substantive content.",
+        )
         appendLine("2. If there is a durable learning, read memory.md.")
         appendLine("3. Use edit_memory for one surgical update. Do not rewrite the whole file.")
-        appendLine("4. Return final JSON only.")
+        appendLine(
+            "4. After any memory tool call, you may send a short internal note if useful. " +
+                "Do not use JSON unless it is naturally useful.",
+        )
         appendLine()
         appendLine("Examples:")
         appendLine("""Good: "On this device, a branded app launches as package com.example.realapp." """)
@@ -69,34 +74,6 @@ internal object MemoryReflectionPromptBuilder {
         appendLine("""Bad: "This run succeeded after tapping the third result." """)
         appendLine("Why: one-off tactic.")
         appendLine()
-        appendLine("Return a single JSON object with exactly one of these shapes:")
-        appendLine("""{"kind":"no_update","summary":"..."}""")
-        appendLine("""{"kind":"updated","summary":"..."}""")
-        appendLine()
-        appendLine("Your entire final answer must be exactly the JSON object. No prose. No markdown fences.")
+        appendLine("Do not report task progress to the user here; this is only an internal memory reflection step.")
     }.trim()
-}
-
-@Serializable
-private data class MemoryReflectionResponse(val kind: String, val summary: String)
-
-internal sealed interface MemoryReflectionResult {
-    val summary: String
-
-    data class NoUpdate(override val summary: String) : MemoryReflectionResult
-
-    data class Updated(override val summary: String) : MemoryReflectionResult
-}
-
-internal object MemoryReflectionResultParser {
-    fun parse(raw: String): MemoryReflectionResult {
-        val payload = decodeModelJson(raw, MemoryReflectionResponse.serializer())
-            ?: return MemoryReflectionResult.NoUpdate("Malformed reflection output.")
-
-        return when (payload.kind) {
-            "no_update" -> MemoryReflectionResult.NoUpdate(payload.summary)
-            "updated" -> MemoryReflectionResult.Updated(payload.summary)
-            else -> MemoryReflectionResult.NoUpdate("Unsupported reflection kind '${payload.kind}'.")
-        }
-    }
 }

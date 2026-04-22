@@ -95,6 +95,6 @@ internal object PiAgentPromptFormatter {
             }
         }
         appendLine()
-        appendLine("When the goal is complete, blocked, or needs the user, call exactly one terminal outcome tool.")
+        appendLine("When the goal is complete, blocked, or needs the user, record the outcome with exactly one terminal outcome tool.")
     }
 }
