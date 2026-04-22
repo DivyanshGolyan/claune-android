@@ -85,17 +85,16 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
     }
 
     fun recoverOrphanedSession(reason: String) {
-        if (_uiState.value.status == SessionStatus.Running) {
+        if (_uiState.value.foregroundServiceRunning || _uiState.value.status == SessionStatus.Running) {
             stopSession(reason)
         }
     }
 
-    fun finishSession(summary: String) {
+    fun completeTurn(summary: String) {
         _uiState.value =
             _uiState.value.copy(
                 status = SessionStatus.Completed,
                 summaryLine = summary,
-                foregroundServiceRunning = false,
                 isStreaming = false,
                 pendingSteeringCount = 0,
                 isCompacting = false,
@@ -105,12 +104,11 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
         logStore.record(_uiState.value)
     }
 
-    fun blockSession(reason: String) {
+    fun blockTurn(reason: String) {
         _uiState.value =
             _uiState.value.copy(
                 status = SessionStatus.Blocked,
                 summaryLine = reason,
-                foregroundServiceRunning = false,
                 isStreaming = false,
                 pendingSteeringCount = 0,
                 isCompacting = false,

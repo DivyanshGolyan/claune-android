@@ -12,7 +12,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.app.clauneContainer
-import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.service.ClauneAgentService
 
 class MainActivity : ComponentActivity() {
@@ -92,7 +91,7 @@ class MainActivity : ComponentActivity() {
                 "Previous session ended unexpectedly. Resetting stale running state.",
             )
         }
-        if (container.sessionCoordinator.uiState.value.status == SessionStatus.Running && !serviceRunning) {
+        if (container.sessionCoordinator.uiState.value.foregroundServiceRunning && !serviceRunning) {
             container.sessionCoordinator.recoverOrphanedSession(
                 "Previous session ended unexpectedly. Resetting stale running state.",
             )

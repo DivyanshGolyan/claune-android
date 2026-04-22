@@ -71,11 +71,11 @@ class AgentLoop(
             }
 
             is ModelTurnOutput.Completion -> {
-                sessionCoordinator.finishSession(modelOutput.summary)
+                sessionCoordinator.completeTurn(modelOutput.summary)
             }
 
             is ModelTurnOutput.Blocked -> {
-                sessionCoordinator.blockSession(modelOutput.reason)
+                sessionCoordinator.blockTurn(modelOutput.reason)
             }
         }
 

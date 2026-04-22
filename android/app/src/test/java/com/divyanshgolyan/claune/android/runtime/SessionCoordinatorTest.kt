@@ -29,29 +29,29 @@ class SessionCoordinatorTest {
     }
 
     @Test
-    fun `finish session clears foreground service flag`() {
+    fun `complete turn keeps foreground session open`() {
         val coordinator = coordinator()
 
         coordinator.beginRun("Open Settings")
         coordinator.setForegroundServiceRunning(true)
 
-        coordinator.finishSession("Completed successfully.")
+        coordinator.completeTurn("Completed successfully.")
 
         assertEquals(SessionStatus.Completed, coordinator.uiState.value.status)
-        assertFalse(coordinator.uiState.value.foregroundServiceRunning)
+        assertTrue(coordinator.uiState.value.foregroundServiceRunning)
     }
 
     @Test
-    fun `block session clears foreground service flag`() {
+    fun `blocked turn keeps foreground session open`() {
         val coordinator = coordinator()
 
         coordinator.beginRun("Open Settings")
         coordinator.setForegroundServiceRunning(true)
 
-        coordinator.blockSession("Blocked on missing accessibility.")
+        coordinator.blockTurn("Blocked on missing accessibility.")
 
         assertEquals(SessionStatus.Blocked, coordinator.uiState.value.status)
-        assertFalse(coordinator.uiState.value.foregroundServiceRunning)
+        assertTrue(coordinator.uiState.value.foregroundServiceRunning)
     }
 
     @Test
@@ -72,7 +72,7 @@ class SessionCoordinatorTest {
         val coordinator = coordinator()
 
         coordinator.beginRun("Open Settings")
-        coordinator.finishSession("Completed successfully.")
+        coordinator.completeTurn("Completed successfully.")
         coordinator.logEvent("Memory reflection made no durable update.")
 
         assertEquals(SessionStatus.Completed, coordinator.uiState.value.status)
