@@ -81,6 +81,7 @@ data class UiElement(
     val resourceId: String? = null,
     val className: String? = null,
     val clickable: Boolean,
+    val focusable: Boolean = false,
     val editable: Boolean,
     val focused: Boolean,
     val enabled: Boolean = true,

@@ -478,15 +478,6 @@ class ScriptHost(
             )
         }
 
-        if (!matchedElement.clickable) {
-            val matchedLabel = matchedElement.label.ifBlank { matchedElement.id }
-            return HostCallOutcome(
-                ok = false,
-                message = "Matched element '$matchedLabel' is not editable and cannot be activated.",
-                data = buildMatchedData(matchedElement),
-            )
-        }
-
         val tapResult = phoneActuator.tap(ElementRef(matchedElement.id))
         if (tapResult is ActionResult.Blocked) {
             return tapResult.toOutcome(data = buildMatchedData(matchedElement))

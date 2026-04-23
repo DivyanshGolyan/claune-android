@@ -6,4 +6,4 @@
     android:canPerformGestures="true"
     android:description="@string/accessibility_service_label"
     android:notificationTimeout="100"
-    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows" />
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews" />

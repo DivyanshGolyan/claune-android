@@ -39,6 +39,7 @@ fun UiElement.toPayload(): UiElementPayload = UiElementPayload(
     resourceId = resourceId,
     className = className,
     clickable = clickable,
+    focusable = focusable,
     editable = editable,
     focused = focused,
     enabled = enabled,

@@ -1,9 +1,11 @@
 package com.divyanshgolyan.claune.android.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Rect
 import android.os.Bundle
+import android.graphics.Path
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -20,6 +22,8 @@ import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import com.divyanshgolyan.claune.android.runtime.WindowCandidate
 import java.time.Instant
 import java.util.Locale
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class AccessibilityBridge(private val context: Context, private val sessionCoordinator: SessionCoordinator) :
     PhoneObserver,
@@ -118,6 +122,17 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
             depth += 1
         }
 
+        findClickableDescendant(node)?.let { descendant ->
+            if (descendant.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return ActionResult.Success("Tapped clickable descendant for '${target.elementId}'.")
+            }
+        }
+
+        val bounds = node.visibleSnapshotBounds()
+        if (bounds != null && dispatchTapGesture(boundsListCenterX(bounds), boundsListCenterY(bounds))) {
+            return ActionResult.Success("Tapped gesture fallback for '${target.elementId}'.")
+        }
+
         return ActionResult.Blocked("Element '${target.elementId}' is visible but did not accept a click action.")
     }
 
@@ -203,9 +218,10 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
         }
 
         val clickable = node.isClickable
+        val focusable = node.isFocusable
         val editable = node.isEditable
         val scrollable = node.isScrollable
-        if (bounds != null && (clickable || editable || scrollable)) {
+        if (bounds != null && shouldExportNode(node, ownText, ownContentDescription, clickable, focusable, editable, scrollable)) {
             val ref = buildElementRef(path)
             elements +=
                 UiElement(
@@ -218,6 +234,7 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
                     resourceId = node.viewIdResourceName,
                     className = node.className?.toString(),
                     clickable = clickable,
+                    focusable = focusable,
                     editable = editable,
                     focused = node.isFocused,
                     enabled = node.isEnabled,
@@ -367,6 +384,25 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
         return candidates.firstOrNull { it.isNotBlank() }
     }
 
+    private fun shouldExportNode(
+        node: AccessibilityNodeInfo,
+        ownText: String?,
+        ownContentDescription: String?,
+        clickable: Boolean,
+        focusable: Boolean,
+        editable: Boolean,
+        scrollable: Boolean,
+    ): Boolean {
+        if (clickable || focusable || editable || scrollable) {
+            return true
+        }
+        val hasStableIdentity = !node.viewIdResourceName.isNullOrBlank() || !ownContentDescription.isNullOrBlank()
+        val hasUsefulClassHint = node.className?.toString()?.contains("EditText", ignoreCase = true) == true
+        return node.isImportantForAccessibility &&
+            (hasStableIdentity || hasUsefulClassHint) &&
+            (node.childCount > 0 || !ownText.isNullOrBlank())
+    }
+
     private fun collectVisibleText(node: AccessibilityNodeInfo, collector: MutableSet<String>, limit: Int) {
         if (collector.size >= limit) {
             return
@@ -396,6 +432,52 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
         }
     }
 
+    private fun findClickableDescendant(node: AccessibilityNodeInfo, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth >= MAX_DESCENDANT_CLICK_SEARCH_DEPTH) {
+            return null
+        }
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            if (child.isClickable) {
+                return child
+            }
+            findClickableDescendant(child, depth + 1)?.let { return it }
+        }
+        return null
+    }
+
+    private suspend fun dispatchTapGesture(centerX: Int, centerY: Int): Boolean {
+        val activeService = service ?: return false
+        val path = Path().apply { moveTo(centerX.toFloat(), centerY.toFloat()) }
+        val gesture =
+            GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0L, TAP_GESTURE_DURATION_MS))
+                .build()
+        return suspendCancellableCoroutine { continuation ->
+            val dispatched =
+                activeService.dispatchGesture(
+                    gesture,
+                    object : AccessibilityService.GestureResultCallback() {
+                        override fun onCompleted(gestureDescription: GestureDescription?) {
+                            if (continuation.isActive) {
+                                continuation.resume(true)
+                            }
+                        }
+
+                        override fun onCancelled(gestureDescription: GestureDescription?) {
+                            if (continuation.isActive) {
+                                continuation.resume(false)
+                            }
+                        }
+                    },
+                    null,
+                )
+            if (!dispatched && continuation.isActive) {
+                continuation.resume(false)
+            }
+        }
+    }
+
     private fun inferRole(node: AccessibilityNodeInfo): String = when {
         node.isEditable -> "input"
         node.className?.contains("Button") == true -> "button"
@@ -407,6 +489,8 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
     private companion object {
         private const val DESCENDANT_TEXT_LIMIT = 4
         private const val WINDOW_TEXT_LIMIT = 8
+        private const val MAX_DESCENDANT_CLICK_SEARCH_DEPTH = 6
+        private const val TAP_GESTURE_DURATION_MS = 40L
         private const val CLAUNE_ACCESSIBILITY_SERVICE =
             "${BuildConfig.APPLICATION_ID}/com.divyanshgolyan.claune.android.accessibility.ClauneAccessibilityService"
     }
@@ -438,6 +522,10 @@ private fun AccessibilityNodeInfo.visibleSnapshotBounds(): List<Int>? {
     }
     return listOf(rect.left, rect.top, rect.right, rect.bottom)
 }
+
+private fun boundsListCenterX(bounds: List<Int>): Int = (bounds[0] + bounds[2]) / 2
+
+private fun boundsListCenterY(bounds: List<Int>): Int = (bounds[1] + bounds[3]) / 2
 
 private data class RootSelection(val root: AccessibilityNodeInfo, val reason: String, val windowCandidates: List<WindowCandidate>)
 

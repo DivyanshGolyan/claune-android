@@ -469,6 +469,62 @@ class ScriptHostTest {
     }
 
     @Test
+    fun `focusSelector can activate a non clickable wrapper when the actuator succeeds`() = runTest {
+        val actuator = FakePhoneActuator(
+            tapResult = ActionResult.Success("Tapped wrapper via fallback."),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(
+                                element(
+                                    id = "search-wrapper",
+                                    ref = "e0",
+                                    label = "Type to search restaurants or dishes",
+                                    role = "control",
+                                    clickable = false,
+                                ),
+                            ),
+                        ),
+                        snapshot(
+                            focusedElementId = "search-input",
+                            elements = listOf(
+                                element(
+                                    id = "search-wrapper",
+                                    ref = "e0",
+                                    label = "Type to search restaurants or dishes",
+                                    role = "control",
+                                    clickable = false,
+                                ),
+                                element(
+                                    id = "search-input",
+                                    ref = "e1",
+                                    label = "Search input",
+                                    role = "input",
+                                    editable = true,
+                                    focused = true,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.focusSelector("""{"label":"Type to search restaurants or dishes"}""", timeoutMs = 1000)
+
+        assertTrue(result.ok)
+        assertEquals("search-wrapper", actuator.lastTapped?.elementId)
+        assertEquals("search-input", result.data!!.jsonObject["activatedElementId"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `waitForSelector succeeds when later snapshot exposes matching ref`() = runTest {
         var currentTime = Instant.parse("2026-04-16T00:00:00Z")
         val host =
@@ -629,6 +685,8 @@ class ScriptHostTest {
         label: String = "Action",
         text: String? = null,
         role: String = "button",
+        clickable: Boolean = true,
+        focusable: Boolean = false,
         editable: Boolean = false,
         focused: Boolean = false,
         scrollable: Boolean = false,
@@ -639,7 +697,8 @@ class ScriptHostTest {
         role = role,
         label = label,
         text = text,
-        clickable = true,
+        clickable = clickable,
+        focusable = focusable,
         editable = editable,
         focused = focused,
         scrollable = scrollable,

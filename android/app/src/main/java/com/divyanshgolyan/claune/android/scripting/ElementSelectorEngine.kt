@@ -73,7 +73,7 @@ private fun ElementSelectorPayload.hasCriteria(): Boolean = listOf(
     resourceId,
     role,
 ).any { !it.isNullOrBlank() } ||
-    listOf(clickable, editable, focused, enabled, checked, selected, scrollable).any { it != null }
+    listOf(clickable, focusable, editable, focused, enabled, checked, selected, scrollable).any { it != null }
 
 private fun ElementSelectorPayload.matchScore(element: UiElement): Int? {
     if (ref != null && ref != element.ref) {
@@ -124,6 +124,7 @@ private fun ElementSelectorPayload.matchScore(element: UiElement): Int? {
     val stateFilters =
         listOf(
             clickable to element.clickable,
+            focusable to element.focusable,
             editable to element.editable,
             focused to element.focused,
             enabled to element.enabled,

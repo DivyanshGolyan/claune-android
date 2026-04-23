@@ -78,6 +78,8 @@ class QuickJsScriptRuntimeTest {
         assertTrue(declarations.contains("interface ClauneHost"))
         assertTrue(declarations.contains("interface InstalledApp"))
         assertTrue(declarations.contains("label?: string;"))
+        assertTrue(declarations.contains("focusable: boolean;"))
+        assertTrue(declarations.contains("focusable?: boolean;"))
         assertTrue(declarations.contains("listInstalledApps(): InstalledApp[];"))
         assertTrue(declarations.contains("launchApp(packageName: string): HostSuccessOutcome;"))
         assertTrue(declarations.contains("tapText(text: string, exact: boolean): HostSuccessOutcome;"))
