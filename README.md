@@ -16,7 +16,7 @@ This repo is for local development, live demos, and debugging on a known Android
 - One active foreground run at a time. A user can keep a session and send later follow-up tasks into it.
 - Model execution backed by vendored `pi-agent-kotlin` and Anthropic.
 - `execute_script` as the only model-facing phone-control tool.
-- Terminal tools for `complete_task`, `block_task`, and `ask_user`.
+- Terminal and user-decision tools for `complete_task`, `block_task`, and `question`.
 - Memory reflection after completed or blocked turns, with `read_memory` and `edit_memory` tools for durable updates.
 - Local run artifacts under app storage: prompts, snapshots, script calls, agent messages, events, and memory-reflection output.
 
@@ -35,7 +35,6 @@ This repo is for local development, live demos, and debugging on a known Android
 - `android/vendor/pi-agent-kotlin/pi-agent-core`: vendored agent runtime primitives.
 - `android/vendor/pi-agent-kotlin/pi-coding-agent-core`: vendored session, compaction, and transcript model used by Claune sessions.
 - `docs/`: architecture and stack notes. Some of these still describe the earlier Koog plan, so treat the code and this README as current until those notes are refreshed.
-- `Claune design/`: visual design references and exported prototypes.
 
 ## Requirements
 
@@ -126,7 +125,7 @@ When a turn ends, the model records one terminal outcome through a tool call:
 
 - `complete_task` after the requested outcome is verified on the phone.
 - `block_task` when progress is impossible, unsafe, or only partially complete.
-- `ask_user` when a user decision or clarification is needed.
+- `question` when the run needs a user decision. The overlay presents 1 to 3 options and also allows custom input.
 
 Completed or blocked turns do not close the user-owned session by themselves. The overlay and foreground session can stay up so the user can continue, steer, or stop explicitly.
 
@@ -138,4 +137,3 @@ This is a personal prototype repo with no public support process yet. There is n
 
 - [V1 architecture](./docs/v1-architecture.md)
 - [Recommended stack](./docs/recommended-stack.md)
-- [Design notes](./Claune%20design/notes.md)
