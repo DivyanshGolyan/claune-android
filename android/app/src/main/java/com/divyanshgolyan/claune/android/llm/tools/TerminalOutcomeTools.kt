@@ -28,8 +28,6 @@ internal data class CompleteTaskArguments(val summary: String)
 
 internal data class BlockTaskArguments(val reason: String)
 
-internal data class AskUserArguments(val messageToUser: String)
-
 internal class CompleteTaskToolDefinition(private val recorder: TerminalOutcomeRecorder) : ToolDefinition<CompleteTaskArguments> {
     override val name: String = "complete_task"
     override val label: String = "Complete Task"
@@ -89,37 +87,6 @@ internal class BlockTaskToolDefinition(private val recorder: TerminalOutcomeReco
     ): AgentToolResult<JsonElement> {
         recorder.record(ModelTurnOutput.Blocked(params.reason))
         return terminalToolResult("Recorded task blocker.", "blocked", params.reason)
-    }
-}
-
-internal class AskUserToolDefinition(private val recorder: TerminalOutcomeRecorder) : ToolDefinition<AskUserArguments> {
-    override val name: String = "ask_user"
-    override val label: String = "Ask User"
-    override val description: String =
-        "Pause the task and ask the user for a decision or clarification needed to continue safely."
-    override val promptSnippet: String = "Pause the run with a user-facing question or decision request."
-    override val promptGuidelines: List<String> = emptyList()
-    override val parameters: JsonObject =
-        objectParameters(
-            properties =
-            buildJsonObject {
-                put("messageToUser", stringProperty("The concise question or decision request for the user."))
-            },
-            required = listOf("messageToUser"),
-        )
-
-    override fun validateArguments(arguments: JsonObject): AskUserArguments = AskUserArguments(
-        messageToUser = arguments.requiredString("messageToUser"),
-    )
-
-    override suspend fun execute(
-        toolCallId: String,
-        params: AskUserArguments,
-        signal: pi.ai.core.AbortSignal?,
-        onUpdate: pi.agent.core.AgentToolUpdateCallback<JsonElement>?,
-    ): AgentToolResult<JsonElement> {
-        recorder.record(ModelTurnOutput.Message(params.messageToUser))
-        return terminalToolResult("Recorded user question.", "message", params.messageToUser)
     }
 }
 

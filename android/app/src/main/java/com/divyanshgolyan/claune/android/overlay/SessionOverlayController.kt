@@ -1,10 +1,11 @@
+@file:Suppress("ktlint:standard:function-signature")
+
 package com.divyanshgolyan.claune.android.overlay
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.view.Gravity
@@ -18,6 +19,10 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import com.divyanshgolyan.claune.android.runtime.PendingQuestionUiState
+import com.divyanshgolyan.claune.android.runtime.QuestionAnswer
+import com.divyanshgolyan.claune.android.runtime.QuestionAnswerKind
+import com.divyanshgolyan.claune.android.runtime.QuestionPromptCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import com.divyanshgolyan.claune.android.service.ClauneAgentService
@@ -28,20 +33,22 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class SessionOverlayController(
     private val appContext: Context,
-    private val sessionStateProvider: kotlinx.coroutines.flow.StateFlow<SessionUiState>,
+    private val sessionStateProvider: StateFlow<SessionUiState>,
+    private val questionPromptCoordinator: QuestionPromptCoordinator,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var service: AccessibilityService? = null
     private var collectionJob: Job? = null
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
-    private var titleView: TextView? = null
     private var bodyView: TextView? = null
+    private var actionContainer: LinearLayout? = null
     private var inputView: EditText? = null
     private var overlayLayoutParams: WindowManager.LayoutParams? = null
     private var overlayBottomOffsetPx = 0
@@ -49,6 +56,8 @@ class SessionOverlayController(
     private var overlayInputFocused = false
     private var markwon: Markwon? = null
     private var renderedState: RenderedOverlayState? = null
+    private var renderedActionsKey: String? = null
+    private var inputMode: InputMode? = null
     private var debugOverlayVisible = false
 
     fun attach(service: AccessibilityService) {
@@ -79,52 +88,230 @@ class SessionOverlayController(
     }
 
     private fun render(state: SessionUiState) {
-        val show = shouldShow(state)
-        if (!show) {
+        if (!shouldShow(state)) {
             hide()
             return
         }
         if (overlayView == null) {
             show()
         }
+        if (inputMode is InputMode.QuestionCustom && state.pendingQuestion?.id != inputMode?.questionId) {
+            inputMode = null
+        }
         val nextRenderedState =
             if (debugOverlayVisible) {
                 RenderedOverlayState(
-                    title = "Debug overlay",
                     bodyMarkdown = "Test overlay is visible without an agent run.",
-                    inputHint = "Steer Claune",
                 )
             } else {
                 RenderedOverlayState(
-                    title = state.activeSessionTitle ?: state.selectedSessionTitle ?: "Current session",
-                    bodyMarkdown = state.lastAssistantText.ifBlank { state.summaryLine },
-                    inputHint = state.overlayInputHint(),
+                    bodyMarkdown = state.pendingQuestion?.prompt ?: state.lastAssistantText.ifBlank { state.summaryLine },
                 )
             }
         renderOverlayState(nextRenderedState)
+        renderActions(state)
     }
 
     private fun renderOverlayState(nextState: RenderedOverlayState) {
         val previousState = renderedState
-        if (previousState?.title != nextState.title) {
-            titleView?.text = nextState.title
-        }
-        if (previousState?.inputHint != nextState.inputHint) {
-            inputView?.hint = nextState.inputHint
-        }
         if (previousState?.bodyMarkdown != nextState.bodyMarkdown) {
             renderBodyMarkdown(nextState.bodyMarkdown)
         }
         renderedState = nextState
     }
 
-    private fun SessionUiState.overlayInputHint(): String = when (status) {
-        SessionStatus.Running -> "Steer Claune"
-        SessionStatus.Paused -> "Reply to Claune"
-        SessionStatus.Completed,
-        SessionStatus.Blocked,
-        -> "Tell Claune what next"
-        else -> "Tell Claune what next"
+    private fun renderActions(state: SessionUiState) {
+        val pendingQuestion = state.pendingQuestion
+        val key = actionKey(state, pendingQuestion)
+        if (renderedActionsKey == key) {
+            return
+        }
+        val service = service ?: return
+        val container = actionContainer ?: return
+        container.removeAllViews()
+        inputView = null
+        overlayInputFocused = false
+        stableImeBottomPx = 0
+        renderedActionsKey = key
+
+        when {
+            debugOverlayVisible -> addDebugActions(container, service)
+            pendingQuestion != null -> addQuestionActions(container, service, pendingQuestion)
+            inputMode is InputMode.Text -> addTextInputActions(
+                container = container,
+                service = service,
+                hint = if (state.status == SessionStatus.Running) "Steer Claune" else "Send a message",
+            ) {
+                submitInput()
+            }
+            state.status == SessionStatus.Running -> addRunningActions(container, service)
+            state.status == SessionStatus.Paused ||
+                state.status == SessionStatus.Completed ||
+                state.status == SessionStatus.Blocked -> addIdleActions(container, service)
+            else -> addTerminalActions(container, service)
+        }
+    }
+
+    private fun actionKey(state: SessionUiState, pendingQuestion: PendingQuestionUiState?): String {
+        if (debugOverlayVisible) {
+            return "debug"
+        }
+        val mode = inputMode
+        return buildString {
+            append(state.status.name)
+            append("|")
+            append(pendingQuestion?.id.orEmpty())
+            append("|")
+            append(pendingQuestion?.options?.joinToString(separator = "\u001F").orEmpty())
+            append("|")
+            append(mode?.javaClass?.simpleName.orEmpty())
+            append("|")
+            append(mode?.questionId.orEmpty())
+        }
+    }
+
+    private fun addDebugActions(container: LinearLayout, service: AccessibilityService) {
+        val note =
+            TextView(service).apply {
+                includeFontPadding = false
+                textSize = 12f
+                setTextColor(ClaunePalette.InkFaintArgb)
+                text = "Overlay controls are disabled in debug preview."
+            }
+        container.addView(note)
+    }
+
+    private fun addRunningActions(container: LinearLayout, service: AccessibilityService) {
+        val row = horizontalRow(service)
+        row.addView(
+            secondaryButton(service, "Steer") {
+                inputMode = InputMode.Text
+                render(sessionStateProvider.value)
+            },
+            buttonLayout(service, marginEnd = 8),
+        )
+        row.addView(stopButton(service), buttonLayout(service))
+        container.addView(row)
+    }
+
+    private fun addIdleActions(container: LinearLayout, service: AccessibilityService) {
+        val row = horizontalRow(service)
+        row.addView(
+            secondaryButton(service, "Message") {
+                inputMode = InputMode.Text
+                render(sessionStateProvider.value)
+            },
+            buttonLayout(service, marginEnd = 8),
+        )
+        row.addView(stopButton(service), buttonLayout(service))
+        container.addView(row)
+    }
+
+    private fun addTerminalActions(container: LinearLayout, service: AccessibilityService) {
+        val row = horizontalRow(service)
+        row.addView(
+            secondaryButton(service, "Message") {
+                inputMode = InputMode.Text
+                render(sessionStateProvider.value)
+            },
+            buttonLayout(service, marginEnd = 8),
+        )
+        row.addView(stopButton(service), buttonLayout(service))
+        container.addView(row)
+    }
+
+    private fun addQuestionActions(
+        container: LinearLayout,
+        service: AccessibilityService,
+        question: PendingQuestionUiState,
+    ) {
+        if (inputMode is InputMode.QuestionCustom) {
+            addTextInputActions(container, service, "Custom response") {
+                submitQuestionCustomInput(question.id)
+            }
+            return
+        }
+
+        question.options.forEachIndexed { index, option ->
+            container.addView(
+                primaryButton(service, option) {
+                    answerQuestion(
+                        questionId = question.id,
+                        answer =
+                        QuestionAnswer(
+                            text = option,
+                            kind = QuestionAnswerKind.Option,
+                            optionIndex = index,
+                        ),
+                    )
+                },
+                fullWidthLayout(service, topMargin = if (index == 0) 0 else 8),
+            )
+        }
+        val row = horizontalRow(service)
+        row.addView(
+            secondaryButton(service, "Custom response") {
+                inputMode = InputMode.QuestionCustom(question.id)
+                render(sessionStateProvider.value)
+            },
+            buttonLayout(service, marginEnd = 8),
+        )
+        row.addView(stopButton(service), buttonLayout(service))
+        container.addView(row, fullWidthLayout(service, topMargin = 8))
+    }
+
+    private fun addTextInputActions(
+        container: LinearLayout,
+        service: AccessibilityService,
+        hint: String,
+        submit: () -> Unit,
+    ) {
+        val input =
+            EditText(service).apply {
+                this.hint = hint
+                setSingleLine()
+                imeOptions = EditorInfo.IME_ACTION_SEND
+                includeFontPadding = false
+                textSize = 14f
+                setTextColor(ClaunePalette.InkArgb)
+                setHintTextColor(ClaunePalette.InkFaintArgb)
+                background =
+                    roundedRect(
+                        context = service,
+                        radiusDp = 12,
+                        fillColor = ClaunePalette.BackgroundArgb,
+                        strokeColor = ClaunePalette.RuleArgb,
+                    )
+                setPadding(dp(service, 12), dp(service, 10), dp(service, 12), dp(service, 10))
+                setOnEditorActionListener { _, actionId, _ ->
+                    if (actionId == EditorInfo.IME_ACTION_SEND) {
+                        submit()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                setOnFocusChangeListener { _, hasFocus ->
+                    overlayInputFocused = hasFocus
+                    if (hasFocus) {
+                        overlayView?.requestApplyInsets()
+                    } else {
+                        stableImeBottomPx = 0
+                        updateOverlayBottomOffset(0)
+                    }
+                }
+            }
+        inputView = input
+        container.addView(input, fullWidthLayout(service))
+
+        val row = horizontalRow(service)
+        row.addView(stopButton(service), buttonLayout(service, marginEnd = 8))
+        row.addView(primaryButton(service, "Send") { submit() }, buttonLayout(service))
+        container.addView(row, fullWidthLayout(service, topMargin = 8))
+
+        input.requestFocus()
+        overlayView?.requestApplyInsets()
+        service.getSystemService(InputMethodManager::class.java)?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
     }
 
     private fun shouldShow(state: SessionUiState): Boolean {
@@ -134,7 +321,7 @@ class SessionOverlayController(
         if (debugOverlayVisible) {
             return true
         }
-        return state.foregroundServiceRunning && state.status in OPEN_OVERLAY_STATUSES
+        return state.foregroundServiceRunning
     }
 
     private fun show() {
@@ -154,13 +341,6 @@ class SessionOverlayController(
                 elevation = dp(service, 6).toFloat()
             }
 
-        val title =
-            TextView(service).apply {
-                includeFontPadding = false
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(ClaunePalette.InkArgb)
-            }
         val body =
             TextView(service).apply {
                 includeFontPadding = false
@@ -171,86 +351,13 @@ class SessionOverlayController(
                 maxLines = 5
                 ellipsize = TextUtils.TruncateAt.END
             }
-        val input =
-            EditText(service).apply {
-                hint = "Steer Claune"
-                setSingleLine()
-                imeOptions = EditorInfo.IME_ACTION_SEND
-                includeFontPadding = false
-                textSize = 14f
-                setTextColor(ClaunePalette.InkArgb)
-                setHintTextColor(ClaunePalette.InkFaintArgb)
-                background =
-                    roundedRect(
-                        context = service,
-                        radiusDp = 12,
-                        fillColor = ClaunePalette.BackgroundArgb,
-                        strokeColor = ClaunePalette.RuleArgb,
-                    )
-                setPadding(dp(service, 12), dp(service, 10), dp(service, 12), dp(service, 10))
-                setOnEditorActionListener { _, actionId, _ ->
-                    if (actionId == EditorInfo.IME_ACTION_SEND) {
-                        submitSteerText()
-                        true
-                    } else {
-                        false
-                    }
-                }
-                setOnFocusChangeListener { _, hasFocus ->
-                    overlayInputFocused = hasFocus
-                    if (hasFocus) {
-                        overlay.requestApplyInsets()
-                    } else {
-                        stableImeBottomPx = 0
-                        updateOverlayBottomOffset(0)
-                    }
-                }
-            }
-        val buttons =
+        val actions =
             LinearLayout(service).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.END
-                setPadding(0, dp(service, 10), 0, 0)
-            }
-        val stopButton =
-            Button(service).apply {
-                text = "Stop"
-                setAllCaps(false)
-                setTextColor(ClaunePalette.AccentDeepArgb)
-                backgroundTintList = ColorStateList.valueOf(ClaunePalette.BackgroundArgb)
-                setOnClickListener {
-                    service.startService(ClauneAgentService.stopIntent(service))
-                }
-            }
-        val sendButton =
-            Button(service).apply {
-                text = "Send"
-                setAllCaps(false)
-                setTextColor(ClaunePalette.BackgroundArgb)
-                backgroundTintList = ColorStateList.valueOf(ClaunePalette.AccentArgb)
-                setOnClickListener { submitSteerText() }
+                orientation = LinearLayout.VERTICAL
             }
 
-        buttons.addView(
-            stopButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                marginEnd = dp(service, 8)
-            },
-        )
-        buttons.addView(
-            sendButton,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        overlay.addView(title)
         overlay.addView(body)
-        overlay.addView(input)
-        overlay.addView(buttons)
+        overlay.addView(actions)
 
         overlay.setOnApplyWindowInsetsListener { _, insets ->
             val imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
@@ -280,9 +387,8 @@ class SessionOverlayController(
         manager.addView(overlay, layoutParams)
         overlayView = overlay
         overlayLayoutParams = layoutParams
-        titleView = title
         bodyView = body
-        inputView = input
+        actionContainer = actions
         overlay.requestApplyInsets()
     }
 
@@ -291,14 +397,16 @@ class SessionOverlayController(
         val overlay = overlayView ?: return
         runCatching { manager.removeView(overlay) }
         overlayView = null
-        titleView = null
         bodyView = null
+        actionContainer = null
         inputView = null
         overlayLayoutParams = null
         overlayBottomOffsetPx = 0
         stableImeBottomPx = 0
         overlayInputFocused = false
         renderedState = null
+        renderedActionsKey = null
+        inputMode = null
     }
 
     private fun renderBodyMarkdown(markdown: String) {
@@ -335,17 +443,96 @@ class SessionOverlayController(
         }
     }
 
-    private fun submitSteerText() {
+    private fun submitInput() {
         val service = service ?: return
         val text = inputView?.text?.toString()?.trim().orEmpty()
         if (text.isBlank()) {
             return
         }
         ContextCompat.startForegroundService(service, ClauneAgentService.startIntent(service, text))
+        inputMode = null
         inputView?.text?.clear()
-        val imm = service.getSystemService(InputMethodManager::class.java)
-        imm?.hideSoftInputFromWindow(inputView?.windowToken, 0)
+        hideKeyboard()
+        render(sessionStateProvider.value)
     }
+
+    private fun submitQuestionCustomInput(questionId: String) {
+        val text = inputView?.text?.toString()?.trim().orEmpty()
+        if (text.isBlank()) {
+            return
+        }
+        answerQuestion(
+            questionId = questionId,
+            answer = QuestionAnswer(text = text, kind = QuestionAnswerKind.Custom),
+        )
+    }
+
+    private fun answerQuestion(questionId: String, answer: QuestionAnswer) {
+        if (questionPromptCoordinator.answerPendingQuestion(questionId, answer)) {
+            inputMode = null
+            hideKeyboard()
+            render(sessionStateProvider.value)
+        }
+    }
+
+    private fun hideKeyboard() {
+        val service = service ?: return
+        val input = inputView ?: return
+        service.getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(input.windowToken, 0)
+        input.clearFocus()
+    }
+
+    private fun stopButton(service: AccessibilityService): Button =
+        secondaryButton(service, "Stop") {
+            service.startService(ClauneAgentService.stopIntent(service))
+        }
+
+    private fun primaryButton(service: AccessibilityService, label: String, onClick: () -> Unit): Button =
+        Button(service).apply {
+            text = label
+            setAllCaps(false)
+            setTextColor(ClaunePalette.BackgroundArgb)
+            backgroundTintList = ColorStateList.valueOf(ClaunePalette.AccentArgb)
+            setOnClickListener { onClick() }
+        }
+
+    private fun secondaryButton(service: AccessibilityService, label: String, onClick: () -> Unit): Button =
+        Button(service).apply {
+            text = label
+            setAllCaps(false)
+            setTextColor(ClaunePalette.AccentDeepArgb)
+            backgroundTintList = ColorStateList.valueOf(ClaunePalette.BackgroundArgb)
+            setOnClickListener { onClick() }
+        }
+
+    private fun horizontalRow(service: AccessibilityService): LinearLayout =
+        LinearLayout(service).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+
+    private fun fullWidthLayout(
+        context: Context,
+        topMargin: Int = 0,
+    ): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            if (topMargin > 0) {
+                this.topMargin = dp(context, topMargin)
+            }
+        }
+
+    private fun buttonLayout(context: Context, marginEnd: Int = 0): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            if (marginEnd > 0) {
+                this.marginEnd = dp(context, marginEnd)
+            }
+        }
 
     private fun roundedRect(context: Context, radiusDp: Int, fillColor: Int, strokeColor: Int): GradientDrawable =
         GradientDrawable().apply {
@@ -356,15 +543,15 @@ class SessionOverlayController(
 
     private fun dp(context: Context, value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
-    private data class RenderedOverlayState(val title: String, val bodyMarkdown: String, val inputHint: String)
+    private data class RenderedOverlayState(val bodyMarkdown: String)
 
-    private companion object {
-        private val OPEN_OVERLAY_STATUSES =
-            setOf(
-                SessionStatus.Running,
-                SessionStatus.Paused,
-                SessionStatus.Completed,
-                SessionStatus.Blocked,
-            )
+    private sealed interface InputMode {
+        val questionId: String?
+
+        data object Text : InputMode {
+            override val questionId: String? = null
+        }
+
+        data class QuestionCustom(override val questionId: String) : InputMode
     }
 }

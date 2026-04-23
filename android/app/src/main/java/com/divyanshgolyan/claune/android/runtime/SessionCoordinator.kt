@@ -40,9 +40,11 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
                 recentSessions = refreshSessionList(selectedSession.path),
                 status = SessionStatus.Running,
                 summaryLine = line,
+                foregroundServiceRunning = true,
                 isStreaming = true,
                 isCompacting = false,
                 pendingSteeringCount = 0,
+                pendingQuestion = null,
                 lastAssistantText = "",
                 timeline = listOf(line),
             )
@@ -70,16 +72,19 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
 
     fun stopSession(reason: String) {
         val line = "Session stopped. $reason"
+        val current = _uiState.value
+        val terminalStatus = current.status.takeIf { it.isTerminalOutcome() }
         _uiState.value =
-            _uiState.value.copy(
-                status = SessionStatus.Cancelled,
-                summaryLine = line,
+            current.copy(
+                status = terminalStatus ?: SessionStatus.Cancelled,
+                summaryLine = terminalStatus?.let { current.summaryLine } ?: line,
                 foregroundServiceRunning = false,
                 isStreaming = false,
                 pendingSteeringCount = 0,
+                pendingQuestion = null,
                 isCompacting = false,
-                timeline = (_uiState.value.timeline + line).takeLast(20),
-                recentSessions = refreshSessionList(_uiState.value.selectedSessionPath),
+                timeline = (current.timeline + line).takeLast(20),
+                recentSessions = refreshSessionList(current.selectedSessionPath),
             )
         logStore.record(_uiState.value)
     }
@@ -95,8 +100,10 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
             _uiState.value.copy(
                 status = SessionStatus.Completed,
                 summaryLine = summary,
+                foregroundServiceRunning = true,
                 isStreaming = false,
                 pendingSteeringCount = 0,
+                pendingQuestion = null,
                 isCompacting = false,
                 timeline = (_uiState.value.timeline + summary).takeLast(20),
                 recentSessions = refreshSessionList(_uiState.value.selectedSessionPath),
@@ -109,8 +116,10 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
             _uiState.value.copy(
                 status = SessionStatus.Blocked,
                 summaryLine = reason,
+                foregroundServiceRunning = true,
                 isStreaming = false,
                 pendingSteeringCount = 0,
+                pendingQuestion = null,
                 isCompacting = false,
                 timeline = (_uiState.value.timeline + reason).takeLast(20),
                 recentSessions = refreshSessionList(_uiState.value.selectedSessionPath),
@@ -126,6 +135,7 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
                 foregroundServiceRunning = true,
                 isStreaming = false,
                 pendingSteeringCount = 0,
+                pendingQuestion = null,
                 isCompacting = false,
                 timeline = (_uiState.value.timeline + reason).takeLast(20),
                 recentSessions = refreshSessionList(_uiState.value.selectedSessionPath),
@@ -156,7 +166,12 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
 
     fun setForegroundServiceRunning(running: Boolean) {
         updateUiState { current ->
-            if (current.foregroundServiceRunning == running) current else current.copy(foregroundServiceRunning = running)
+            val effectiveRunning = running && current.status != SessionStatus.Cancelled
+            if (current.foregroundServiceRunning == effectiveRunning) {
+                current
+            } else {
+                current.copy(foregroundServiceRunning = effectiveRunning)
+            }
         }
     }
 
@@ -187,6 +202,27 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
     fun setPendingSteeringCount(count: Int) {
         updateUiState { current ->
             if (current.pendingSteeringCount == count) current else current.copy(pendingSteeringCount = count)
+        }
+    }
+
+    fun setPendingQuestion(question: PendingQuestionUiState) {
+        updateUiState { current ->
+            if (current.pendingQuestion == question && current.foregroundServiceRunning) {
+                current
+            } else {
+                current.copy(pendingQuestion = question, foregroundServiceRunning = true)
+            }
+        }
+    }
+
+    fun clearPendingQuestion(questionId: String? = null) {
+        updateUiState { current ->
+            val pending = current.pendingQuestion
+            if (pending == null || (questionId != null && pending.id != questionId)) {
+                current
+            } else {
+                current.copy(pendingQuestion = null)
+            }
         }
     }
 
@@ -223,4 +259,6 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
         val selected = sessions.firstOrNull { it.path == selectedPath } ?: return sessions
         return listOf(selected) + sessions.filterNot { it.path == selectedPath }
     }
+
+    private fun SessionStatus.isTerminalOutcome(): Boolean = this == SessionStatus.Completed || this == SessionStatus.Blocked
 }

@@ -1,3 +1,5 @@
+@file:Suppress("ktlint:standard:function-signature")
+
 package com.divyanshgolyan.claune.android.runtime
 
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionSummary
@@ -21,9 +23,19 @@ data class SessionUiState(
     val isStreaming: Boolean = false,
     val isCompacting: Boolean = false,
     val pendingSteeringCount: Int = 0,
+    val pendingQuestion: PendingQuestionUiState? = null,
     val lastAssistantText: String = "",
     val timeline: List<String> = listOf("Prototype scaffold ready. Start a session to exercise the loop skeleton."),
 )
+
+data class PendingQuestionUiState(val id: String, val prompt: String, val options: List<String>)
+
+data class QuestionAnswer(val text: String, val kind: QuestionAnswerKind, val optionIndex: Int? = null)
+
+enum class QuestionAnswerKind {
+    Option,
+    Custom,
+}
 
 enum class SessionStatus {
     Idle,

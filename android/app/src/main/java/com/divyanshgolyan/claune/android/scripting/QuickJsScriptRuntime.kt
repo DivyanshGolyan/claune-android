@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonNull
 import org.mozilla.javascript.CompilerEnvirons
@@ -26,6 +27,7 @@ import org.mozilla.javascript.ast.PropertyGet
 class QuickJsScriptRuntime(
     private val phoneObserver: PhoneObserver,
     private val phoneActuator: PhoneActuator,
+    private val installedAppRegistry: InstalledAppRegistry = EmptyInstalledAppRegistry,
     private val sessionCoordinator: SessionCoordinator,
     private val logStore: SessionLogStore,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
@@ -44,6 +46,7 @@ class QuickJsScriptRuntime(
                 scriptExecutionId = scriptExecutionId,
                 phoneObserver = phoneObserver,
                 phoneActuator = phoneActuator,
+                installedAppRegistry = installedAppRegistry,
                 sessionCoordinator = sessionCoordinator,
                 logStore = logStore,
                 now = now,
@@ -134,6 +137,12 @@ class QuickJsScriptRuntime(
         context.registerJsonFunction("__clauneObservePhoneJson") {
             encodeSnapshot(host.observePhone())
         }
+        context.registerJsonFunction("__clauneListInstalledAppsJson") {
+            encodeInstalledApps(host.listInstalledApps())
+        }
+        context.registerJsonFunction("__clauneLaunchAppJson") { args ->
+            encodeOutcome(host.launchApp(args.stringArg(0)))
+        }
         context.registerJsonFunction("__clauneTapElementJson") { args ->
             encodeOutcome(host.tapElement(args.stringArg(0)))
         }
@@ -194,6 +203,9 @@ class QuickJsScriptRuntime(
 
     private suspend fun encodeSnapshot(snapshot: UiSnapshotPayload): String =
         ScriptJson.codec.encodeToString(UiSnapshotPayload.serializer(), snapshot)
+
+    private suspend fun encodeInstalledApps(apps: List<InstalledAppPayload>): String =
+        ScriptJson.codec.encodeToString(ListSerializer(InstalledAppPayload.serializer()), apps)
 
     private suspend fun encodeOutcome(outcome: HostCallOutcome): String =
         ScriptJson.codec.encodeToString(HostCallOutcome.serializer(), outcome)

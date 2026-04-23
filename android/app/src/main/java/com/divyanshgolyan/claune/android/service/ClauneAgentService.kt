@@ -71,11 +71,7 @@ class ClauneAgentService : Service() {
                 container.agentLoop.submitUserText(message)
             } finally {
                 val status = container.sessionCoordinator.uiState.value.status
-                val sessionOpen =
-                    status == SessionStatus.Running ||
-                        status == SessionStatus.Paused ||
-                        status == SessionStatus.Completed ||
-                        status == SessionStatus.Blocked
+                val sessionOpen = status != SessionStatus.Cancelled && status != SessionStatus.Idle
                 container.sessionCoordinator.setForegroundServiceRunning(sessionOpen)
                 if (!sessionOpen) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -88,7 +84,7 @@ class ClauneAgentService : Service() {
     private fun stopSession() {
         val container = applicationContext.clauneContainer()
         serviceScope.launch {
-            container.agentLoop.stopActiveSession("Stopped from the foreground notification.")
+            container.agentLoop.stopActiveSession("Stopped by user.")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }

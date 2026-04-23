@@ -11,6 +11,8 @@ import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import java.time.Instant
 import kotlinx.coroutines.delay
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -22,6 +24,7 @@ class ScriptHost(
     private val scriptExecutionId: String,
     private val phoneObserver: PhoneObserver,
     private val phoneActuator: PhoneActuator,
+    private val installedAppRegistry: InstalledAppRegistry = EmptyInstalledAppRegistry,
     private val sessionCoordinator: SessionCoordinator,
     private val logStore: SessionLogStore,
     private val now: () -> Instant = { Instant.now() },
@@ -36,6 +39,24 @@ class ScriptHost(
         val snapshot = phoneObserver.captureSnapshot()
         recordSnapshot(snapshot)
         return snapshot.toPayload()
+    }
+
+    suspend fun listInstalledApps(): List<InstalledAppPayload> = recordDataCall(
+        name = "listInstalledApps",
+        arguments = buildJsonObject {},
+        result = installedAppRegistry.listLaunchableApps(),
+        resultSerializer = ListSerializer(InstalledAppPayload.serializer()),
+    )
+
+    suspend fun launchApp(packageName: String): HostCallOutcome = recordCall(
+        name = "launchApp",
+        arguments = buildJsonObject { put("packageName", packageName) },
+    ) {
+        val launchResult = installedAppRegistry.launchPackage(packageName)
+        if (!launchResult.ok) {
+            return@recordCall launchResult
+        }
+        verifyAppLaunch(packageName)
     }
 
     suspend fun tapElement(elementId: String): HostCallOutcome = recordCall(
@@ -359,6 +380,53 @@ class ScriptHost(
         }
     }
 
+    private suspend fun verifyAppLaunch(packageName: String): HostCallOutcome {
+        val timeoutMs = LAUNCH_VERIFICATION_TIMEOUT_MS
+        val deadline = now().plusMillis(timeoutMs)
+        var lastSnapshot: UiSnapshot? = null
+
+        while (true) {
+            val snapshot = phoneObserver.captureSnapshot()
+            recordSnapshot(snapshot)
+            lastSnapshot = snapshot
+
+            if (snapshot.foregroundPackage == packageName) {
+                return HostCallOutcome(
+                    ok = true,
+                    message = "Launched package '$packageName' and verified it became foreground.",
+                )
+            }
+
+            if (now().isAfter(deadline)) {
+                break
+            }
+
+            sleeper(POLL_INTERVAL_MS)
+        }
+
+        val resolvedSnapshot = lastSnapshot
+        val targetWindow = resolvedSnapshot.windowCandidates.firstOrNull { it.packageName == packageName }
+        return HostCallOutcome(
+            ok = false,
+            message =
+            if (targetWindow != null) {
+                "Launch request for package '$packageName' was issued, but Claune is still observing " +
+                    "'${resolvedSnapshot.foregroundPackage}'. The target app is present in accessibility " +
+                    "windows but did not become the selected foreground root."
+            } else {
+                "Launch request for package '$packageName' was issued, but it never became foreground within " +
+                    "${timeoutMs}ms. Android may have blocked the activity start while Claune was backgrounded."
+            },
+            data =
+            buildJsonObject {
+                put("requestedPackage", packageName)
+                put("observedForegroundPackage", resolvedSnapshot.foregroundPackage)
+                put("targetWindowVisible", targetWindow != null)
+                resolvedSnapshot.selectedWindowReason?.let { put("selectedWindowReason", it) }
+            },
+        )
+    }
+
     private suspend fun waitForSelectorInternal(selector: ElementSelectorPayload, timeoutMs: Long): HostCallOutcome {
         val deadline = now().plusMillis(timeoutMs.coerceAtLeast(0L))
         while (true) {
@@ -515,6 +583,26 @@ class ScriptHost(
         return result
     }
 
+    private fun <T> recordDataCall(name: String, arguments: JsonObject, result: T, resultSerializer: KSerializer<T>): T {
+        val startedAt = now()
+        val finishedAt = now()
+        val record =
+            HostCallRecord(
+                hostCallId = "host-call-${finishedAt.toEpochMilli()}-${recordedCalls.size + 1}",
+                scriptExecutionId = scriptExecutionId,
+                sessionId = sessionId,
+                name = name,
+                argumentsJson = ScriptJson.codec.encodeToString(arguments),
+                resultJson = ScriptJson.codec.encodeToString(resultSerializer, result),
+                startedAt = startedAt.toString(),
+                finishedAt = finishedAt.toString(),
+            )
+        recordedCalls += record
+        logStore.recordHostCall(record)
+        sessionCoordinator.logEvent("Script host call $name succeeded.")
+        return result
+    }
+
     private fun recordSnapshot(snapshot: UiSnapshot) {
         sessionCoordinator.setLastKnownApp(snapshot.foregroundPackage)
         logStore.recordSnapshot(snapshot)
@@ -531,6 +619,7 @@ class ScriptHost(
     private companion object {
         private const val POLL_INTERVAL_MS = 250L
         private const val DEFAULT_FOCUS_TIMEOUT_MS = 1500L
+        private const val LAUNCH_VERIFICATION_TIMEOUT_MS = 2500L
     }
 }
 

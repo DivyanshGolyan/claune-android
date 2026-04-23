@@ -6,11 +6,11 @@ import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
-import com.divyanshgolyan.claune.android.llm.tools.AskUserToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.BlockTaskToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.CompleteTaskToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.QuestionToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.SystemPromptBuilder
 import com.divyanshgolyan.claune.android.llm.tools.TerminalOutcomeRecorder
@@ -19,8 +19,12 @@ import com.divyanshgolyan.claune.android.llm.tools.toAgentTool
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
+import com.divyanshgolyan.claune.android.runtime.QuestionAnswer
+import com.divyanshgolyan.claune.android.runtime.QuestionAnswerKind
+import com.divyanshgolyan.claune.android.runtime.QuestionPromptCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
+import com.divyanshgolyan.claune.android.runtime.UserQuestionPrompter
 import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
@@ -53,6 +57,7 @@ class PiAgentModelGateway(
     private val scriptRuntime: ScriptRuntime,
     private val phoneObserver: PhoneObserver,
     private val sessionCoordinator: SessionCoordinator,
+    private val questionPromptCoordinator: QuestionPromptCoordinator,
     private val artifactStore: AgentRunArtifactStore,
     private val codingSessionStore: CodingSessionStore,
     private val agentDir: File,
@@ -150,6 +155,7 @@ class PiAgentModelGateway(
     }
 
     override suspend fun abort() {
+        questionPromptCoordinator.cancelActiveQuestion("Question was cancelled.")
         activeSessionLock.withLock {
             activeAgentSession?.abort()
         }
@@ -239,7 +245,7 @@ class PiAgentModelGateway(
         ExecuteScriptToolDefinition(scriptRuntime, phoneObserver),
         CompleteTaskToolDefinition(terminalOutcomeRecorder),
         BlockTaskToolDefinition(terminalOutcomeRecorder),
-        AskUserToolDefinition(terminalOutcomeRecorder),
+        QuestionToolDefinition(questionPromptCoordinator),
         ReadMemoryToolDefinition(memoryStore),
         EditMemoryToolDefinition(memoryStore),
     )
@@ -365,7 +371,7 @@ class PiAgentModelGateway(
                 ExecuteScriptToolDefinition(FailingScriptRuntime, FailingPhoneObserver),
                 CompleteTaskToolDefinition(TerminalOutcomeRecorder()),
                 BlockTaskToolDefinition(TerminalOutcomeRecorder()),
-                AskUserToolDefinition(TerminalOutcomeRecorder()),
+                QuestionToolDefinition(FailingQuestionPrompter),
                 ReadMemoryToolDefinition(FailingMemoryStore),
                 EditMemoryToolDefinition(FailingMemoryStore),
             ),
@@ -413,4 +419,13 @@ private object FailingMemoryStore : MemoryStore {
     override suspend fun overwrite(content: String) {
         error("Test helper should not overwrite memory")
     }
+}
+
+private object FailingQuestionPrompter : UserQuestionPrompter {
+    override suspend fun askQuestion(
+        toolCallId: String,
+        prompt: String,
+        options: List<String>,
+        signal: pi.ai.core.AbortSignal?,
+    ): QuestionAnswer = QuestionAnswer(options.firstOrNull().orEmpty(), QuestionAnswerKind.Option, optionIndex = 0)
 }

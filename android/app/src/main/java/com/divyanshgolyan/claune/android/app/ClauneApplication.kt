@@ -19,7 +19,9 @@ import com.divyanshgolyan.claune.android.data.local.SettingsStore
 import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
 import com.divyanshgolyan.claune.android.overlay.SessionOverlayController
 import com.divyanshgolyan.claune.android.runtime.AgentLoop
+import com.divyanshgolyan.claune.android.runtime.QuestionPromptCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
+import com.divyanshgolyan.claune.android.scripting.AndroidInstalledAppRegistry
 import com.divyanshgolyan.claune.android.scripting.QuickJsScriptRuntime
 import java.io.File
 
@@ -63,12 +65,14 @@ class ClauneContainer(application: Application) {
         )
     }
     val sessionCoordinator = SessionCoordinator(logStore, codingSessionStore)
+    val questionPromptCoordinator = QuestionPromptCoordinator(sessionCoordinator)
     val accessibilityBridge = AccessibilityBridge(application, sessionCoordinator)
-    val overlayController = SessionOverlayController(application, sessionCoordinator.uiState)
+    val overlayController = SessionOverlayController(application, sessionCoordinator.uiState, questionPromptCoordinator)
     val scriptRuntime =
         QuickJsScriptRuntime(
             phoneObserver = accessibilityBridge,
             phoneActuator = accessibilityBridge,
+            installedAppRegistry = AndroidInstalledAppRegistry(application),
             sessionCoordinator = sessionCoordinator,
             logStore = logStore,
         )
@@ -79,6 +83,7 @@ class ClauneContainer(application: Application) {
             scriptRuntime = scriptRuntime,
             phoneObserver = accessibilityBridge,
             sessionCoordinator = sessionCoordinator,
+            questionPromptCoordinator = questionPromptCoordinator,
             artifactStore = artifactStore,
             codingSessionStore = codingSessionStore,
             agentDir = agentDir,

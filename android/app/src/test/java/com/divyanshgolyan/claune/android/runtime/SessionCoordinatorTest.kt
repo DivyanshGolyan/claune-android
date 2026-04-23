@@ -26,10 +26,11 @@ class SessionCoordinatorTest {
         coordinator.beginRun("Open Settings")
 
         assertNotNull(coordinator.uiState.value.selectedPersistentSessionId)
+        assertTrue(coordinator.uiState.value.foregroundServiceRunning)
     }
 
     @Test
-    fun `complete turn keeps foreground session open`() {
+    fun `complete turn keeps session open until user stops it`() {
         val coordinator = coordinator()
 
         coordinator.beginRun("Open Settings")
@@ -42,7 +43,7 @@ class SessionCoordinatorTest {
     }
 
     @Test
-    fun `blocked turn keeps foreground session open`() {
+    fun `blocked turn keeps session open until user stops it`() {
         val coordinator = coordinator()
 
         coordinator.beginRun("Open Settings")
@@ -51,6 +52,19 @@ class SessionCoordinatorTest {
         coordinator.blockTurn("Blocked on missing accessibility.")
 
         assertEquals(SessionStatus.Blocked, coordinator.uiState.value.status)
+        assertTrue(coordinator.uiState.value.foregroundServiceRunning)
+    }
+
+    @Test
+    fun `completed session can remain open until stop`() {
+        val coordinator = coordinator()
+
+        coordinator.beginRun("Open Settings")
+        coordinator.completeTurn("Completed successfully.")
+
+        coordinator.setForegroundServiceRunning(true)
+
+        assertEquals(SessionStatus.Completed, coordinator.uiState.value.status)
         assertTrue(coordinator.uiState.value.foregroundServiceRunning)
     }
 
@@ -77,6 +91,41 @@ class SessionCoordinatorTest {
 
         assertEquals(SessionStatus.Completed, coordinator.uiState.value.status)
         assertEquals("Completed successfully.", coordinator.uiState.value.summaryLine)
+    }
+
+    @Test
+    fun `stop after completed turn preserves completed outcome`() {
+        val coordinator = coordinator()
+
+        coordinator.beginRun("Open Settings")
+        coordinator.setForegroundServiceRunning(true)
+        coordinator.completeTurn("Completed successfully.")
+
+        coordinator.stopSession("Stopped from the foreground notification.")
+
+        assertEquals(SessionStatus.Completed, coordinator.uiState.value.status)
+        assertEquals("Completed successfully.", coordinator.uiState.value.summaryLine)
+        assertFalse(coordinator.uiState.value.foregroundServiceRunning)
+        assertTrue(
+            coordinator.uiState.value.timeline.any {
+                it == "Session stopped. Stopped from the foreground notification."
+            },
+        )
+    }
+
+    @Test
+    fun `stop after blocked turn preserves blocked outcome`() {
+        val coordinator = coordinator()
+
+        coordinator.beginRun("Open Settings")
+        coordinator.setForegroundServiceRunning(true)
+        coordinator.blockTurn("Blocked on missing accessibility.")
+
+        coordinator.stopSession("Stopped from the foreground notification.")
+
+        assertEquals(SessionStatus.Blocked, coordinator.uiState.value.status)
+        assertEquals("Blocked on missing accessibility.", coordinator.uiState.value.summaryLine)
+        assertFalse(coordinator.uiState.value.foregroundServiceRunning)
     }
 
     @Test
@@ -132,6 +181,25 @@ class SessionCoordinatorTest {
         coordinator.setLastKnownApp("com.android.settings")
 
         assertSame(current, coordinator.uiState.value)
+    }
+
+    @Test
+    fun `stop clears pending question state`() {
+        val coordinator = coordinator()
+
+        coordinator.beginRun("Open Settings")
+        coordinator.setForegroundServiceRunning(true)
+        coordinator.setPendingQuestion(
+            PendingQuestionUiState(
+                id = "tool-call-1",
+                prompt = "Which account should I use?",
+                options = listOf("Personal", "Work"),
+            ),
+        )
+
+        coordinator.stopSession("Stopped by user.")
+
+        assertNull(coordinator.uiState.value.pendingQuestion)
     }
 
     private fun coordinator(): SessionCoordinator = coordinatorWithStore().first

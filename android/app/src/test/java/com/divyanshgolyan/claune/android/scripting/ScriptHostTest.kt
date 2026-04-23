@@ -10,6 +10,7 @@ import com.divyanshgolyan.claune.android.runtime.ScrollDirection
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
+import com.divyanshgolyan.claune.android.runtime.WindowCandidate
 import java.nio.file.Files
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
@@ -110,6 +111,131 @@ class ScriptHostTest {
 
         assertFalse(result.ok)
         assertTrue(result.message.contains("Timed out waiting for package 'com.two.app'"))
+    }
+
+    @Test
+    fun `listInstalledApps returns launchable app inventory and records host call`() = runTest {
+        val logStore = InMemorySessionLogStore()
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot())),
+                phoneActuator = FakePhoneActuator(),
+                installedAppRegistry =
+                FakeInstalledAppRegistry(
+                    apps = listOf(
+                        InstalledAppPayload(
+                            label = "CRED",
+                            packageName = "com.dreamplug.androidapp",
+                            activityName = "com.dreamplug.androidapp.MainActivity",
+                        ),
+                    ),
+                ),
+                sessionCoordinator = testSessionCoordinator(logStore),
+                logStore = logStore,
+            )
+
+        val apps = host.listInstalledApps()
+
+        assertEquals("CRED", apps.single().label)
+        assertEquals("com.dreamplug.androidapp", apps.single().packageName)
+        assertEquals(1, logStore.recentHostCalls().size)
+        assertEquals("listInstalledApps", logStore.recentHostCalls().single().name)
+    }
+
+    @Test
+    fun `launchApp verifies target package became foreground`() = runTest {
+        val logStore = InMemorySessionLogStore()
+        val registry = FakeInstalledAppRegistry()
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(packageName = "com.dreamplug.androidapp"))),
+                phoneActuator = FakePhoneActuator(),
+                installedAppRegistry = registry,
+                sessionCoordinator = testSessionCoordinator(logStore),
+                logStore = logStore,
+            )
+
+        val result = host.launchApp("com.dreamplug.androidapp")
+
+        assertTrue(result.ok)
+        assertEquals("com.dreamplug.androidapp", registry.launchedPackage)
+        assertEquals("launchApp", logStore.recentHostCalls().single().name)
+    }
+
+    @Test
+    fun `launchApp reports blocked activity start when package never becomes foreground`() = runTest {
+        var currentTime = Instant.parse("2026-04-16T00:00:00Z")
+        val logStore = InMemorySessionLogStore()
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(packageName = "com.mi.android.globallauncher"))),
+                phoneActuator = FakePhoneActuator(),
+                installedAppRegistry = FakeInstalledAppRegistry(),
+                sessionCoordinator = testSessionCoordinator(logStore),
+                logStore = logStore,
+                now = { currentTime },
+                sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
+            )
+
+        val result = host.launchApp("in.swiggy.android")
+
+        assertFalse(result.ok)
+        assertTrue(result.message.contains("Android may have blocked the activity start"))
+        assertEquals(
+            "com.mi.android.globallauncher",
+            result.data?.jsonObject?.get("observedForegroundPackage")?.jsonPrimitive?.content,
+        )
+    }
+
+    @Test
+    fun `launchApp surfaces when target app is present but not selected`() = runTest {
+        var currentTime = Instant.parse("2026-04-16T00:00:00Z")
+        val logStore = InMemorySessionLogStore()
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            packageName = "com.divyanshgolyan.claune.android",
+                            windowCandidates =
+                            listOf(
+                                WindowCandidate(
+                                    packageName = "in.swiggy.android",
+                                    className = "android.widget.FrameLayout",
+                                    type = "APPLICATION",
+                                    layer = 0,
+                                    active = false,
+                                    focused = false,
+                                    bounds = listOf(0, 0, 1080, 2400),
+                                    visibleText = listOf("Swiggy"),
+                                    actionableElementCount = 12,
+                                ),
+                            ),
+                            selectedWindowReason = "Selected Claune app root because no better external app window was available.",
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                installedAppRegistry = FakeInstalledAppRegistry(),
+                sessionCoordinator = testSessionCoordinator(logStore),
+                logStore = logStore,
+                now = { currentTime },
+                sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
+            )
+
+        val result = host.launchApp("in.swiggy.android")
+
+        assertFalse(result.ok)
+        assertTrue(result.message.contains("present in accessibility windows"))
+        assertEquals(
+            "true",
+            result.data?.jsonObject?.get("targetWindowVisible")?.jsonPrimitive?.content,
+        )
     }
 
     @Test
@@ -484,6 +610,8 @@ class ScriptHostTest {
         packageName: String = "com.example.app",
         elements: List<UiElement> = listOf(element()),
         focusedElementId: String? = null,
+        windowCandidates: List<WindowCandidate> = emptyList(),
+        selectedWindowReason: String? = null,
     ): UiSnapshot = UiSnapshot(
         snapshotId = "snapshot",
         capturedAt = Instant.parse("2026-04-16T00:00:00Z"),
@@ -491,6 +619,8 @@ class ScriptHostTest {
         visibleText = listOf("Alpha"),
         actionableElements = elements,
         focusedElementId = focusedElementId,
+        windowCandidates = windowCandidates,
+        selectedWindowReason = selectedWindowReason,
     )
 
     private fun element(
@@ -563,4 +693,15 @@ private class FakePhoneActuator(
     override suspend fun pressBack(): ActionResult = ActionResult.Success("Pressed back.")
 
     override suspend fun pressHome(): ActionResult = ActionResult.Success("Pressed home.")
+}
+
+private class FakeInstalledAppRegistry(private val apps: List<InstalledAppPayload> = emptyList()) : InstalledAppRegistry {
+    var launchedPackage: String? = null
+
+    override fun listLaunchableApps(): List<InstalledAppPayload> = apps
+
+    override fun launchPackage(packageName: String): HostCallOutcome {
+        launchedPackage = packageName
+        return HostCallOutcome(ok = true, message = "Launched package '$packageName'.")
+    }
 }

@@ -102,10 +102,10 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
                 accessibilityConnected = state.accessibilityConnected,
                 foregroundServiceRunning = state.foregroundServiceRunning,
                 finishedAt =
-                state.status.takeIf {
-                    it == SessionStatus.Completed || it == SessionStatus.Blocked || it == SessionStatus.Cancelled
-                }?.let { now().toString() }
-                    ?: current.finishedAt,
+                current.finishedAt
+                    ?: state.status.takeIf {
+                        it == SessionStatus.Completed || it == SessionStatus.Blocked || it == SessionStatus.Cancelled
+                    }?.let { now().toString() },
             )
         }
     }

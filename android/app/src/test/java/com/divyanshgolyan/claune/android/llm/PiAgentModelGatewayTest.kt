@@ -8,13 +8,17 @@ import com.divyanshgolyan.claune.android.llm.tools.EditMemoryArguments
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolResult
+import com.divyanshgolyan.claune.android.llm.tools.QuestionToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.TerminalOutcomeRecorder
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
+import com.divyanshgolyan.claune.android.runtime.QuestionAnswer
+import com.divyanshgolyan.claune.android.runtime.QuestionAnswerKind
 import com.divyanshgolyan.claune.android.runtime.UiElement
 import com.divyanshgolyan.claune.android.runtime.UiSnapshot
+import com.divyanshgolyan.claune.android.runtime.UserQuestionPrompter
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionResult
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
@@ -92,12 +96,14 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("- execute_script:"))
         assertTrue(prompt.contains("- complete_task:"))
         assertTrue(prompt.contains("- block_task:"))
-        assertTrue(prompt.contains("- ask_user:"))
+        assertTrue(prompt.contains("- question:"))
+        assertTrue(!prompt.contains("- ask_user:"))
         assertTrue(prompt.contains("- read_memory:"))
         assertTrue(prompt.contains("- edit_memory:"))
         assertTrue(prompt.contains("Terminal outcome contract:"))
         assertTrue(prompt.contains("After calling a terminal outcome tool, do not call more phone-control tools"))
         assertTrue(prompt.contains("You may send a concise user-facing final message after the terminal tool call"))
+        assertTrue(prompt.contains("Use question when you need a user decision before continuing."))
         assertTrue(prompt.contains("The TypeScript contract below is the source of truth"))
         assertTrue(prompt.contains("Prefer visible direct controls by text or label."))
         assertTrue(prompt.contains("Use scrollScreen for the current page."))
@@ -138,7 +144,7 @@ class PiAgentModelGatewayTest {
     }
 
     @Test
-    fun `result parser maps completion blocked and message responses`() {
+    fun `result parser maps completion blocked and legacy message responses`() {
         val completion = PiAgentResultParser.parse("""{"kind":"completion","summary":"Done."}""")
         val blocked = PiAgentResultParser.parse("""{"kind":"blocked","reason":"Could not proceed."}""")
         val message = PiAgentResultParser.parse("""{"kind":"message","messageToUser":"Need input."}""")
@@ -235,6 +241,78 @@ class PiAgentModelGatewayTest {
     }
 
     @Test
+    fun `question tool validates strict option contract`() {
+        val tool = QuestionToolDefinition(FakeQuestionPrompter())
+
+        val valid =
+            tool.validateArguments(
+                buildJsonObject {
+                    put("prompt", "Which account should I use?")
+                    put(
+                        "options",
+                        kotlinx.serialization.json.JsonArray(
+                            listOf(
+                                kotlinx.serialization.json.JsonPrimitive("Personal"),
+                                kotlinx.serialization.json.JsonPrimitive("Work"),
+                            ),
+                        ),
+                    )
+                },
+            )
+
+        assertEquals("Which account should I use?", valid.prompt)
+        assertEquals(listOf("Personal", "Work"), valid.options)
+        assertFailsWithIllegalArgument {
+            tool.validateArguments(
+                buildJsonObject {
+                    put("prompt", "Pick one")
+                    put(
+                        "options",
+                        kotlinx.serialization.json.JsonArray(
+                            listOf(
+                                kotlinx.serialization.json.JsonPrimitive("One"),
+                                kotlinx.serialization.json.JsonPrimitive("Two"),
+                                kotlinx.serialization.json.JsonPrimitive("Three"),
+                                kotlinx.serialization.json.JsonPrimitive("Four"),
+                            ),
+                        ),
+                    )
+                },
+            )
+        }
+    }
+
+    @Test
+    fun `question tool returns selected answer as tool result`() = runTest {
+        val tool =
+            QuestionToolDefinition(
+                FakeQuestionPrompter(
+                    QuestionAnswer(
+                        text = "Work",
+                        kind = QuestionAnswerKind.Option,
+                        optionIndex = 1,
+                    ),
+                ),
+            )
+
+        val result =
+            tool.execute(
+                "tool-call-1",
+                com.divyanshgolyan.claune.android.llm.tools.QuestionArguments(
+                    prompt = "Which account?",
+                    options = listOf("Personal", "Work"),
+                ),
+                null,
+                null,
+            )
+
+        assertEquals("User selected: Work", (result.content.single() as pi.ai.core.TextContent).text)
+        assertEquals("option", result.details.jsonObject["answerType"]?.jsonPrimitive?.content)
+        assertEquals("Work", result.details.jsonObject["answer"]?.jsonPrimitive?.content)
+        assertEquals("1", result.details.jsonObject["optionIndex"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `read memory tool returns current markdown`() = runTest {
         val tool = ReadMemoryToolDefinition(FakeMemoryStore("# Claune Memory\n\n- Use Settings first.\n"))
 
@@ -308,4 +386,24 @@ private class FakeMemoryStore(private var content: String) : MemoryStore {
     override suspend fun overwrite(content: String) {
         this.content = content.trimEnd() + "\n"
     }
+}
+
+private class FakeQuestionPrompter(
+    private val answer: QuestionAnswer = QuestionAnswer("Personal", QuestionAnswerKind.Option, optionIndex = 0),
+) : UserQuestionPrompter {
+    override suspend fun askQuestion(
+        toolCallId: String,
+        prompt: String,
+        options: List<String>,
+        signal: pi.ai.core.AbortSignal?,
+    ): QuestionAnswer = answer
+}
+
+private fun assertFailsWithIllegalArgument(block: () -> Unit) {
+    try {
+        block()
+    } catch (expected: IllegalArgumentException) {
+        return
+    }
+    error("Expected IllegalArgumentException")
 }

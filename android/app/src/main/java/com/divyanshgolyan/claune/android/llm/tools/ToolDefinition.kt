@@ -1,9 +1,13 @@
+@file:Suppress("ktlint:standard:function-signature")
+
 package com.divyanshgolyan.claune.android.llm.tools
 
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import pi.agent.core.AgentTool
@@ -59,3 +63,10 @@ internal fun stringProperty(description: String): JsonObject = buildJsonObject {
 
 internal fun JsonObject.requiredString(name: String): String =
     this[name]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: error("Missing $name")
+
+internal fun JsonObject.requiredStringList(name: String): List<String> =
+    this[name]
+        ?.jsonArray
+        ?.map { it.jsonPrimitive.contentOrNull?.trim().orEmpty() }
+        ?.takeIf { values -> values.all { it.isNotBlank() } }
+        ?: error("Missing $name")

@@ -457,7 +457,7 @@ private fun SessionDetailScreen(
                         listeningError = listeningError,
                         canEdit = canEdit && !isListening,
                         canSend = canSend && !isListening,
-                        canStop = sessionState.status == SessionStatus.Running,
+                        canStop = sessionState.foregroundServiceRunning,
                         inputHelpText = inputHelpText,
                         focusRequester = focusRequester,
                         onGoalChanged = onGoalChanged,
@@ -1270,8 +1270,8 @@ private fun elapsedLabel(seconds: Int): String {
 
 private fun sessionStatusBannerText(status: SessionStatus, lastKnownApp: String?): String? = when (status) {
     SessionStatus.Running -> "Working${lastKnownApp?.let { " in $it" } ?: ""}"
-    SessionStatus.Blocked -> "Blocked"
-    SessionStatus.Paused -> "Paused"
+    SessionStatus.Blocked,
+    SessionStatus.Paused,
     SessionStatus.Completed,
     SessionStatus.Cancelled,
     SessionStatus.Idle,

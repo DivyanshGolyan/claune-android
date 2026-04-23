@@ -27,13 +27,10 @@ internal object SystemPromptBuilder {
             appendLine(toolSnippets)
             appendLine()
             appendLine("Terminal outcome contract:")
-            appendLine(
-                "When the goal is complete, blocked, or needs the user, " +
-                    "record the outcome by calling exactly one terminal outcome tool.",
-            )
+            appendLine("When the goal is complete or blocked, record the outcome by calling exactly one terminal outcome tool.")
             appendLine("Use complete_task only after verifying the requested outcome on the phone.")
             appendLine("Use block_task when progress is impossible, unsafe, or only partially complete.")
-            appendLine("Use ask_user when you need a user decision or clarification.")
+            appendLine("Use question when you need a user decision before continuing.")
             appendLine("After calling a terminal outcome tool, do not call more phone-control tools.")
             appendLine(
                 "You may send a concise user-facing final message after the terminal tool call " +
@@ -68,6 +65,7 @@ internal object SystemPromptBuilder {
                     "After any UI-changing action, re-observe or use postActionSnapshot before the next action.",
                     "Refs and element ids are snapshot-scoped. Never invent them.",
                     "If a wait, tap, launch, or selector assumption fails, re-observe and adapt instead of repeating it.",
+                    "When opening an app and the package is unknown, call listInstalledApps() and launchApp(packageName) instead of using Play Store or guessing package names.",
                     "Prefer the fewest scripts that safely complete the task; one script may observe, act, wait, and return a compact summary.",
                 ),
             )
@@ -135,6 +133,14 @@ internal object SystemPromptBuilder {
             appendLine("claune.typeIntoFocused(\"target query\");")
             appendLine("screen = claune.observePhone();")
             appendLine("return { stage: \"typed_query\", focusedElementId: screen.focusedElementId };")
+            appendLine()
+            appendLine("Example app launch script:")
+            appendLine("const apps = claune.listInstalledApps();")
+            appendLine("const target = apps.find(app => app.label.toLowerCase() === \"cred\");")
+            appendLine("if (!target) return { stage: \"app_not_found\", knownApps: apps.slice(0, 10) };")
+            appendLine("claune.launchApp(target.packageName);")
+            appendLine("claune.waitForState(\"package\", target.packageName, 5000);")
+            appendLine("return { stage: \"app_launched\", packageName: target.packageName };")
             appendLine()
             appendLine("Today is ${LocalDate.now()}.")
             appendLine()

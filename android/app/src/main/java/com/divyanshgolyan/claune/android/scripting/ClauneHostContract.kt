@@ -58,6 +58,12 @@ internal object ClauneHostContract {
             appendLine("  selectedWindowReason?: string | null;")
             appendLine("}")
             appendLine()
+            appendLine("export interface InstalledApp {")
+            appendLine("  label: string;")
+            appendLine("  packageName: string;")
+            appendLine("  activityName?: string | null;")
+            appendLine("}")
+            appendLine()
             appendLine("export interface ElementSelector {")
             appendLine("  ref?: string;")
             appendLine("  label?: string;")
@@ -120,7 +126,7 @@ internal object ClauneHostContract {
 
     val scriptLabSummary: String =
         "Run JS directly against the embedded runtime using the generated Claune host contract. " +
-            "The `claune` global exposes snapshot, selector, focused input, tap, typing, scroll, navigation, and wait helpers."
+            "The `claune` global exposes installed-app discovery, app launch, snapshot, selector, focused input, tap, typing, scroll, navigation, and wait helpers."
 
     private val hostFunctions =
         listOf(
@@ -131,6 +137,21 @@ internal object ClauneHostContract {
                 documentation = "Capture the latest phone snapshot. Re-observe after every UI-changing action before reusing refs or ids.",
                 parameters = emptyList(),
                 throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "listInstalledApps",
+                nativeBinding = "__clauneListInstalledAppsJson",
+                returnType = "InstalledApp[]",
+                documentation = "List launchable installed apps with labels, package names, and launcher activity names.",
+                parameters = emptyList(),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "launchApp",
+                nativeBinding = "__clauneLaunchAppJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Launch an installed app by package name. Use listInstalledApps first when the package name is unknown.",
+                parameters = listOf(HostParameter("packageName", "string", "String(%s)")),
             ),
             HostFunction(
                 name = "tapRef",

@@ -76,7 +76,10 @@ class QuickJsScriptRuntimeTest {
             assertTrue(bootstrap.contains("$methodName("))
         }
         assertTrue(declarations.contains("interface ClauneHost"))
+        assertTrue(declarations.contains("interface InstalledApp"))
         assertTrue(declarations.contains("label?: string;"))
+        assertTrue(declarations.contains("listInstalledApps(): InstalledApp[];"))
+        assertTrue(declarations.contains("launchApp(packageName: string): HostSuccessOutcome;"))
         assertTrue(declarations.contains("tapText(text: string, exact: boolean): HostSuccessOutcome;"))
         assertTrue(declarations.contains("focusSelector(selector: ElementSelector, timeoutMs: number): HostSuccessOutcome;"))
         assertTrue(declarations.contains("scrollRef(ref: string, direction: \"up\" | \"down\"): HostSuccessOutcome;"))
@@ -84,6 +87,8 @@ class QuickJsScriptRuntimeTest {
         assertTrue(declarations.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
         assertTrue(bootstrap.contains("globalThis.claune = Object.freeze"))
         assertTrue(bootstrap.contains("return JSON.parse(__clauneObservePhoneJson());"))
+        assertTrue(bootstrap.contains("return JSON.parse(__clauneListInstalledAppsJson());"))
+        assertTrue(bootstrap.contains("__clauneRequireOutcome(\"launchApp\", __clauneLaunchAppJson(String(packageName)));"))
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"tapText\", __clauneTapTextJson(String(text), Boolean(exact ?? true)));"))
         assertTrue(
             bootstrap.contains(

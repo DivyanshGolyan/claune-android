@@ -60,6 +60,9 @@ data class UiSnapshotPayload(
 )
 
 @Serializable
+data class InstalledAppPayload(val label: String, val packageName: String, val activityName: String? = null)
+
+@Serializable
 data class WindowCandidatePayload(
     val packageName: String,
     val className: String? = null,
