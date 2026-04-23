@@ -22,6 +22,7 @@ import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import com.divyanshgolyan.claune.android.runtime.WindowCandidate
 import java.time.Instant
 import java.util.Locale
+import kotlinx.serialization.Serializable
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 
@@ -199,6 +200,16 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
         } else {
             ActionResult.Blocked("Accessibility service is not ready for home actions.")
         }
+    }
+
+    fun captureRawTreeDump(): RawTreeDump? {
+        val rootSelection = selectRoot(service) ?: return null
+        return RawTreeDump(
+            capturedAt = Instant.now().toString(),
+            selectedWindowReason = rootSelection.reason,
+            foregroundPackage = rootSelection.root.packageName?.toString().orEmpty().ifBlank { "unknown" },
+            nodes = dumpNode(rootSelection.root, emptyList()),
+        )
     }
 
     private fun flattenNode(
@@ -403,6 +414,35 @@ class AccessibilityBridge(private val context: Context, private val sessionCoord
             (node.childCount > 0 || !ownText.isNullOrBlank())
     }
 
+    private fun dumpNode(node: AccessibilityNodeInfo, path: List<Int>): RawNodeDump {
+        val children =
+            buildList {
+                for (index in 0 until node.childCount) {
+                    val child = node.getChild(index) ?: continue
+                    add(dumpNode(child, path + index))
+                }
+            }
+        return RawNodeDump(
+            path = path.joinToString(separator = "_").ifBlank { "root" },
+            className = node.className?.toString(),
+            packageName = node.packageName?.toString(),
+            text = node.text?.toString(),
+            contentDescription = node.contentDescription?.toString(),
+            resourceId = node.viewIdResourceName,
+            visibleToUser = node.isVisibleToUser,
+            clickable = node.isClickable,
+            focusable = node.isFocusable,
+            focused = node.isFocused,
+            editable = node.isEditable,
+            enabled = node.isEnabled,
+            scrollable = node.isScrollable,
+            importantForAccessibility = node.isImportantForAccessibility,
+            bounds = node.visibleSnapshotBounds() ?: node.boundsRect(),
+            childCount = node.childCount,
+            children = children,
+        )
+    }
+
     private fun collectVisibleText(node: AccessibilityNodeInfo, collector: MutableSet<String>, limit: Int) {
         if (collector.size >= limit) {
             return
@@ -528,6 +568,35 @@ private fun boundsListCenterX(bounds: List<Int>): Int = (bounds[0] + bounds[2]) 
 private fun boundsListCenterY(bounds: List<Int>): Int = (bounds[1] + bounds[3]) / 2
 
 private data class RootSelection(val root: AccessibilityNodeInfo, val reason: String, val windowCandidates: List<WindowCandidate>)
+
+@Serializable
+data class RawTreeDump(
+    val capturedAt: String,
+    val selectedWindowReason: String,
+    val foregroundPackage: String,
+    val nodes: RawNodeDump,
+)
+
+@Serializable
+data class RawNodeDump(
+    val path: String,
+    val className: String? = null,
+    val packageName: String? = null,
+    val text: String? = null,
+    val contentDescription: String? = null,
+    val resourceId: String? = null,
+    val visibleToUser: Boolean,
+    val clickable: Boolean,
+    val focusable: Boolean,
+    val focused: Boolean,
+    val editable: Boolean,
+    val enabled: Boolean,
+    val scrollable: Boolean,
+    val importantForAccessibility: Boolean,
+    val bounds: List<Int>,
+    val childCount: Int,
+    val children: List<RawNodeDump>,
+)
 
 private data class RootCandidate(
     val root: AccessibilityNodeInfo,

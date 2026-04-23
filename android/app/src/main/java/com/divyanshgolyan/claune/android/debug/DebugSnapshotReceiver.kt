@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class DebugSnapshotReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -23,7 +24,8 @@ class DebugSnapshotReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.Default).launch {
             runCatching {
-                val snapshot = context.clauneContainer().accessibilityBridge.captureSnapshot()
+                val container = context.clauneContainer()
+                val snapshot = container.accessibilityBridge.captureSnapshot()
                 val outputFile = File(context.filesDir, "debug-snapshot.json")
                 outputFile.writeText(
                     ScriptJson.codec.encodeToString(
@@ -31,6 +33,11 @@ class DebugSnapshotReceiver : BroadcastReceiver() {
                         snapshot.toPayload(),
                     ),
                 )
+                container.accessibilityBridge.captureRawTreeDump()?.let { rawTree ->
+                    File(context.filesDir, "debug-raw-tree.json").writeText(
+                        PRETTY_JSON.encodeToString(rawTree),
+                    )
+                }
             }
             pendingResult.finish()
         }
@@ -38,5 +45,6 @@ class DebugSnapshotReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_DUMP_SNAPSHOT = "com.divyanshgolyan.claune.android.debug.DUMP_SNAPSHOT"
+        private val PRETTY_JSON = Json { prettyPrint = true }
     }
 }
