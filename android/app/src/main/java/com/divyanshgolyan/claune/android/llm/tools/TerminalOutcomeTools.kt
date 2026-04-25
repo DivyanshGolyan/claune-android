@@ -43,8 +43,9 @@ internal class FinishRunToolDefinition(private val recorder: TerminalOutcomeReco
         listOf(
             "Use finish_run exactly once when the current request is resolved.",
             "Use status completed only after phone evidence verifies the requested outcome.",
+            "Use ask_user instead of finish_run when the next step depends on a user choice.",
             "Use status blocked when progress is impossible, unsafe, or incomplete.",
-            "The finish_run message is shown to the user. Do not send another assistant message after finish_run.",
+            "The finish_run message is shown to the user and must be a final statement, not a question.",
         )
     override val parameters: JsonObject =
         objectParameters(
@@ -104,5 +105,6 @@ private fun terminalToolResult(message: String, status: String, value: String, e
     return AgentToolResult(
         content = listOf(TextContent(message)),
         details = details,
+        terminal = true,
     )
 }

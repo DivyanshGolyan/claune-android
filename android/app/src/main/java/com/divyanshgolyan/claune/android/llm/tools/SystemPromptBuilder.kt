@@ -31,9 +31,9 @@ internal object SystemPromptBuilder {
                 listOf(
                     "When the current request is resolved, call finish_run exactly once.",
                     "Use status completed only after verifying the requested outcome on the phone.",
+                    "If the next step needs a user choice, call ask_user instead of finish_run.",
                     "Use status blocked when progress is impossible, unsafe, or incomplete.",
-                    "The finish_run message is shown to the user.",
-                    "After finish_run, do not send another assistant message or call another phone-control tool.",
+                    "The finish_run message is shown to the user and must be a final statement, not a question.",
                 ),
             )
             section(
@@ -151,7 +151,7 @@ internal object SystemPromptBuilder {
             appendLine()
             appendLine("Today is ${LocalDate.now()}.")
             appendLine()
-            appendLine("Before ending a resolved run, call finish_run exactly once.")
+            appendLine("Before ending a resolved run, call finish_run exactly once with a final statement.")
         }.trim()
     }
 }

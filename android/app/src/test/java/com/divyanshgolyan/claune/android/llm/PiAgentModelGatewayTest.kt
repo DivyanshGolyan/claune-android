@@ -106,7 +106,7 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("- edit_memory:"))
         assertTrue(prompt.contains("Run outcome contract:"))
         assertTrue(prompt.contains("User decision contract:"))
-        assertTrue(prompt.contains("After finish_run, do not send another assistant message or call another phone-control tool."))
+        assertTrue(prompt.contains("The finish_run message is shown to the user and must be a final statement, not a question."))
         assertTrue(prompt.contains("Use ask_user only when a user decision is needed before continuing the same run."))
         assertTrue(prompt.contains("The TypeScript contract below is the source of truth"))
         assertTrue(prompt.contains("Prefer visible direct controls by text or label."))
@@ -201,6 +201,7 @@ class PiAgentModelGatewayTest {
         assertEquals("completed", result.details.jsonObject["status"]?.jsonPrimitive?.content)
         assertEquals("Added the requested items.", result.details.jsonObject["value"]?.jsonPrimitive?.content)
         assertEquals("Cart shows apples and oranges.", result.details.jsonObject["evidence"]?.jsonPrimitive?.content)
+        assertTrue(result.terminal)
     }
 
     @Test
