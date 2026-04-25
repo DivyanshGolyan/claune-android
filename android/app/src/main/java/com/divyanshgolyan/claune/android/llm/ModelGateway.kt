@@ -34,15 +34,15 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import pi.agent.core.AgentEvent
 import pi.agent.core.AgentThinkingLevel
-import pi.ai.core.ANTHROPIC_PROVIDER
 import pi.ai.core.Message
 import pi.ai.core.Model
 import pi.ai.core.TextContent
 import pi.ai.core.ThinkingBudgets
-import pi.ai.core.getModel
 import pi.coding.agent.core.AgentSession
 
 interface ModelGateway {
+    fun currentModelName(): String
+
     suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput
 
     suspend fun steer(message: String): Boolean
@@ -67,10 +67,14 @@ class PiAgentModelGateway(
     private var activeSessionPath: String? = null
     private var activeSystemPrompt: String? = null
     private var activeApiKey: String? = null
+    private var activeModelProvider: String? = null
+    private var activeModelId: String? = null
     private var activeSessionUnsubscribe: (() -> Unit)? = null
     private var activeRunId: String? = null
     private var activeEventTrace = CopyOnWriteArrayList<SerializedAgentEvent>()
     private val terminalOutcomeRecorder = TerminalOutcomeRecorder()
+
+    override fun currentModelName(): String = ClauneModelCatalog.selectedModelName(settingsStore.state.value)
 
     override suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput {
         val prompt = PiAgentPromptFormatter.format(input)
@@ -82,11 +86,10 @@ class PiAgentModelGateway(
             artifactStore.writeModelInput(input.runId, prompt)
         }
 
-        val apiKey = settingsStore.state.value.anthropicApiKey
+        val modelConfig = ClauneModelCatalog.resolve(settingsStore.state.value)
+        val apiKey = modelConfig.apiKey
         if (apiKey.isBlank()) {
-            return ModelTurnOutput.Blocked(
-                "Anthropic API key is missing. Open Settings in the app, add your API key, and retry.",
-            )
+            return ModelTurnOutput.Blocked(modelConfig.missingKeyMessage)
         }
 
         if (input.snapshot.actionableElements.isEmpty()) {
@@ -95,7 +98,7 @@ class PiAgentModelGateway(
             )
         }
 
-        val agentSession = ensureMainSession(input, systemPrompt, apiKey, mainTools)
+        val agentSession = ensureMainSession(input, systemPrompt, modelConfig.model, apiKey, mainTools)
         activeRunId = input.runId
         activeEventTrace = CopyOnWriteArrayList()
         sessionCoordinator.logEvent("Agent started.")
@@ -117,7 +120,7 @@ class PiAgentModelGateway(
                 }
                 runCatching { artifactStore.writeFinalOutput(input.runId, parsedResult.toArtifactText()) }
                 if (assistantError.isNullOrBlank() && terminalOutcome != null) {
-                    runMemoryReflection(input, parsedResult, apiKey)
+                    runMemoryReflection(input, parsedResult, modelConfig.model, apiKey)
                 }
                 parsedResult
             } catch (cancelled: CancellationException) {
@@ -168,12 +171,13 @@ class PiAgentModelGateway(
     private suspend fun createMainSession(
         input: ModelTurnInput,
         systemPrompt: String,
+        model: Model<*>,
         apiKey: String,
         tools: List<ToolDefinition<*>>,
     ): AgentSession = sessionFactory.create(
         sessionPath = input.persistentSessionPath,
         systemPrompt = systemPrompt,
-        model = model(),
+        model = model,
         tools = agentTools(tools),
         apiKey = apiKey,
         thinkingLevel = AgentThinkingLevel.MEDIUM,
@@ -184,21 +188,28 @@ class PiAgentModelGateway(
     private suspend fun ensureMainSession(
         input: ModelTurnInput,
         systemPrompt: String,
+        model: Model<*>,
         apiKey: String,
         tools: List<ToolDefinition<*>>,
     ): AgentSession = activeSessionLock.withLock {
-        val needsReplacement =
-            activeAgentSession == null ||
-                activeSessionPath != input.persistentSessionPath ||
-                activeSystemPrompt != systemPrompt ||
-                activeApiKey != apiKey
+        val needsReplacement = when {
+            activeAgentSession == null -> true
+            activeSessionPath != input.persistentSessionPath -> true
+            activeSystemPrompt != systemPrompt -> true
+            activeApiKey != apiKey -> true
+            activeModelProvider != model.provider -> true
+            activeModelId != model.id -> true
+            else -> false
+        }
         if (needsReplacement) {
             activeSessionUnsubscribe?.invoke()
             activeAgentSession?.dispose()
-            val session = createMainSession(input, systemPrompt, apiKey, tools)
+            val session = createMainSession(input, systemPrompt, model, apiKey, tools)
             activeSessionPath = input.persistentSessionPath
             activeSystemPrompt = systemPrompt
             activeApiKey = apiKey
+            activeModelProvider = model.provider
+            activeModelId = model.id
             activeAgentSession = session
             activeSessionUnsubscribe =
                 session.subscribe { sessionEvent ->
@@ -240,10 +251,6 @@ class PiAgentModelGateway(
         activeAgentSession!!
     }
 
-    private fun model(): Model<String> = requireNotNull(getModel(ANTHROPIC_PROVIDER, MODEL_NAME)) {
-        "Anthropic model $MODEL_NAME is not registered in pi-ai-core."
-    }
-
     private fun mainToolDefinitions(): List<ToolDefinition<*>> = listOf(
         ExecuteScriptToolDefinition(scriptRuntime, phoneObserver),
         FinishRunToolDefinition(terminalOutcomeRecorder),
@@ -262,7 +269,13 @@ class PiAgentModelGateway(
         tools = tools,
     )
 
-    private suspend fun runMemoryReflection(input: ModelTurnInput, result: ModelTurnOutput, apiKey: String) {
+    @Suppress("ktlint:standard:function-signature")
+    private suspend fun runMemoryReflection(
+        input: ModelTurnInput,
+        result: ModelTurnOutput,
+        model: Model<*>,
+        apiKey: String,
+    ) {
         if (result !is ModelTurnOutput.Completion && result !is ModelTurnOutput.Blocked) {
             return
         }
@@ -285,7 +298,7 @@ class PiAgentModelGateway(
             sessionFactory.create(
                 sessionPath = input.persistentSessionPath,
                 systemPrompt = MemoryReflectionPromptBuilder.systemPrompt(memoryBeforeReflection),
-                model = model(),
+                model = model,
                 tools = agentTools(reflectionTools),
                 apiKey = apiKey,
                 thinkingLevel = AgentThinkingLevel.MEDIUM,
@@ -364,8 +377,7 @@ class PiAgentModelGateway(
     }
 
     companion object {
-        const val MODEL_NAME = "claude-haiku-4-5"
-        const val PROMPT_VERSION = "pi-agent-anthropic-v7"
+        const val PROMPT_VERSION = "pi-agent-provider-settings-v8"
 
         internal fun systemPromptForTests(memoryContent: String = "# Claune Memory\n\n"): String = SystemPromptBuilder.build(
             memoryContent = memoryContent,

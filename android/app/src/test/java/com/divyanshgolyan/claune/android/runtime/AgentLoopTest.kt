@@ -58,6 +58,8 @@ private object FakePhoneObserver : PhoneObserver {
 }
 
 private object SlowModelGateway : ModelGateway {
+    override fun currentModelName(): String = "test-model"
+
     override suspend fun nextStep(input: ModelTurnInput): ModelTurnOutput {
         delay(50)
         return ModelTurnOutput.Completion("Done")

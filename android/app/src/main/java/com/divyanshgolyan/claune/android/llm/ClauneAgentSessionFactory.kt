@@ -56,11 +56,7 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
         resourceLoader.reload()
 
         val restored = sessionManager.buildSessionContext()
-        val restoredModel =
-            restored.model?.let { prior ->
-                modelRegistry.find(prior.provider, prior.modelId)
-            }
-        val resolvedModel = restoredModel ?: model
+        val resolvedModel = model
         val resolvedThinkingLevel =
             if (resolvedModel.reasoning) {
                 parseThinkingLevel(restored.thinkingLevel) ?: thinkingLevel
@@ -93,8 +89,13 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
                 ),
             )
 
-        if (restored.messages.isEmpty()) {
+        val restoredModelMatches =
+            restored.model?.provider == resolvedModel.provider &&
+                restored.model?.modelId == resolvedModel.id
+        if (restored.messages.isEmpty() || !restoredModelMatches) {
             sessionManager.appendModelChange(resolvedModel.provider, resolvedModel.id)
+        }
+        if (restored.messages.isEmpty()) {
             sessionManager.appendThinkingLevelChange(resolvedThinkingLevel.name.lowercase())
         }
 

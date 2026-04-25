@@ -39,7 +39,7 @@ class AgentLoop(
                     persistentSessionId = selectedSession.sessionId,
                     userMessage = userMessage,
                     startedAt = java.time.Instant.now().toString(),
-                    model = PiAgentModelGateway.MODEL_NAME,
+                    model = modelGateway.currentModelName(),
                     promptVersion = PiAgentModelGateway.PROMPT_VERSION,
                 ),
             )
