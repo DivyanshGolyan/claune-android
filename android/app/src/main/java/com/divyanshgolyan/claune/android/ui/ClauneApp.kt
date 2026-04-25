@@ -90,10 +90,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.divyanshgolyan.claune.android.BuildConfig
+import com.divyanshgolyan.claune.android.data.local.ClauneModel
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetail
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetailEntry
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetailKind
 import com.divyanshgolyan.claune.android.data.local.SettingsState
+import com.divyanshgolyan.claune.android.llm.ClauneModelCatalog
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import kotlinx.coroutines.flow.Flow
@@ -307,7 +309,9 @@ internal fun ClauneApp(
                 SettingsScreen(
                     settingsState = uiState.settingsState,
                     accessibilityConnected = uiState.sessionState.accessibilityConnected,
-                    onSaveKey = { onEvent(ClauneUiEvent.UpdateAnthropicKey(it)) },
+                    onSelectModel = { onEvent(ClauneUiEvent.UpdateSelectedModel(it)) },
+                    onSaveAnthropicKey = { onEvent(ClauneUiEvent.UpdateAnthropicKey(it)) },
+                    onSaveGeminiKey = { onEvent(ClauneUiEvent.UpdateGeminiKey(it)) },
                     onOpenAccessibilitySettings = { onEvent(ClauneUiEvent.OpenAccessibilitySettings) },
                     onDebugOverlayVisibleChanged = { onEvent(ClauneUiEvent.SetDebugOverlayVisible(it)) },
                     onNavigateBack = { navController.navigateUp() },
@@ -752,17 +756,24 @@ private fun SessionHistoryRow(entry: SessionHistoryEntry, onOpenSession: () -> U
 private fun SettingsScreen(
     settingsState: SettingsState,
     accessibilityConnected: Boolean,
-    onSaveKey: (String) -> Unit,
+    onSelectModel: (ClauneModel) -> Unit,
+    onSaveAnthropicKey: (String) -> Unit,
+    onSaveGeminiKey: (String) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onDebugOverlayVisibleChanged: (Boolean) -> Unit,
     onNavigateBack: () -> Unit,
 ) {
-    var apiKeyDraft by rememberSaveable { mutableStateOf(settingsState.anthropicApiKey) }
-    var showKey by rememberSaveable { mutableStateOf(false) }
+    var anthropicKeyDraft by rememberSaveable { mutableStateOf(settingsState.anthropicApiKey) }
+    var geminiKeyDraft by rememberSaveable { mutableStateOf(settingsState.geminiApiKey) }
+    var showKeys by rememberSaveable { mutableStateOf(false) }
     var debugOverlayVisible by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(settingsState.anthropicApiKey) {
-        apiKeyDraft = settingsState.anthropicApiKey
+        anthropicKeyDraft = settingsState.anthropicApiKey
+    }
+
+    LaunchedEffect(settingsState.geminiApiKey) {
+        geminiKeyDraft = settingsState.geminiApiKey
     }
 
     Scaffold(
@@ -798,7 +809,7 @@ private fun SettingsScreen(
                         color = ClaunePalette.Ink,
                     )
                     Text(
-                        text = "Keep the agent key on-device and check whether phone control is ready.",
+                        text = "Keep model keys on-device and check whether phone control is ready.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = ClaunePalette.InkSoft,
                     )
@@ -818,21 +829,39 @@ private fun SettingsScreen(
                             .padding(ClauneLayout.CardPadding),
                         verticalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
                     ) {
-                        SectionLabel("Anthropic key")
+                        SectionLabel("Model")
                         Text(
-                            text = "The app now reads the API key from here instead of requiring a rebuild.",
+                            text = "The next run uses the selected model.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = ClaunePalette.InkSoft,
                         )
+                        Row(horizontalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap)) {
+                            ClauneModelCatalog.options.forEach { option ->
+                                val selected = settingsState.selectedModel == option.id
+                                if (selected) {
+                                    ClaunePrimaryButton(
+                                        text = option.label,
+                                        onClick = { onSelectModel(option.id) },
+                                    )
+                                } else {
+                                    ClauneSecondaryButton(
+                                        text = option.label,
+                                        onClick = { onSelectModel(option.id) },
+                                    )
+                                }
+                            }
+                        }
+                        HorizontalDivider(color = ClaunePalette.RuleSoft)
+                        SectionLabel("Anthropic key")
                         OutlinedTextField(
-                            value = apiKeyDraft,
-                            onValueChange = { apiKeyDraft = it },
+                            value = anthropicKeyDraft,
+                            onValueChange = { anthropicKeyDraft = it },
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 2,
                             shape = ClauneShapes.Control,
                             label = { Text("Anthropic API key") },
                             visualTransformation =
-                            if (showKey) {
+                            if (showKeys) {
                                 VisualTransformation.None
                             } else {
                                 PasswordVisualTransformation()
@@ -843,14 +872,39 @@ private fun SettingsScreen(
                                 keyboardType = KeyboardType.Password,
                             ),
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap)) {
+                        SectionLabel("Gemini key")
+                        OutlinedTextField(
+                            value = geminiKeyDraft,
+                            onValueChange = { geminiKeyDraft = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 2,
+                            shape = ClauneShapes.Control,
+                            label = { Text("Gemini API key") },
+                            visualTransformation =
+                            if (showKeys) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
+                            keyboardOptions =
+                            KeyboardOptions(
+                                capitalization = KeyboardCapitalization.None,
+                                keyboardType = KeyboardType.Password,
+                            ),
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
+                        ) {
                             ClaunePrimaryButton(
-                                text = "Save key",
-                                onClick = { onSaveKey(apiKeyDraft) },
+                                text = "Save keys",
+                                onClick = {
+                                    onSaveAnthropicKey(anthropicKeyDraft)
+                                    onSaveGeminiKey(geminiKeyDraft)
+                                },
                             )
                             ClauneSecondaryButton(
-                                text = if (showKey) "Hide" else "Show",
-                                onClick = { showKey = !showKey },
+                                text = if (showKeys) "Hide" else "Show",
+                                onClick = { showKeys = !showKeys },
                             )
                         }
                     }

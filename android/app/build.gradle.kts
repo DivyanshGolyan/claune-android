@@ -37,6 +37,11 @@ android {
             "ANTHROPIC_API_KEY",
             "\"${escapeBuildConfigString(localProperties.getProperty("claune.anthropicApiKey", ""))}\"",
         )
+        buildConfigField(
+            "String",
+            "GEMINI_API_KEY",
+            "\"${escapeBuildConfigString(localProperties.getProperty("claune.geminiApiKey", ""))}\"",
+        )
     }
 
     buildTypes {

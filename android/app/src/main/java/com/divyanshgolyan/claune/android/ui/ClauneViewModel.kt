@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.divyanshgolyan.claune.android.app.ClauneContainer
+import com.divyanshgolyan.claune.android.data.local.ClauneModel
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetail
 import java.io.File
 import kotlinx.coroutines.channels.Channel
@@ -65,7 +66,9 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
                 }
             }
             ClauneUiEvent.StopSession -> sendEffect(ClauneUiEffect.StopSession)
+            is ClauneUiEvent.UpdateSelectedModel -> viewModelScope.launch { container.settingsStore.updateSelectedModel(event.value) }
             is ClauneUiEvent.UpdateAnthropicKey -> viewModelScope.launch { container.settingsStore.updateAnthropicApiKey(event.value) }
+            is ClauneUiEvent.UpdateGeminiKey -> viewModelScope.launch { container.settingsStore.updateGeminiApiKey(event.value) }
             is ClauneUiEvent.SetDebugOverlayVisible -> container.overlayController.setDebugOverlayVisible(event.visible)
         }
     }
@@ -115,7 +118,11 @@ sealed interface ClauneUiEvent {
 
     data object OpenAccessibilitySettings : ClauneUiEvent
 
+    data class UpdateSelectedModel(val value: ClauneModel) : ClauneUiEvent
+
     data class UpdateAnthropicKey(val value: String) : ClauneUiEvent
+
+    data class UpdateGeminiKey(val value: String) : ClauneUiEvent
 
     data class SetDebugOverlayVisible(val visible: Boolean) : ClauneUiEvent
 }

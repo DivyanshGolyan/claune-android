@@ -56,6 +56,7 @@ class ClauneContainer(application: Application) {
         DataStoreSettingsStore(
             context = application,
             defaultAnthropicApiKey = BuildConfig.ANTHROPIC_API_KEY,
+            defaultGeminiApiKey = BuildConfig.GEMINI_API_KEY,
         )
     val logStore: SessionLogStore by lazy {
         ArtifactSessionLogStore(
