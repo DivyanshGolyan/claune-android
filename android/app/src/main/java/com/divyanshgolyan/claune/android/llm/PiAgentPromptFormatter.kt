@@ -5,8 +5,8 @@ import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 
 internal object PiAgentPromptFormatter {
     fun format(input: ModelTurnInput): String = buildString {
-        appendLine("Goal:")
-        appendLine(input.goal)
+        appendLine("Current request:")
+        appendLine(input.userMessage)
         appendLine()
         appendLine("Recent session events:")
         if (input.recentEvents.isEmpty()) {
@@ -95,6 +95,7 @@ internal object PiAgentPromptFormatter {
             }
         }
         appendLine()
-        appendLine("When the goal is complete, blocked, or needs the user, record the outcome with exactly one terminal outcome tool.")
+        appendLine("When the current request is complete or blocked, call finish_run exactly once.")
+        appendLine("When you need a user decision before continuing, call ask_user.")
     }
 }

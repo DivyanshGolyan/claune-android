@@ -61,7 +61,7 @@ class ClauneContainer(application: Application) {
         ArtifactSessionLogStore(
             delegate = memoryLogStore,
             artifactStore = artifactStore,
-            currentSessionIdProvider = { sessionCoordinator.uiState.value.sessionId },
+            currentRunIdProvider = { sessionCoordinator.uiState.value.activeRunId },
         )
     }
     val sessionCoordinator = SessionCoordinator(logStore, codingSessionStore)

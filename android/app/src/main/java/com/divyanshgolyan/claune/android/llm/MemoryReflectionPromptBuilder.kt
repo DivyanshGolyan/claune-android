@@ -21,8 +21,8 @@ internal object MemoryReflectionPromptBuilder {
     fun format(input: ModelTurnInput, result: ModelTurnOutput): String = buildString {
         appendLine("System follow-up: reflect on the run for long-term memory only.")
         appendLine()
-        appendLine("Original user goal:")
-        appendLine(input.goal)
+        appendLine("Original user message:")
+        appendLine(input.userMessage)
         appendLine()
         appendLine("Run outcome:")
         when (result) {

@@ -115,12 +115,12 @@ internal fun ClauneApp(
     effects: Flow<ClauneUiEffect>,
     onEvent: (ClauneUiEvent) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
-    onStartSession: (String) -> Unit,
+    onSubmitMessage: (String) -> Unit,
     onStopSession: () -> Unit,
 ) {
     val context = LocalContext.current
     val navController = rememberNavController()
-    var goal by rememberSaveable { mutableStateOf("") }
+    var message by rememberSaveable { mutableStateOf("") }
     var composerRequestsKeyboard by rememberSaveable { mutableStateOf(false) }
     var voiceUiState by remember { mutableStateOf(VoiceUiState()) }
     val speechRecognizer =
@@ -178,7 +178,7 @@ internal fun ClauneApp(
                                     isListening = false,
                                     errorMessage = null,
                                 )
-                            goal = transcript
+                            message = transcript
                             pendingVoiceSend = false
                         } else {
                             pendingVoiceSend = false
@@ -230,7 +230,7 @@ internal fun ClauneApp(
             when (effect) {
                 ClauneUiEffect.OpenAccessibilitySettings -> onOpenAccessibilitySettings()
                 is ClauneUiEffect.NavigateToSession -> navController.navigate(SessionRoute)
-                is ClauneUiEffect.StartSession -> onStartSession(effect.goal)
+                is ClauneUiEffect.SubmitMessage -> onSubmitMessage(effect.message)
                 ClauneUiEffect.StopSession -> onStopSession()
             }
         }
@@ -251,12 +251,12 @@ internal fun ClauneApp(
                     historyEntries = uiState.historyEntries,
                     onCreateSession = {
                         onEvent(ClauneUiEvent.CreateSession)
-                        goal = ""
+                        message = ""
                         composerRequestsKeyboard = true
                     },
                     onOpenSession = { path ->
                         onEvent(ClauneUiEvent.SelectSession(path))
-                        goal = ""
+                        message = ""
                         composerRequestsKeyboard = false
                     },
                     onOpenAccessibilitySettings = { onEvent(ClauneUiEvent.OpenAccessibilitySettings) },
@@ -269,17 +269,17 @@ internal fun ClauneApp(
                     sessionState = uiState.sessionState,
                     sessionDetail = uiState.sessionDetail,
                     settingsState = uiState.settingsState,
-                    goal = goal,
-                    previewGoal = voiceUiState.previewTranscript,
+                    message = message,
+                    previewMessage = voiceUiState.previewTranscript,
                     isListening = voiceUiState.isListening,
                     listeningElapsedSeconds = voiceUiState.elapsedSeconds,
                     listeningError = voiceUiState.errorMessage,
                     autoFocusInput = composerRequestsKeyboard,
-                    onGoalChanged = { goal = it },
+                    onMessageChanged = { message = it },
                     onSendMessage = {
                         composerRequestsKeyboard = false
-                        onEvent(ClauneUiEvent.SendGoal(goal))
-                        goal = ""
+                        onEvent(ClauneUiEvent.SubmitMessage(message))
+                        message = ""
                         voiceUiState = VoiceUiState()
                     },
                     onStartVoiceCapture = {
@@ -379,7 +379,7 @@ private fun SessionChooserHomeScreen(
                 items(historyEntries.take(8)) { entry ->
                     SessionHistoryRow(
                         entry = entry,
-                        onReuseGoal = { onOpenSession(entry.sessionPath) },
+                        onOpenSession = { onOpenSession(entry.sessionPath) },
                     )
                 }
             }
@@ -392,13 +392,13 @@ private fun SessionDetailScreen(
     sessionState: SessionUiState,
     sessionDetail: PersistedSessionDetail?,
     settingsState: SettingsState,
-    goal: String,
-    previewGoal: String,
+    message: String,
+    previewMessage: String,
     isListening: Boolean,
     listeningElapsedSeconds: Int,
     listeningError: String?,
     autoFocusInput: Boolean,
-    onGoalChanged: (String) -> Unit,
+    onMessageChanged: (String) -> Unit,
     onSendMessage: () -> Unit,
     onStartVoiceCapture: () -> Unit,
     onStopVoiceCapture: () -> Unit,
@@ -409,12 +409,12 @@ private fun SessionDetailScreen(
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val canEdit = settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
-    val canSend = goal.isNotBlank() && settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
+    val canSend = message.isNotBlank() && settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
     val inputHelpText =
         when {
             settingsState.anthropicApiKey.isBlank() -> "Add an Anthropic API key before starting."
             !sessionState.accessibilityConnected -> "Turn on accessibility access before starting."
-            else -> "Claune starts only after you tap Start on phone."
+            else -> "Claune starts only after you send a message."
         }
     val statusBannerText = sessionStatusBannerText(sessionState.status, sessionState.lastKnownApp)
     val visibleSessionDetail = sessionDetail?.takeIf { it.summary.path == sessionState.selectedSessionPath }
@@ -450,8 +450,8 @@ private fun SessionDetailScreen(
             ) {
                 Box(modifier = Modifier.padding(horizontal = ClauneLayout.SurfacePadding, vertical = 12.dp)) {
                     SessionComposerCard(
-                        goal = goal,
-                        previewGoal = previewGoal,
+                        message = message,
+                        previewMessage = previewMessage,
                         isListening = isListening,
                         listeningElapsedSeconds = listeningElapsedSeconds,
                         listeningError = listeningError,
@@ -460,7 +460,7 @@ private fun SessionDetailScreen(
                         canStop = sessionState.foregroundServiceRunning,
                         inputHelpText = inputHelpText,
                         focusRequester = focusRequester,
-                        onGoalChanged = onGoalChanged,
+                        onMessageChanged = onMessageChanged,
                         onSendMessage = onSendMessage,
                         onStartVoiceCapture = onStartVoiceCapture,
                         onStopVoiceCapture = onStopVoiceCapture,
@@ -497,7 +497,7 @@ private fun SessionDetailScreen(
             }
             if (sessionState.pendingSteeringCount > 0) {
                 item {
-                    SessionSystemChip("Queued steering: ${sessionState.pendingSteeringCount}")
+                    SessionSystemChip("Added instructions: ${sessionState.pendingSteeringCount}")
                 }
             }
             if (visibleSessionDetail == null || visibleChatEntries.isEmpty()) {
@@ -726,11 +726,11 @@ private fun SetupRunwayCard(
 }
 
 @Composable
-private fun SessionHistoryRow(entry: SessionHistoryEntry, onReuseGoal: () -> Unit) {
+private fun SessionHistoryRow(entry: SessionHistoryEntry, onOpenSession: () -> Unit) {
     ListItem(
         headlineContent = {
             Text(
-                text = entry.goal.ifBlank { entry.summary },
+                text = entry.title.ifBlank { entry.summary },
                 style = MaterialTheme.typography.bodyLarge,
                 color = ClaunePalette.Ink,
                 maxLines = 2,
@@ -743,7 +743,7 @@ private fun SessionHistoryRow(entry: SessionHistoryEntry, onReuseGoal: () -> Uni
         modifier =
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onReuseGoal),
+            .clickable(onClick = onOpenSession),
     )
     HorizontalDivider(color = ClaunePalette.RuleSoft)
 }
@@ -1089,8 +1089,8 @@ private fun MarkdownText(markdown: String, color: Color, modifier: Modifier = Mo
 
 @Composable
 private fun SessionComposerCard(
-    goal: String,
-    previewGoal: String,
+    message: String,
+    previewMessage: String,
     isListening: Boolean,
     listeningElapsedSeconds: Int,
     listeningError: String?,
@@ -1099,13 +1099,13 @@ private fun SessionComposerCard(
     canStop: Boolean,
     inputHelpText: String,
     focusRequester: FocusRequester,
-    onGoalChanged: (String) -> Unit,
+    onMessageChanged: (String) -> Unit,
     onSendMessage: () -> Unit,
     onStartVoiceCapture: () -> Unit,
     onStopVoiceCapture: () -> Unit,
     onStopSession: () -> Unit,
 ) {
-    val visibleGoal = if (isListening) previewGoal.ifBlank { goal } else goal
+    val visibleMessage = if (isListening) previewMessage.ifBlank { message } else message
 
     Card(
         shape = ClauneShapes.Card,
@@ -1124,8 +1124,8 @@ private fun SessionComposerCard(
                 ComposerTopBar("Listening · ${elapsedLabel(listeningElapsedSeconds)}")
             }
             OutlinedTextField(
-                value = visibleGoal,
-                onValueChange = onGoalChanged,
+                value = visibleMessage,
+                onValueChange = onMessageChanged,
                 enabled = canEdit || isListening,
                 readOnly = isListening,
                 label = { Text("Instruction") },
@@ -1173,7 +1173,7 @@ private fun SessionComposerCard(
                 Modifier
                     .fillMaxWidth()
                     .focusRequester(focusRequester)
-                    .testTag("goal_input"),
+                    .testTag("message_input"),
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),

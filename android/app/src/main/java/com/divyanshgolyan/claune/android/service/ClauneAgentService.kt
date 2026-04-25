@@ -68,7 +68,7 @@ class ClauneAgentService : Service() {
         container.sessionCoordinator.setForegroundServiceRunning(true)
         serviceScope.launch {
             try {
-                container.agentLoop.submitUserText(message)
+                container.agentLoop.submitUserMessage(message)
             } finally {
                 val status = container.sessionCoordinator.uiState.value.status
                 val sessionOpen = status != SessionStatus.Cancelled && status != SessionStatus.Idle

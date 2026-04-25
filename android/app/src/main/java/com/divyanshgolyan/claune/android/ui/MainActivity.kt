@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
                     effects = clauneViewModel.effects,
                     onEvent = clauneViewModel::onEvent,
                     onOpenAccessibilitySettings = ::openAccessibilitySettings,
-                    onStartSession = ::startAgentService,
+                    onSubmitMessage = ::submitMessageToAgentService,
                     onStopSession = ::stopAgentService,
                 )
             }
@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
 
         reconcileOrphanedSessionState()
         maybeHandleDebugOverlayIntent(intent)
-        maybeHandleDebugAutostart(intent?.getStringExtra(EXTRA_AUTOSTART_GOAL))
+        maybeHandleDebugAutostart(intent?.getStringExtra(EXTRA_AUTOSTART_MESSAGE))
     }
 
     override fun onResume() {
@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         maybeHandleDebugOverlayIntent(intent)
-        maybeHandleDebugAutostart(intent.getStringExtra(EXTRA_AUTOSTART_GOAL))
+        maybeHandleDebugAutostart(intent.getStringExtra(EXTRA_AUTOSTART_MESSAGE))
     }
 
     private fun maybeHandleDebugOverlayIntent(intent: Intent?) {
@@ -71,16 +71,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun maybeHandleDebugAutostart(goal: String?) {
+    private fun maybeHandleDebugAutostart(message: String?) {
         if (!BuildConfig.DEBUG || didHandleDebugAutostart) {
             return
         }
-        val autostartGoal = goal?.trim().orEmpty()
-        if (autostartGoal.isBlank()) {
+        val autostartMessage = message?.trim().orEmpty()
+        if (autostartMessage.isBlank()) {
             return
         }
         didHandleDebugAutostart = true
-        startAgentService(autostartGoal)
+        submitMessageToAgentService(autostartMessage)
     }
 
     private fun reconcileOrphanedSessionState() {
@@ -98,10 +98,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startAgentService(goal: String) {
+    private fun submitMessageToAgentService(message: String) {
         reconcileOrphanedSessionState()
-        Toast.makeText(this, "Starting session...", Toast.LENGTH_SHORT).show()
-        val intent = ClauneAgentService.startIntent(this, goal)
+        Toast.makeText(this, "Starting run...", Toast.LENGTH_SHORT).show()
+        val intent = ClauneAgentService.startIntent(this, message)
         ContextCompat.startForegroundService(this, intent)
         moveTaskToBack(true)
     }
@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        const val EXTRA_AUTOSTART_GOAL = "extra_autostart_goal"
+        const val EXTRA_AUTOSTART_MESSAGE = "extra_autostart_message"
         const val EXTRA_DEBUG_OVERLAY = "extra_debug_overlay"
     }
 }

@@ -6,11 +6,10 @@ import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
-import com.divyanshgolyan.claune.android.llm.tools.BlockTaskToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.CompleteTaskToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.AskUserToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.QuestionToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.FinishRunToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.SystemPromptBuilder
 import com.divyanshgolyan.claune.android.llm.tools.TerminalOutcomeRecorder
@@ -79,8 +78,8 @@ class PiAgentModelGateway(
         val mainTools = mainToolDefinitions()
         val systemPrompt = buildSystemPrompt(memoryStore.read(), mainTools)
         runCatching {
-            artifactStore.writeSystemPrompt(input.sessionId, systemPrompt)
-            artifactStore.writeModelInput(input.sessionId, prompt)
+            artifactStore.writeSystemPrompt(input.runId, systemPrompt)
+            artifactStore.writeModelInput(input.runId, prompt)
         }
 
         val apiKey = settingsStore.state.value.anthropicApiKey
@@ -97,7 +96,7 @@ class PiAgentModelGateway(
         }
 
         val agentSession = ensureMainSession(input, systemPrompt, apiKey, mainTools)
-        activeRunId = input.sessionId
+        activeRunId = input.runId
         activeEventTrace = CopyOnWriteArrayList()
         sessionCoordinator.logEvent("Agent started.")
         sessionCoordinator.setStreaming(true)
@@ -105,17 +104,21 @@ class PiAgentModelGateway(
         val result =
             try {
                 agentSession.prompt(prompt)
-                val finalOutput = terminalOutcomeRecorder.outcome?.toArtifactText() ?: finalAssistantText(agentSession.messages)
-                runCatching { artifactStore.writeFinalOutput(input.sessionId, finalOutput) }
                 val assistantError = finalAssistantError(agentSession.messages)
+                val terminalOutcome = terminalOutcomeRecorder.outcome
                 val parsedResult = if (!assistantError.isNullOrBlank()) {
                     ModelTurnOutput.Blocked("Model request failed. $assistantError")
-                } else if (terminalOutcomeRecorder.outcome != null) {
-                    terminalOutcomeRecorder.outcome!!
+                } else if (terminalOutcome != null) {
+                    terminalOutcome
                 } else {
-                    PiAgentResultParser.parse(finalOutput)
+                    ModelTurnOutput.Blocked(
+                        "The model ended without calling finish_run. Retry with a clearer request or inspect the run artifacts.",
+                    )
                 }
-                runMemoryReflection(input, parsedResult, apiKey)
+                runCatching { artifactStore.writeFinalOutput(input.runId, parsedResult.toArtifactText()) }
+                if (assistantError.isNullOrBlank() && terminalOutcome != null) {
+                    runMemoryReflection(input, parsedResult, apiKey)
+                }
                 parsedResult
             } catch (cancelled: CancellationException) {
                 agentSession.abort()
@@ -135,9 +138,9 @@ class PiAgentModelGateway(
                             agentSession.messages.toList().filterIsInstance<Message>()
                         }.getOrElse { emptyList() }
                     runCatching {
-                        artifactStore.writeAgentMessages(input.sessionId, messageSnapshot)
+                        artifactStore.writeAgentMessages(input.runId, messageSnapshot)
                     }
-                    runCatching { artifactStore.writeAgentEvents(input.sessionId, activeEventTrace.toList()) }
+                    runCatching { artifactStore.writeAgentEvents(input.runId, activeEventTrace.toList()) }
                 }
                 activeRunId = null
             }
@@ -243,9 +246,8 @@ class PiAgentModelGateway(
 
     private fun mainToolDefinitions(): List<ToolDefinition<*>> = listOf(
         ExecuteScriptToolDefinition(scriptRuntime, phoneObserver),
-        CompleteTaskToolDefinition(terminalOutcomeRecorder),
-        BlockTaskToolDefinition(terminalOutcomeRecorder),
-        QuestionToolDefinition(questionPromptCoordinator),
+        FinishRunToolDefinition(terminalOutcomeRecorder),
+        AskUserToolDefinition(questionPromptCoordinator),
         ReadMemoryToolDefinition(memoryStore),
         EditMemoryToolDefinition(memoryStore),
     )
@@ -270,7 +272,7 @@ class PiAgentModelGateway(
 
         val reflectionBudget = ToolBudget(maxReflectionToolCalls = 4).apply { enterReflectionPhase() }
         val reflectionPrompt = MemoryReflectionPromptBuilder.format(input, result)
-        runCatching { artifactStore.writeMemoryReflectionPrompt(input.sessionId, reflectionPrompt) }
+        runCatching { artifactStore.writeMemoryReflectionPrompt(input.runId, reflectionPrompt) }
         sessionCoordinator.logEvent("Agent memory reflection started.")
         val memoryBeforeReflection = memoryStore.read()
         val reflectionTools =
@@ -294,7 +296,7 @@ class PiAgentModelGateway(
         runCatching {
             reflectionSession.prompt(reflectionPrompt)
             val reflectionOutput = finalAssistantText(reflectionSession.messages)
-            runCatching { artifactStore.writeMemoryReflectionOutput(input.sessionId, reflectionOutput) }
+            runCatching { artifactStore.writeMemoryReflectionOutput(input.runId, reflectionOutput) }
             val memoryChanged = memoryStore.read() != memoryBeforeReflection
             val note = reflectionOutput.trim().take(180)
             if (memoryChanged) {
@@ -369,9 +371,8 @@ class PiAgentModelGateway(
             memoryContent = memoryContent,
             tools = listOf(
                 ExecuteScriptToolDefinition(FailingScriptRuntime, FailingPhoneObserver),
-                CompleteTaskToolDefinition(TerminalOutcomeRecorder()),
-                BlockTaskToolDefinition(TerminalOutcomeRecorder()),
-                QuestionToolDefinition(FailingQuestionPrompter),
+                FinishRunToolDefinition(TerminalOutcomeRecorder()),
+                AskUserToolDefinition(FailingQuestionPrompter),
                 ReadMemoryToolDefinition(FailingMemoryStore),
                 EditMemoryToolDefinition(FailingMemoryStore),
             ),
@@ -380,9 +381,9 @@ class PiAgentModelGateway(
 }
 
 private fun ModelTurnOutput.toArtifactText(): String = when (this) {
-    is ModelTurnOutput.Blocked -> """{"kind":"blocked","reason":${reason.jsonStringLiteral()}}"""
-    is ModelTurnOutput.Completion -> """{"kind":"completion","summary":${summary.jsonStringLiteral()}}"""
-    is ModelTurnOutput.Message -> """{"kind":"message","messageToUser":${messageToUser.jsonStringLiteral()}}"""
+    is ModelTurnOutput.Blocked -> """{"status":"blocked","message":${reason.jsonStringLiteral()}}"""
+    is ModelTurnOutput.Completion -> """{"status":"completed","message":${summary.jsonStringLiteral()}}"""
+    is ModelTurnOutput.Message -> """{"status":"message","message":${messageToUser.jsonStringLiteral()}}"""
 }
 
 private fun String.jsonStringLiteral(): String = buildString {

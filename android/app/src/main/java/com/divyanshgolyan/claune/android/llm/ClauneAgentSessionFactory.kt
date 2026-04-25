@@ -20,6 +20,7 @@ import pi.coding.agent.core.DefaultResourceLoader
 import pi.coding.agent.core.DefaultResourceLoaderOptions
 import pi.coding.agent.core.ModelRegistry
 import pi.coding.agent.core.SettingsManager
+import pi.coding.agent.core.compaction.CompactionSettings
 import pi.coding.agent.core.convertToLlm
 
 class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionStore, private val agentDir: File) {
@@ -42,6 +43,7 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
                 setDefaultModelAndProvider(model.provider, model.id)
                 setDefaultThinkingLevel(thinkingLevel)
                 setThinkingBudgets(thinkingBudgets)
+                setCompactionSettings(CLAUNE_COMPACTION_SETTINGS)
             }
         val resourceLoader =
             DefaultResourceLoader(
@@ -116,5 +118,13 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
         "high" -> AgentThinkingLevel.HIGH
         "xhigh" -> AgentThinkingLevel.XHIGH
         else -> null
+    }
+
+    private companion object {
+        val CLAUNE_COMPACTION_SETTINGS = CompactionSettings(
+            enabled = true,
+            reserveTokens = 100_000,
+            keepRecentTokens = 20_000,
+        )
     }
 }

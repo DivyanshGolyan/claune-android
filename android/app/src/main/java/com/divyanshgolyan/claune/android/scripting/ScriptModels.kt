@@ -20,7 +20,7 @@ data class ScriptExecutionResult(
 @Serializable
 data class ScriptExecutionRecord(
     val scriptExecutionId: String,
-    val sessionId: String? = null,
+    val runId: String? = null,
     val source: String,
     val script: String,
     val ok: Boolean,
@@ -36,7 +36,7 @@ data class ScriptExecutionRecord(
 data class HostCallRecord(
     val hostCallId: String,
     val scriptExecutionId: String,
-    val sessionId: String? = null,
+    val runId: String? = null,
     val name: String,
     val argumentsJson: String,
     val resultJson: String,

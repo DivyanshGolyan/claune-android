@@ -40,7 +40,7 @@ class QuickJsScriptRuntime(
     override suspend fun execute(request: ScriptExecutionRequest): ScriptExecutionResult = withContext(dispatcher) {
         val startedAt = now()
         val scriptExecutionId = "script-${startedAt.toEpochMilli()}"
-        val sessionId = sessionCoordinator.uiState.value.sessionId
+        val runId = sessionCoordinator.uiState.value.activeRunId
         val host =
             ScriptHost(
                 scriptExecutionId = scriptExecutionId,
@@ -77,7 +77,7 @@ class QuickJsScriptRuntime(
         val record =
             ScriptExecutionRecord(
                 scriptExecutionId = scriptExecutionId,
-                sessionId = sessionId,
+                runId = runId,
                 source = request.source,
                 script = request.script,
                 ok = result.ok,

@@ -17,7 +17,7 @@ import org.junit.Test
 
 class AgentLoopTest {
     @Test
-    fun `submitUserText completes without a product timeout`() = runTest {
+    fun `submitUserMessage completes without a product timeout`() = runTest {
         val (sessionCoordinator, _) = testCoordinator()
         val loop =
             AgentLoop(
@@ -28,7 +28,7 @@ class AgentLoopTest {
                 artifactStore = NoOpArtifactStore,
             )
 
-        loop.submitUserText("Open Settings")
+        loop.submitUserMessage("Open Settings")
 
         assertEquals(SessionStatus.Completed, sessionCoordinator.uiState.value.status)
         assertEquals("Done", sessionCoordinator.uiState.value.summaryLine)

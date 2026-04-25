@@ -21,16 +21,16 @@ class SessionCoordinator(private val logStore: SessionLogStore, private val codi
         return created
     }
 
-    fun beginRun(goal: String): PersistedSessionSummary {
+    fun beginRun(userMessage: String): PersistedSessionSummary {
         val selectedSession =
             _uiState.value.selectedSessionPath
                 ?.let(codingSessionStore::loadSession)
                 ?: codingSessionStore.createSession("")
-        val runId = "session-${System.currentTimeMillis()}"
-        val line = "Session started for goal: $goal"
+        val runId = "run-${System.currentTimeMillis()}"
+        val line = "Run started: $userMessage"
         _uiState.value =
             _uiState.value.copy(
-                sessionId = runId,
+                activeRunId = runId,
                 selectedSessionPath = selectedSession.path,
                 selectedPersistentSessionId = selectedSession.sessionId,
                 selectedSessionTitle = selectedSession.title,

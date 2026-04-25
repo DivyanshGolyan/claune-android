@@ -2,13 +2,15 @@ package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
-import com.divyanshgolyan.claune.android.llm.tools.CompleteTaskArguments
-import com.divyanshgolyan.claune.android.llm.tools.CompleteTaskToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.AskUserArguments
+import com.divyanshgolyan.claune.android.llm.tools.AskUserToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryArguments
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolResult
-import com.divyanshgolyan.claune.android.llm.tools.QuestionToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.FinishRunArguments
+import com.divyanshgolyan.claune.android.llm.tools.FinishRunStatus
+import com.divyanshgolyan.claune.android.llm.tools.FinishRunToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.TerminalOutcomeRecorder
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
@@ -36,21 +38,22 @@ import org.junit.Test
 
 class PiAgentModelGatewayTest {
     @Test
-    fun `prompt formatter includes goal events and actionable elements`() {
+    fun `prompt formatter includes current request events and actionable elements`() {
         val prompt =
             PiAgentPromptFormatter.format(
                 ModelTurnInput(
-                    sessionId = "session-1",
+                    runId = "run-1",
                     persistentSessionPath = null,
                     persistentSessionId = null,
-                    goal = "Open Wi-Fi settings",
+                    userMessage = "Open Wi-Fi settings",
                     snapshot = snapshot(),
-                    recentEvents = listOf("Session started", "Observed Settings app"),
+                    recentEvents = listOf("Run started", "Observed Settings app"),
                 ),
             )
 
         assertTrue(prompt.contains("Open Wi-Fi settings"))
-        assertTrue(prompt.contains("Session started"))
+        assertTrue(prompt.contains("Current request:"))
+        assertTrue(prompt.contains("Run started"))
         assertTrue(prompt.contains("Last known phone snapshot before your next action:"))
         assertTrue(prompt.contains("This snapshot may already be stale. Observe the phone yourself before acting."))
         assertTrue(prompt.contains("lastKnownForegroundPackage: com.android.settings"))
@@ -63,10 +66,10 @@ class PiAgentModelGatewayTest {
         val prompt =
             PiAgentPromptFormatter.format(
                 ModelTurnInput(
-                    sessionId = "session-1",
+                    runId = "run-1",
                     persistentSessionPath = null,
                     persistentSessionId = null,
-                    goal = "Find the current weather",
+                    userMessage = "Find the current weather",
                     snapshot = snapshot(packageName = BuildConfig.APPLICATION_ID),
                     recentEvents = emptyList(),
                 ),
@@ -94,21 +97,22 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("scrollScreen(direction: \"up\" | \"down\"): HostSuccessOutcome;"))
         assertTrue(prompt.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
         assertTrue(prompt.contains("- execute_script:"))
-        assertTrue(prompt.contains("- complete_task:"))
-        assertTrue(prompt.contains("- block_task:"))
-        assertTrue(prompt.contains("- question:"))
-        assertTrue(!prompt.contains("- ask_user:"))
+        assertTrue(prompt.contains("- finish_run:"))
+        assertTrue(prompt.contains("- ask_user:"))
+        assertTrue(!prompt.contains("- complete_task:"))
+        assertTrue(!prompt.contains("- block_task:"))
+        assertTrue(!prompt.contains("- question:"))
         assertTrue(prompt.contains("- read_memory:"))
         assertTrue(prompt.contains("- edit_memory:"))
-        assertTrue(prompt.contains("Terminal outcome contract:"))
-        assertTrue(prompt.contains("After calling a terminal outcome tool, do not call more phone-control tools"))
-        assertTrue(prompt.contains("You may send a concise user-facing final message after the terminal tool call"))
-        assertTrue(prompt.contains("Use question when you need a user decision before continuing."))
+        assertTrue(prompt.contains("Run outcome contract:"))
+        assertTrue(prompt.contains("User decision contract:"))
+        assertTrue(prompt.contains("After finish_run, do not send another assistant message or call another phone-control tool."))
+        assertTrue(prompt.contains("Use ask_user only when a user decision is needed before continuing the same run."))
         assertTrue(prompt.contains("The TypeScript contract below is the source of truth"))
         assertTrue(prompt.contains("Prefer visible direct controls by text or label."))
         assertTrue(prompt.contains("Use scrollScreen for the current page."))
         assertTrue(prompt.contains("For state-changing tasks"))
-        assertTrue(!prompt.contains("For mutation goals"))
+        assertTrue(!prompt.contains("For mutation requests"))
         assertTrue(prompt.contains("Available tools:"))
         assertTrue(prompt.contains("Current memory.md:"))
         assertTrue(prompt.contains("The user prefers Wi-Fi tasks to start from Settings."))
@@ -126,10 +130,10 @@ class PiAgentModelGatewayTest {
         val prompt =
             MemoryReflectionPromptBuilder.format(
                 ModelTurnInput(
-                    sessionId = "session-1",
+                    runId = "run-1",
                     persistentSessionPath = null,
                     persistentSessionId = null,
-                    goal = "Open Settings",
+                    userMessage = "Open Settings",
                     snapshot = snapshot(),
                     recentEvents = emptyList(),
                 ),
@@ -141,55 +145,6 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("After any memory tool call, you may send a short internal note if useful"))
         assertTrue(!prompt.contains("Return final JSON only"))
         assertTrue(!prompt.contains("Your entire final answer must be exactly the JSON object"))
-    }
-
-    @Test
-    fun `result parser maps completion blocked and legacy message responses`() {
-        val completion = PiAgentResultParser.parse("""{"kind":"completion","summary":"Done."}""")
-        val blocked = PiAgentResultParser.parse("""{"kind":"blocked","reason":"Could not proceed."}""")
-        val message = PiAgentResultParser.parse("""{"kind":"message","messageToUser":"Need input."}""")
-
-        assertEquals(com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Completion("Done."), completion)
-        assertEquals(com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Blocked("Could not proceed."), blocked)
-        assertEquals(com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Message("Need input."), message)
-    }
-
-    @Test
-    fun `result parser blocks malformed output`() {
-        val malformed = PiAgentResultParser.parse("""not-json""")
-        val unsupported = PiAgentResultParser.parse("""{"kind":"tool","summary":"nope"}""")
-
-        assertEquals(
-            com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Blocked(
-                "Model returned malformed final output. Expected JSON with kind/message fields.",
-            ),
-            malformed,
-        )
-        assertEquals(
-            com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Blocked(
-                "Model returned unsupported final kind 'tool'.",
-            ),
-            unsupported,
-        )
-    }
-
-    @Test
-    fun `result parser extracts trailing json object from prose response`() {
-        val parsed =
-            PiAgentResultParser.parse(
-                """
-                Perfect, I finished the task successfully.
-
-                {"kind":"completion","summary":"Opened Settings and reached the Wi-Fi page."}
-                """.trimIndent(),
-            )
-
-        assertEquals(
-            com.divyanshgolyan.claune.android.runtime.ModelTurnOutput.Completion(
-                "Opened Settings and reached the Wi-Fi page.",
-            ),
-            parsed,
-        )
     }
 
     @Test
@@ -224,25 +179,47 @@ class PiAgentModelGatewayTest {
     }
 
     @Test
-    fun `complete task tool records terminal completion`() = runTest {
+    fun `finish run tool records verified completion`() = runTest {
         val recorder = TerminalOutcomeRecorder()
-        val tool = CompleteTaskToolDefinition(recorder)
+        val tool = FinishRunToolDefinition(recorder)
 
         val result =
             tool.execute(
                 "tool-call-1",
-                CompleteTaskArguments("Added the requested items."),
+                FinishRunArguments(
+                    status = FinishRunStatus.Completed,
+                    message = "Added the requested items.",
+                    evidence = "Cart shows apples and oranges.",
+                ),
                 null,
                 null,
             )
 
         assertEquals(ModelTurnOutput.Completion("Added the requested items."), recorder.outcome)
-        assertEquals("Recorded task completion.", (result.content.single() as pi.ai.core.TextContent).text)
+        assertEquals("Recorded run completed.", (result.content.single() as pi.ai.core.TextContent).text)
+        assertEquals("run_outcome", result.details.jsonObject["kind"]?.jsonPrimitive?.content)
+        assertEquals("completed", result.details.jsonObject["status"]?.jsonPrimitive?.content)
+        assertEquals("Added the requested items.", result.details.jsonObject["value"]?.jsonPrimitive?.content)
+        assertEquals("Cart shows apples and oranges.", result.details.jsonObject["evidence"]?.jsonPrimitive?.content)
     }
 
     @Test
-    fun `question tool validates strict option contract`() {
-        val tool = QuestionToolDefinition(FakeQuestionPrompter())
+    fun `finish run requires evidence for completed status`() {
+        val tool = FinishRunToolDefinition(TerminalOutcomeRecorder())
+
+        assertFailsWithIllegalArgument {
+            tool.validateArguments(
+                buildJsonObject {
+                    put("status", "completed")
+                    put("message", "Done.")
+                },
+            )
+        }
+    }
+
+    @Test
+    fun `ask user tool validates strict option contract`() {
+        val tool = AskUserToolDefinition(FakeQuestionPrompter())
 
         val valid =
             tool.validateArguments(
@@ -283,9 +260,9 @@ class PiAgentModelGatewayTest {
     }
 
     @Test
-    fun `question tool returns selected answer as tool result`() = runTest {
+    fun `ask user tool returns selected answer as tool result`() = runTest {
         val tool =
-            QuestionToolDefinition(
+            AskUserToolDefinition(
                 FakeQuestionPrompter(
                     QuestionAnswer(
                         text = "Work",
@@ -298,7 +275,7 @@ class PiAgentModelGatewayTest {
         val result =
             tool.execute(
                 "tool-call-1",
-                com.divyanshgolyan.claune.android.llm.tools.QuestionArguments(
+                AskUserArguments(
                     prompt = "Which account?",
                     options = listOf("Personal", "Work"),
                 ),

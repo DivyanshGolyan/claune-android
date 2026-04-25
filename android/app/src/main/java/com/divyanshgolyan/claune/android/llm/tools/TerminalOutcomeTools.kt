@@ -5,6 +5,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import pi.agent.core.AgentToolResult
 import pi.ai.core.TextContent
@@ -24,77 +26,80 @@ internal class TerminalOutcomeRecorder {
     }
 }
 
-internal data class CompleteTaskArguments(val summary: String)
+internal data class FinishRunArguments(val status: FinishRunStatus, val message: String, val evidence: String?)
 
-internal data class BlockTaskArguments(val reason: String)
+internal enum class FinishRunStatus {
+    Completed,
+    Blocked,
+}
 
-internal class CompleteTaskToolDefinition(private val recorder: TerminalOutcomeRecorder) : ToolDefinition<CompleteTaskArguments> {
-    override val name: String = "complete_task"
-    override val label: String = "Complete Task"
+internal class FinishRunToolDefinition(private val recorder: TerminalOutcomeRecorder) : ToolDefinition<FinishRunArguments> {
+    override val name: String = "finish_run"
+    override val label: String = "Finish Run"
     override val description: String =
-        "Mark the phone-control task as complete after the requested outcome has been verified on the phone."
-    override val promptSnippet: String = "End the run as completed with a verified summary."
-    override val promptGuidelines: List<String> = emptyList()
+        "End the current phone-control run as completed or blocked with one user-visible outcome message."
+    override val promptSnippet: String = "End the current run with status completed or blocked."
+    override val promptGuidelines: List<String> =
+        listOf(
+            "Use finish_run exactly once when the current request is resolved.",
+            "Use status completed only after phone evidence verifies the requested outcome.",
+            "Use status blocked when progress is impossible, unsafe, or incomplete.",
+            "The finish_run message is shown to the user. Do not send another assistant message after finish_run.",
+        )
     override val parameters: JsonObject =
         objectParameters(
             properties =
             buildJsonObject {
-                put("summary", stringProperty("A concise summary of the verified completed outcome."))
+                put("status", stringProperty("Either completed or blocked."))
+                put("message", stringProperty("The concise user-visible final outcome message."))
+                put("evidence", stringProperty("Required for completed runs: the phone evidence that verifies the outcome."))
             },
-            required = listOf("summary"),
+            required = listOf("status", "message"),
         )
 
-    override fun validateArguments(arguments: JsonObject): CompleteTaskArguments = CompleteTaskArguments(
-        summary = arguments.requiredString("summary"),
-    )
+    override fun validateArguments(arguments: JsonObject): FinishRunArguments {
+        val status =
+            when (arguments.requiredString("status").lowercase()) {
+                "completed" -> FinishRunStatus.Completed
+                "blocked" -> FinishRunStatus.Blocked
+                else -> error("status must be completed or blocked")
+            }
+        val message = arguments.requiredString("message")
+        val evidence = arguments["evidence"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+        require(status != FinishRunStatus.Completed || evidence != null) {
+            "finish_run requires evidence when status is completed"
+        }
+        return FinishRunArguments(status = status, message = message, evidence = evidence)
+    }
 
     override suspend fun execute(
         toolCallId: String,
-        params: CompleteTaskArguments,
+        params: FinishRunArguments,
         signal: pi.ai.core.AbortSignal?,
         onUpdate: pi.agent.core.AgentToolUpdateCallback<JsonElement>?,
     ): AgentToolResult<JsonElement> {
-        recorder.record(ModelTurnOutput.Completion(params.summary))
-        return terminalToolResult("Recorded task completion.", "completion", params.summary)
-    }
-}
-
-internal class BlockTaskToolDefinition(private val recorder: TerminalOutcomeRecorder) : ToolDefinition<BlockTaskArguments> {
-    override val name: String = "block_task"
-    override val label: String = "Block Task"
-    override val description: String =
-        "Mark the phone-control task as blocked when progress is impossible, unsafe, or requires unresolved external state."
-    override val promptSnippet: String = "End the run as blocked with the reason."
-    override val promptGuidelines: List<String> = emptyList()
-    override val parameters: JsonObject =
-        objectParameters(
-            properties =
-            buildJsonObject {
-                put("reason", stringProperty("A concise reason the task cannot continue."))
-            },
-            required = listOf("reason"),
+        val output =
+            when (params.status) {
+                FinishRunStatus.Completed -> ModelTurnOutput.Completion(params.message)
+                FinishRunStatus.Blocked -> ModelTurnOutput.Blocked(params.message)
+            }
+        recorder.record(output)
+        return terminalToolResult(
+            message = "Recorded run ${params.status.name.lowercase()}.",
+            status = params.status.name.lowercase(),
+            value = params.message,
+            evidence = params.evidence,
         )
-
-    override fun validateArguments(arguments: JsonObject): BlockTaskArguments = BlockTaskArguments(
-        reason = arguments.requiredString("reason"),
-    )
-
-    override suspend fun execute(
-        toolCallId: String,
-        params: BlockTaskArguments,
-        signal: pi.ai.core.AbortSignal?,
-        onUpdate: pi.agent.core.AgentToolUpdateCallback<JsonElement>?,
-    ): AgentToolResult<JsonElement> {
-        recorder.record(ModelTurnOutput.Blocked(params.reason))
-        return terminalToolResult("Recorded task blocker.", "blocked", params.reason)
     }
 }
 
-private fun terminalToolResult(message: String, kind: String, value: String): AgentToolResult<JsonElement> {
+private fun terminalToolResult(message: String, status: String, value: String, evidence: String?): AgentToolResult<JsonElement> {
     val details =
         buildJsonObject {
-            put("kind", JsonPrimitive(kind))
+            put("kind", JsonPrimitive("run_outcome"))
+            put("status", JsonPrimitive(status))
             put("value", JsonPrimitive(value))
+            evidence?.let { put("evidence", JsonPrimitive(it)) }
         }
     return AgentToolResult(
         content = listOf(TextContent(message)),

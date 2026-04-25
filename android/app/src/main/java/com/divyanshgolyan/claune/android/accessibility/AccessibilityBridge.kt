@@ -3,9 +3,9 @@ package com.divyanshgolyan.claune.android.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
+import android.graphics.Path
 import android.graphics.Rect
 import android.os.Bundle
-import android.graphics.Path
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -22,9 +22,9 @@ import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import com.divyanshgolyan.claune.android.runtime.WindowCandidate
 import java.time.Instant
 import java.util.Locale
-import kotlinx.serialization.Serializable
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.Serializable
 
 class AccessibilityBridge(private val context: Context, private val sessionCoordinator: SessionCoordinator) :
     PhoneObserver,
@@ -570,12 +570,7 @@ private fun boundsListCenterY(bounds: List<Int>): Int = (bounds[1] + bounds[3]) 
 private data class RootSelection(val root: AccessibilityNodeInfo, val reason: String, val windowCandidates: List<WindowCandidate>)
 
 @Serializable
-data class RawTreeDump(
-    val capturedAt: String,
-    val selectedWindowReason: String,
-    val foregroundPackage: String,
-    val nodes: RawNodeDump,
-)
+data class RawTreeDump(val capturedAt: String, val selectedWindowReason: String, val foregroundPackage: String, val nodes: RawNodeDump)
 
 @Serializable
 data class RawNodeDump(

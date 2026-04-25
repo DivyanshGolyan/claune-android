@@ -11,19 +11,21 @@ import kotlinx.serialization.json.put
 import pi.agent.core.AgentToolResult
 import pi.ai.core.TextContent
 
-internal data class QuestionArguments(val prompt: String, val options: List<String>)
+internal data class AskUserArguments(val prompt: String, val options: List<String>)
 
-internal class QuestionToolDefinition(private val questionPrompter: UserQuestionPrompter) : ToolDefinition<QuestionArguments> {
-    override val name: String = "question"
-    override val label: String = "Question"
+internal class AskUserToolDefinition(private val questionPrompter: UserQuestionPrompter) : ToolDefinition<AskUserArguments> {
+    override val name: String = "ask_user"
+    override val label: String = "Ask User"
     override val description: String =
         "Ask the user to choose from 1 to 3 concrete options, with custom input available in the overlay."
     override val promptSnippet: String = "Ask the user a concrete question with 1 to 3 concise options."
     override val promptGuidelines: List<String> =
         listOf(
-            "Use question when progress depends on a user decision. Provide 1 to 3 mutually exclusive options.",
+            "Use ask_user only when progress depends on a user decision before continuing the same run.",
+            "Provide 1 to 3 mutually exclusive options.",
             "Do not include a custom/free-text option yourself; the overlay always provides custom input.",
-            "After calling question, wait for the tool result and continue the same run.",
+            "After calling ask_user, wait for the tool result and continue the same run.",
+            "Do not use ask_user to finish a run.",
         )
     override val parameters: JsonObject =
         objectParameters(
@@ -44,16 +46,16 @@ internal class QuestionToolDefinition(private val questionPrompter: UserQuestion
             required = listOf("prompt", "options"),
         )
 
-    override fun validateArguments(arguments: JsonObject): QuestionArguments {
+    override fun validateArguments(arguments: JsonObject): AskUserArguments {
         val prompt = arguments.requiredString("prompt")
         val options = arguments.requiredStringList("options")
-        require(options.size in 1..3) { "question requires 1 to 3 options" }
-        return QuestionArguments(prompt = prompt, options = options)
+        require(options.size in 1..3) { "ask_user requires 1 to 3 options" }
+        return AskUserArguments(prompt = prompt, options = options)
     }
 
     override suspend fun execute(
         toolCallId: String,
-        params: QuestionArguments,
+        params: AskUserArguments,
         signal: pi.ai.core.AbortSignal?,
         onUpdate: pi.agent.core.AgentToolUpdateCallback<JsonElement>?,
     ): AgentToolResult<JsonElement> {

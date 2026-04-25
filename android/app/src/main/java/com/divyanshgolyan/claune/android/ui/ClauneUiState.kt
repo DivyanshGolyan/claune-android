@@ -12,13 +12,13 @@ data class ClauneUiState(
     val sessionDetail: PersistedSessionDetail? = null,
 )
 
-data class SessionHistoryEntry(val sessionId: String, val sessionPath: String, val goal: String, val summary: String)
+data class SessionHistoryEntry(val sessionId: String, val sessionPath: String, val title: String, val summary: String)
 
 fun sessionHistoryEntries(sessions: List<PersistedSessionSummary>): List<SessionHistoryEntry> = sessions.map { session ->
     SessionHistoryEntry(
         sessionId = session.sessionId,
         sessionPath = session.path,
-        goal = session.title,
+        title = session.title,
         summary = session.preview,
     )
 }

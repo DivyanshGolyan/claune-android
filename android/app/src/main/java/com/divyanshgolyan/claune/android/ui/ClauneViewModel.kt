@@ -58,10 +58,10 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
                     sendEffect(ClauneUiEffect.NavigateToSession(selected.path))
                 }
             }
-            is ClauneUiEvent.SendGoal -> {
-                val goal = event.goal.trim()
-                if (goal.isNotBlank()) {
-                    sendEffect(ClauneUiEffect.StartSession(goal))
+            is ClauneUiEvent.SubmitMessage -> {
+                val message = event.message.trim()
+                if (message.isNotBlank()) {
+                    sendEffect(ClauneUiEffect.SubmitMessage(message))
                 }
             }
             ClauneUiEvent.StopSession -> sendEffect(ClauneUiEffect.StopSession)
@@ -109,7 +109,7 @@ sealed interface ClauneUiEvent {
 
     data class SelectSession(val path: String) : ClauneUiEvent
 
-    data class SendGoal(val goal: String) : ClauneUiEvent
+    data class SubmitMessage(val message: String) : ClauneUiEvent
 
     data object StopSession : ClauneUiEvent
 
@@ -123,7 +123,7 @@ sealed interface ClauneUiEvent {
 sealed interface ClauneUiEffect {
     data class NavigateToSession(val path: String) : ClauneUiEffect
 
-    data class StartSession(val goal: String) : ClauneUiEffect
+    data class SubmitMessage(val message: String) : ClauneUiEffect
 
     data object StopSession : ClauneUiEffect
 

@@ -35,7 +35,7 @@ internal class ToolBudget(private val maxToolCalls: Int? = null, private val max
         if (limit != null && usedToolCalls >= limit) {
             return BeforeToolCallResult(
                 block = true,
-                reason = "Tool budget exceeded after $limit tool calls while handling the goal.",
+                reason = "Tool budget exceeded after $limit tool calls while handling the current request.",
             )
         }
         usedToolCalls += 1

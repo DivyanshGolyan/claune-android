@@ -140,7 +140,7 @@ class SessionOverlayController(
             inputMode is InputMode.Text -> addTextInputActions(
                 container = container,
                 service = service,
-                hint = if (state.status == SessionStatus.Running) "Steer Claune" else "Send a message",
+                hint = "Message Claune",
             ) {
                 submitInput()
             }

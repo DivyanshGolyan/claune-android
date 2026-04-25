@@ -3,6 +3,8 @@ package com.divyanshgolyan.claune.android.data.local
 import java.io.File
 import java.time.Instant
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import pi.ai.core.AssistantMessage
 import pi.ai.core.ImageContent
 import pi.ai.core.TextContent
@@ -209,20 +211,36 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
                     message.errorMessage ?: ""
                 },
             ).takeIf { it.body.isNotBlank() }
-        is ToolResultMessage ->
-            PersistedSessionDetailEntry(
+        is ToolResultMessage -> toolResultEntry(message)
+        else -> null
+    }
+
+    private fun SessionMessageEntry.toolResultEntry(message: ToolResultMessage): PersistedSessionDetailEntry? {
+        val details = message.details as? JsonObject
+        val outcomeMessage = details?.get("value")?.jsonPrimitive?.contentOrNull
+        if (message.toolName == "finish_run" && !outcomeMessage.isNullOrBlank()) {
+            return PersistedSessionDetailEntry(
                 id = id,
                 timestamp = Instant.parse(timestamp),
-                kind = PersistedSessionDetailKind.Tool,
-                title = "Tool result",
-                body = message.content.joinToString(separator = "\n") { content ->
-                    when (content) {
-                        is TextContent -> content.text
-                        else -> content.toString()
-                    }
-                },
-            ).takeIf { it.body.isNotBlank() }
-        else -> null
+                kind = PersistedSessionDetailKind.Assistant,
+                title = "Claune",
+                body = outcomeMessage,
+                details = details,
+            )
+        }
+        return PersistedSessionDetailEntry(
+            id = id,
+            timestamp = Instant.parse(timestamp),
+            kind = PersistedSessionDetailKind.Tool,
+            title = "Tool result",
+            body = message.content.joinToString(separator = "\n") { content ->
+                when (content) {
+                    is TextContent -> content.text
+                    else -> content.toString()
+                }
+            },
+            details = details,
+        ).takeIf { it.body.isNotBlank() }
     }
 
     private fun UserMessageContent.asDisplayText(): String = when (this) {
@@ -245,11 +263,11 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
 
     private fun userFacingText(text: String): String {
         val trimmed = text.trim()
-        if (!trimmed.startsWith("Goal:")) {
+        if (!trimmed.startsWith("Current request:")) {
             return trimmed
         }
         return trimmed
-            .removePrefix("Goal:")
+            .removePrefix("Current request:")
             .substringBefore("\n\nRecent session events:")
             .substringBefore("\n\nLast known phone snapshot")
             .trim()

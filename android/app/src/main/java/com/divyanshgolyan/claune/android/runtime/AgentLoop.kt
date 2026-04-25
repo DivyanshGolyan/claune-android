@@ -14,12 +14,12 @@ class AgentLoop(
     private val logStore: SessionLogStore,
     private val artifactStore: AgentRunArtifactStore,
 ) {
-    suspend fun submitUserText(goal: String) {
-        if (sessionCoordinator.uiState.value.status == SessionStatus.Running && modelGateway.steer(goal)) {
-            sessionCoordinator.logEvent("Queued steering from the user.")
+    suspend fun submitUserMessage(message: String) {
+        if (sessionCoordinator.uiState.value.status == SessionStatus.Running && modelGateway.steer(message)) {
+            sessionCoordinator.logEvent("Added instruction to current run.")
             return
         }
-        runSelectedSessionPrompt(goal)
+        runSelectedSessionPrompt(message)
     }
 
     suspend fun stopActiveSession(reason: String) {
@@ -28,16 +28,16 @@ class AgentLoop(
         sessionCoordinator.refreshSessions()
     }
 
-    private suspend fun runSelectedSessionPrompt(goal: String) {
-        val selectedSession = sessionCoordinator.beginRun(goal)
-        val sessionId = requireNotNull(sessionCoordinator.uiState.value.sessionId)
+    private suspend fun runSelectedSessionPrompt(userMessage: String) {
+        val selectedSession = sessionCoordinator.beginRun(userMessage)
+        val runId = requireNotNull(sessionCoordinator.uiState.value.activeRunId)
         runCatching {
             artifactStore.startRun(
                 RunArtifactMetadata(
-                    runId = sessionId,
+                    runId = runId,
                     persistentSessionPath = selectedSession.path,
                     persistentSessionId = selectedSession.sessionId,
-                    goal = goal,
+                    userMessage = userMessage,
                     startedAt = java.time.Instant.now().toString(),
                     model = PiAgentModelGateway.MODEL_NAME,
                     promptVersion = PiAgentModelGateway.PROMPT_VERSION,
@@ -56,10 +56,10 @@ class AgentLoop(
         val modelOutput =
             modelGateway.nextStep(
                 ModelTurnInput(
-                    sessionId = sessionId,
+                    runId = runId,
                     persistentSessionPath = selectedSession.path,
                     persistentSessionId = selectedSession.sessionId,
-                    goal = goal,
+                    userMessage = userMessage,
                     snapshot = snapshot,
                     recentEvents = sessionCoordinator.uiState.value.timeline,
                 ),

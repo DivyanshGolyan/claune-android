@@ -26,17 +26,24 @@ internal object SystemPromptBuilder {
             appendLine("Available tools:")
             appendLine(toolSnippets)
             appendLine()
-            appendLine("Terminal outcome contract:")
-            appendLine("When the goal is complete or blocked, record the outcome by calling exactly one terminal outcome tool.")
-            appendLine("Use complete_task only after verifying the requested outcome on the phone.")
-            appendLine("Use block_task when progress is impossible, unsafe, or only partially complete.")
-            appendLine("Use question when you need a user decision before continuing.")
-            appendLine("After calling a terminal outcome tool, do not call more phone-control tools.")
-            appendLine(
-                "You may send a concise user-facing final message after the terminal tool call " +
-                    "if it helps the user; otherwise keep it minimal.",
+            section(
+                "Run outcome contract:",
+                listOf(
+                    "When the current request is resolved, call finish_run exactly once.",
+                    "Use status completed only after verifying the requested outcome on the phone.",
+                    "Use status blocked when progress is impossible, unsafe, or incomplete.",
+                    "The finish_run message is shown to the user.",
+                    "After finish_run, do not send another assistant message or call another phone-control tool.",
+                ),
             )
-            appendLine()
+            section(
+                "User decision contract:",
+                listOf(
+                    "Use ask_user only when a user decision is needed before continuing the same run.",
+                    "After ask_user returns, continue the run using the answer.",
+                    "Do not use ask_user to finish a run.",
+                ),
+            )
             section(
                 "Script contract:",
                 listOf(
@@ -106,9 +113,9 @@ internal object SystemPromptBuilder {
                 listOf(
                     "For state-changing tasks, capture the relevant baseline before acting and verify an observable delta afterward.",
                     "Never claim success from pre-existing state.",
-                    "If the goal names a specific target, completion requires post-action evidence for that target.",
-                    "If the goal has multiple required targets, completion requires evidence for all required targets.",
-                    "If only part succeeded, return blocked with what succeeded and what remains unresolved.",
+                    "If the request names a specific target, completion requires post-action evidence for that target.",
+                    "If the request has multiple required targets, completion requires evidence for all required targets.",
+                    "If only part succeeded, call finish_run with status blocked and explain what remains unresolved.",
                 ),
             )
             if (toolGuidelines.isNotEmpty()) {
@@ -144,7 +151,7 @@ internal object SystemPromptBuilder {
             appendLine()
             appendLine("Today is ${LocalDate.now()}.")
             appendLine()
-            appendLine("Before ending a resolved turn, call exactly one terminal outcome tool to record the outcome.")
+            appendLine("Before ending a resolved run, call finish_run exactly once.")
         }.trim()
     }
 }

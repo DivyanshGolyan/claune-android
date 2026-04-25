@@ -16,7 +16,7 @@ This repo is for local development, live demos, and debugging on a known Android
 - One active foreground run at a time. A user can keep a session and send later follow-up tasks into it.
 - Model execution backed by vendored `pi-agent-kotlin` and Anthropic.
 - `execute_script` as the only model-facing phone-control tool.
-- Terminal and user-decision tools for `complete_task`, `block_task`, and `question`.
+- Run-outcome and user-decision tools for `finish_run` and `ask_user`.
 - Memory reflection after completed or blocked turns, with `read_memory` and `edit_memory` tools for durable updates.
 - Local run artifacts under app storage: prompts, snapshots, script calls, agent messages, events, and memory-reflection output.
 
@@ -34,7 +34,7 @@ This repo is for local development, live demos, and debugging on a known Android
 - `android/vendor/pi-agent-kotlin/pi-ai-core`: vendored AI model/provider primitives.
 - `android/vendor/pi-agent-kotlin/pi-agent-core`: vendored agent runtime primitives.
 - `android/vendor/pi-agent-kotlin/pi-coding-agent-core`: vendored session, compaction, and transcript model used by Claune sessions.
-- `docs/`: architecture and stack notes. Some of these still describe the earlier Koog plan, so treat the code and this README as current until those notes are refreshed.
+- `docs/`: architecture and stack notes for the current prototype direction.
 
 ## Requirements
 
@@ -93,10 +93,10 @@ Notes:
 
 ## Debugging on a device
 
-Start the app with a goal:
+Start the app with a message:
 
 ```sh
-adb shell "am start -n com.divyanshgolyan.claune.android/.ui.MainActivity --es extra_autostart_goal 'open settings and tell me what you see'"
+adb shell "am start -n com.divyanshgolyan.claune.android/.ui.MainActivity --es extra_autostart_message 'open settings and tell me what you see'"
 ```
 
 Show the overlay without starting an agent run:
@@ -121,13 +121,13 @@ adb shell content query --uri content://com.droidrun.portal/phone_state
 
 The model should observe and act through `execute_script`. The JavaScript host exposes the `claune` API for phone observation, tapping, typing, scrolling, back/home, and waiting for UI state. The model should not invent raw Android objects or stale element ids.
 
-When a turn ends, the model records one terminal outcome through a tool call:
+When a run ends, the model records one terminal outcome through a tool call:
 
-- `complete_task` after the requested outcome is verified on the phone.
-- `block_task` when progress is impossible, unsafe, or only partially complete.
-- `question` when the run needs a user decision. The overlay presents 1 to 3 options and also allows custom input.
+- `finish_run` with status `completed` after the requested outcome is verified on the phone.
+- `finish_run` with status `blocked` when progress is impossible, unsafe, or only partially complete.
+- `ask_user` when the run needs a user decision before it can continue. The overlay presents 1 to 3 options and also allows custom input.
 
-Completed or blocked turns do not close the user-owned session by themselves. The overlay and foreground session can stay up so the user can continue, steer, or stop explicitly.
+Completed or blocked runs do not close the user-owned session by themselves. The overlay and foreground session can stay up so the user can continue, steer, or stop explicitly.
 
 ## Status
 

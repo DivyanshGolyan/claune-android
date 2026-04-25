@@ -10,7 +10,7 @@ V1 should be:
 - voice-first but not voice-only
 - replayable and inspectable
 - centered on one active user session
-- powered by a Koog agent loop
+- powered by the vendored `pi-agent-kotlin` agent loop
 - driven through one model-facing tool: `execute_script`
 
 V1 should not be:
@@ -32,7 +32,7 @@ The system has three major layers:
 
 The first and third layers are app-owned.
 
-The second layer uses Koog.
+The second layer uses `pi-agent-kotlin`.
 
 ## High-Level Architecture
 
@@ -40,7 +40,7 @@ The second layer uses Koog.
 User
   -> Compose UI
   -> SessionCoordinator
-  -> KoogAgentLoop
+  -> AgentLoop
   -> execute_script
   -> JS Runtime
   -> Host Bindings
@@ -54,28 +54,29 @@ Persisted alongside the loop:
 
 ## Core Runtime Contract
 
-The runtime processes one active session at a time.
+The runtime keeps one active session and processes one active run at a time.
 
 The key runtime objects are:
 
 - `Session`
-- `Turn`
-- `UiSnapshot`
+- `Run`
 - `ModelStep`
+- `UiSnapshot`
 - `ScriptExecution`
 - `HostCallEvent`
 - `RunLogEvent`
 
 The model-facing tool surface is intentionally tiny:
 
-- one configured tool: `execute_script`
+- phone control: `execute_script`
+- run outcome: `finish_run`
+- user decision: `ask_user`
 
-Each inference step may return:
+Each run may:
 
-- `message_to_user`
-- `execute_script`
-- `completion`
-- `blocked`
+- call `execute_script` zero or more times
+- call `ask_user` only when user input is required before continuing
+- call `finish_run` exactly once with status `completed` or `blocked`
 
 The script itself may perform multiple host API calls before returning.
 
@@ -83,29 +84,28 @@ The script itself may perform multiple host API calls before returning.
 
 ### Session
 
-Represents one user goal.
+Represents the durable conversation/thread. A session can contain multiple user messages and multiple runs over time.
 
 Suggested fields:
 
 - `sessionId`
 - `createdAt`
 - `status`
-- `goal`
+- `title`
 - `lastKnownApp`
 - `lastSnapshotId`
-- `lastTurnId`
+- `lastRunId`
 - `requiresUserAttention`
 
-### Turn
+### Run
 
-Represents one cycle of observe -> think -> act.
+Represents the agent processing one user message/request on the phone.
 
 Suggested fields:
 
-- `turnId`
+- `runId`
 - `sessionId`
-- `index`
-- `userInput`
+- `userMessage`
 - `snapshotId`
 - `modelStepId`
 - `scriptExecutionId`
@@ -136,7 +136,7 @@ Suggested fields:
 
 - `modelStepId`
 - `sessionId`
-- `turnId`
+- `runId`
 - `kind`
 - `messageText`
 - `scriptSource`
@@ -152,8 +152,7 @@ Represents one `execute_script` run.
 Suggested fields:
 
 - `scriptExecutionId`
-- `sessionId`
-- `turnId`
+- `runId`
 - `language`
 - `source`
 - `status`
@@ -169,7 +168,7 @@ Suggested fields:
 
 - `hostCallId`
 - `scriptExecutionId`
-- `sessionId`
+- `runId`
 - `name`
 - `argumentsJson`
 - `resultJson`
@@ -185,6 +184,7 @@ Owns:
 - onboarding
 - voice and text input
 - session display
+- run display
 - execution timeline
 - replay view
 
@@ -192,8 +192,8 @@ Owns:
 
 Owns:
 
-- active session runtime
-- Koog agent execution
+- active run runtime
+- `pi-agent-kotlin` agent execution
 - script execution coordination
 - durable session progress
 
@@ -214,6 +214,7 @@ For the prototype, keep the service model simple:
 
 - one foreground service
 - one active session
+- one active run
 - one explicit stop action in the persistent notification
 
 ## Internal Interfaces
@@ -323,16 +324,15 @@ Example:
 }
 ```
 
-## Model Step Contract
+## Model Tool Contract
 
-The model should not emit arbitrary free-form text plus arbitrary tool calls in the same step.
+The model should not use final free-form assistant text as the run outcome.
 
-Use a strict output shape:
+Use the explicit tool surface:
 
-- `message_to_user`
 - `execute_script`
-- `completion`
-- `blocked`
+- `ask_user`
+- `finish_run`
 
 Reasons:
 
@@ -341,7 +341,7 @@ Reasons:
 - easier retry behavior
 - easier debugging
 
-`execute_script` is the only configured model tool in v1.
+`execute_script` is the only phone-control tool in v1. `finish_run` is the only terminal outcome tool. `ask_user` is only for a user decision needed before the same run can continue.
 
 The script body is the unit of action. The script can call multiple host APIs before returning.
 
@@ -397,23 +397,23 @@ The runtime loop should be intentionally simple.
 ```text
 1. Capture latest snapshot
 2. Build model input from:
-   - user goal
+   - current user message/request
    - current snapshot
    - recent session history
    - recent script results
    - pending runtime constraints
-3. Ask Koog-backed agent loop for next step
-4. Validate structured output
-5. If output is message_to_user, render and continue or stop
-6. If output is execute_script, run the script in the JS runtime
+3. Ask the `pi-agent-kotlin` session for the next step
+4. If the model calls `execute_script`, run the script in the JS runtime
+5. If the model calls `ask_user`, render the question and continue after the answer
+6. If the model calls `finish_run`, record the completed or blocked outcome
 7. Persist model step, script execution, and host-call events
 8. Re-observe and continue
-9. Stop on success, user cancellation, or unrecoverable failure
+9. Stop on `finish_run`, user cancellation, or unrecoverable failure
 ```
 
-## Koog Integration
+## Agent Runtime Integration
 
-Koog is used for:
+`pi-agent-kotlin` is used for:
 
 - managing the agent loop
 - handling session-scoped history
@@ -428,7 +428,7 @@ The app still owns:
 - host bindings
 - interruption semantics
 
-For v1, the Koog integration should stay simple:
+For v1, the agent runtime integration should stay simple:
 
 - one active agent session
 - one active foreground runtime
@@ -436,7 +436,7 @@ For v1, the Koog integration should stay simple:
 
 ## Context Management
 
-Use Koog chat memory and history compression, but keep the trigger policy app-owned.
+Use `pi-agent-kotlin` chat memory and history compression, but keep the trigger policy app-owned.
 
 The app should decide when to compact based on:
 
@@ -615,18 +615,17 @@ Exit criteria:
 
 - app can execute scripts reliably from a debug UI without the model
 
-### Milestone 4: Single-step Koog loop
+### Milestone 4: Single-step agent loop
 
 Build:
 
-- Koog integration
+- `pi-agent-kotlin` integration
 - one-turn prompt builder
-- structured step output
-- `execute_script` wiring
+- `execute_script`, `ask_user`, and `finish_run` wiring
 
 Exit criteria:
 
-- model can inspect a snapshot and return either a message or one valid script execution step
+- model can inspect a snapshot and use the expected tool for action, user decision, or final outcome
 
 ### Milestone 5: Full session loop
 

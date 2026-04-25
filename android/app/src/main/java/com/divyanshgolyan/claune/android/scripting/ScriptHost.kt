@@ -30,7 +30,7 @@ class ScriptHost(
     private val now: () -> Instant = { Instant.now() },
     private val sleeper: suspend (Long) -> Unit = { delay(it) },
 ) {
-    private val sessionId: String? get() = sessionCoordinator.uiState.value.sessionId
+    private val runId: String? get() = sessionCoordinator.uiState.value.activeRunId
     private val recordedCalls = mutableListOf<HostCallRecord>()
 
     fun hostCalls(): List<HostCallRecord> = recordedCalls.toList()
@@ -553,7 +553,7 @@ class ScriptHost(
             HostCallRecord(
                 hostCallId = "host-call-${finishedAt.toEpochMilli()}-${recordedCalls.size + 1}",
                 scriptExecutionId = scriptExecutionId,
-                sessionId = sessionId,
+                runId = runId,
                 name = name,
                 argumentsJson = ScriptJson.codec.encodeToString(arguments),
                 resultJson = ScriptJson.codec.encodeToString(HostCallOutcome.serializer(), result),
@@ -581,7 +581,7 @@ class ScriptHost(
             HostCallRecord(
                 hostCallId = "host-call-${finishedAt.toEpochMilli()}-${recordedCalls.size + 1}",
                 scriptExecutionId = scriptExecutionId,
-                sessionId = sessionId,
+                runId = runId,
                 name = name,
                 argumentsJson = ScriptJson.codec.encodeToString(arguments),
                 resultJson = ScriptJson.codec.encodeToString(resultSerializer, result),

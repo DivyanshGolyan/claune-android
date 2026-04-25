@@ -6,7 +6,7 @@ import com.divyanshgolyan.claune.android.data.local.PersistedSessionSummary
 import java.time.Instant
 
 data class SessionUiState(
-    val sessionId: String? = null,
+    val activeRunId: String? = null,
     val selectedSessionPath: String? = null,
     val selectedPersistentSessionId: String? = null,
     val selectedSessionTitle: String? = null,
@@ -15,7 +15,7 @@ data class SessionUiState(
     val activeSessionTitle: String? = null,
     val recentSessions: List<PersistedSessionSummary> = emptyList(),
     val status: SessionStatus = SessionStatus.Idle,
-    val summaryLine: String = "Idle and waiting for a goal.",
+    val summaryLine: String = "Idle and waiting for a message.",
     val lastKnownApp: String? = null,
     val appInForeground: Boolean = false,
     val accessibilityConnected: Boolean = false,
@@ -25,7 +25,7 @@ data class SessionUiState(
     val pendingSteeringCount: Int = 0,
     val pendingQuestion: PendingQuestionUiState? = null,
     val lastAssistantText: String = "",
-    val timeline: List<String> = listOf("Prototype scaffold ready. Start a session to exercise the loop skeleton."),
+    val timeline: List<String> = listOf("Prototype scaffold ready. Start a session and send a message."),
 )
 
 data class PendingQuestionUiState(val id: String, val prompt: String, val options: List<String>)
@@ -107,10 +107,10 @@ sealed interface ActionResult {
 }
 
 data class ModelTurnInput(
-    val sessionId: String,
+    val runId: String,
     val persistentSessionPath: String?,
     val persistentSessionId: String?,
-    val goal: String,
+    val userMessage: String,
     val snapshot: UiSnapshot,
     val recentEvents: List<String>,
 )

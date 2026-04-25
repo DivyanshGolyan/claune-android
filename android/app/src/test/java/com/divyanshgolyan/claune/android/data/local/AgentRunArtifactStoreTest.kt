@@ -34,8 +34,8 @@ class AgentRunArtifactStoreTest {
 
             store.startRun(
                 RunArtifactMetadata(
-                    runId = "session-1",
-                    goal = "Open Wi-Fi settings",
+                    runId = "run-1",
+                    userMessage = "Open Wi-Fi settings",
                     startedAt = "2026-04-17T09:59:00Z",
                     model = "claude-haiku-4-5",
                     maxIterations = 100,
@@ -44,36 +44,36 @@ class AgentRunArtifactStoreTest {
             )
             store.recordState(
                 SessionUiState(
-                    sessionId = "session-1",
+                    activeRunId = "run-1",
                     status = SessionStatus.Blocked,
                     summaryLine = "Timed out reaching Wi-Fi.",
                     lastKnownApp = "com.android.settings",
                     accessibilityConnected = true,
                     foregroundServiceRunning = true,
-                    timeline = listOf("Session started", "Timed out reaching Wi-Fi."),
+                    timeline = listOf("Run started", "Timed out reaching Wi-Fi."),
                 ),
             )
-            store.recordSnapshot("session-1", snapshot())
-            store.writeSystemPrompt("session-1", "system prompt")
-            store.writeModelInput("session-1", "formatted prompt")
-            store.writeFinalOutput("session-1", """{"kind":"blocked","reason":"Timed out"}""")
-            store.writeAgentMessages("session-1", history())
-            store.writeAgentEvents("session-1", events())
+            store.recordSnapshot("run-1", snapshot())
+            store.writeSystemPrompt("run-1", "system prompt")
+            store.writeModelInput("run-1", "formatted prompt")
+            store.writeFinalOutput("run-1", """{"status":"blocked","message":"Timed out"}""")
+            store.writeAgentMessages("run-1", history())
+            store.writeAgentEvents("run-1", events())
 
             val metadata =
                 ScriptJson.codec.decodeFromString(
                     RunArtifactMetadata.serializer(),
-                    root.resolve("session-1/metadata.json").readText(),
+                    root.resolve("run-1/metadata.json").readText(),
                 )
             val serializedMessages =
                 ScriptJson.codec.decodeFromString(
                     ListSerializer(SerializedAgentMessage.serializer()),
-                    root.resolve("session-1/agent-messages.json").readText(),
+                    root.resolve("run-1/agent-messages.json").readText(),
                 )
             val serializedEvents =
                 ScriptJson.codec.decodeFromString(
                     ListSerializer(SerializedAgentEvent.serializer()),
-                    root.resolve("session-1/agent-events.json").readText(),
+                    root.resolve("run-1/agent-events.json").readText(),
                 )
 
             assertEquals(SessionStatus.Blocked.name, metadata.status)
@@ -83,8 +83,10 @@ class AgentRunArtifactStoreTest {
             assertEquals("user", serializedMessages.first().type)
             assertEquals(3, serializedEvents.size)
             assertEquals("agent_start", serializedEvents.first().type)
-            assertTrue(root.resolve("session-1/snapshots.json").exists())
-            assertEquals("formatted prompt", root.resolve("session-1/model-input.txt").readText())
+            assertEquals("run-1", metadata.runId)
+            assertEquals("Open Wi-Fi settings", metadata.userMessage)
+            assertTrue(root.resolve("run-1/snapshots.json").exists())
+            assertEquals("formatted prompt", root.resolve("run-1/model-input.txt").readText())
         } finally {
             root.deleteRecursively()
         }
@@ -110,8 +112,8 @@ class AgentRunArtifactStoreTest {
 
             store.startRun(
                 RunArtifactMetadata(
-                    runId = "session-stuck",
-                    goal = "Add apples and oranges",
+                    runId = "run-stuck",
+                    userMessage = "Add apples and oranges",
                     startedAt = "2026-04-18T10:10:00Z",
                     model = "claude-haiku-4-5",
                     maxIterations = 100,
@@ -124,7 +126,7 @@ class AgentRunArtifactStoreTest {
             val metadata =
                 ScriptJson.codec.decodeFromString(
                     RunArtifactMetadata.serializer(),
-                    root.resolve("session-stuck/metadata.json").readText(),
+                    root.resolve("run-stuck/metadata.json").readText(),
                 )
 
             assertEquals(SessionStatus.Cancelled.name, metadata.status)

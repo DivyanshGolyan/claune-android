@@ -77,7 +77,7 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
 
     @Synchronized
     override fun recordState(state: SessionUiState) {
-        val runId = state.sessionId ?: return
+        val runId = state.activeRunId ?: return
         appendArray(
             runId = runId,
             fileName = STATES_FILE_NAME,
@@ -85,7 +85,7 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
             value =
             RunStateRecord(
                 recordedAt = now().toString(),
-                sessionId = runId,
+                runId = runId,
                 status = state.status.name,
                 summaryLine = state.summaryLine,
                 lastKnownApp = state.lastKnownApp,
@@ -253,7 +253,7 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
 class ArtifactSessionLogStore(
     private val delegate: SessionLogStore,
     private val artifactStore: AgentRunArtifactStore,
-    private val currentSessionIdProvider: () -> String?,
+    private val currentRunIdProvider: () -> String?,
 ) : SessionLogStore {
     override fun record(state: SessionUiState) {
         delegate.record(state)
@@ -262,19 +262,19 @@ class ArtifactSessionLogStore(
 
     override fun recordSnapshot(snapshot: UiSnapshot) {
         delegate.recordSnapshot(snapshot)
-        val runId = currentSessionIdProvider() ?: return
+        val runId = currentRunIdProvider() ?: return
         runCatching { artifactStore.recordSnapshot(runId, snapshot) }
     }
 
     override fun recordScriptExecution(execution: ScriptExecutionRecord) {
         delegate.recordScriptExecution(execution)
-        val runId = execution.sessionId ?: return
+        val runId = execution.runId ?: return
         runCatching { artifactStore.recordScriptExecution(runId, execution) }
     }
 
     override fun recordHostCall(hostCall: HostCallRecord) {
         delegate.recordHostCall(hostCall)
-        val runId = hostCall.sessionId ?: return
+        val runId = hostCall.runId ?: return
         runCatching { artifactStore.recordHostCall(runId, hostCall) }
     }
 
@@ -288,7 +288,7 @@ data class RunArtifactMetadata(
     val runId: String,
     val persistentSessionPath: String? = null,
     val persistentSessionId: String? = null,
-    val goal: String,
+    val userMessage: String,
     val startedAt: String,
     val finishedAt: String? = null,
     val status: String = SessionStatus.Running.name,
@@ -305,7 +305,7 @@ data class RunArtifactMetadata(
 @Serializable
 data class RunStateRecord(
     val recordedAt: String,
-    val sessionId: String,
+    val runId: String,
     val status: String,
     val summaryLine: String,
     val lastKnownApp: String? = null,
