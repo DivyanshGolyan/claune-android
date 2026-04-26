@@ -33,9 +33,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SessionOverlayController(
     private val appContext: Context,
@@ -59,6 +61,7 @@ class SessionOverlayController(
     private var renderedActionsKey: String? = null
     private var inputMode: InputMode? = null
     private var debugOverlayVisible = false
+    private var coordinateTapSuppressionActive = false
 
     fun attach(service: AccessibilityService) {
         this.service = service
@@ -87,7 +90,37 @@ class SessionOverlayController(
         render(sessionStateProvider.value)
     }
 
+    suspend fun <T> withoutOverlayForCoordinateTap(block: suspend () -> T): T {
+        val shouldRestore =
+            withContext(Dispatchers.Main.immediate) {
+                coordinateTapSuppressionActive = true
+                val wasVisible = overlayView != null
+                if (wasVisible) {
+                    hide()
+                }
+                wasVisible
+            }
+        if (shouldRestore) {
+            delay(OVERLAY_TAP_SUPPRESSION_SETTLE_MS)
+        }
+        return try {
+            block()
+        } finally {
+            if (shouldRestore) {
+                delay(OVERLAY_TAP_RESTORE_DELAY_MS)
+            }
+            withContext(Dispatchers.Main.immediate) {
+                coordinateTapSuppressionActive = false
+                render(sessionStateProvider.value)
+            }
+        }
+    }
+
     private fun render(state: SessionUiState) {
+        if (coordinateTapSuppressionActive) {
+            hide()
+            return
+        }
         if (!shouldShow(state)) {
             hide()
             return
@@ -555,3 +588,6 @@ class SessionOverlayController(
         data class QuestionCustom(override val questionId: String) : InputMode
     }
 }
+
+private const val OVERLAY_TAP_SUPPRESSION_SETTLE_MS = 120L
+private const val OVERLAY_TAP_RESTORE_DELAY_MS = 250L

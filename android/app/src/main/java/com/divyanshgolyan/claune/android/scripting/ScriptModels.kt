@@ -60,6 +60,20 @@ data class UiSnapshotPayload(
 )
 
 @Serializable
+data class ScreenInspectOptionsPayload(val text: String? = null, val includeAll: Boolean = false, val limit: Int = 20)
+
+@Serializable
+data class ScreenInspectionPayload(
+    val snapshotId: String,
+    val capturedAt: String,
+    val foregroundPackage: String,
+    val query: String? = null,
+    val visibleElements: List<UiElementPayload>,
+    val actionableElements: List<UiElementPayload>,
+    val selectedWindowReason: String? = null,
+)
+
+@Serializable
 data class InstalledAppPayload(val label: String, val packageName: String, val activityName: String? = null)
 
 @Serializable
@@ -96,6 +110,10 @@ data class UiElementPayload(
     val selected: Boolean = false,
     val scrollable: Boolean = false,
     val bounds: List<Int>,
+    val center: List<Int>,
+    val actions: List<String> = emptyList(),
+    val tapFallbackEligible: Boolean = false,
+    val clickabilityReason: String = "",
 )
 
 @Serializable

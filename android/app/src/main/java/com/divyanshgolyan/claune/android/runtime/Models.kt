@@ -52,6 +52,7 @@ data class UiSnapshot(
     val foregroundPackage: String,
     val visibleText: List<String>,
     val actionableElements: List<UiElement>,
+    val visibleElements: List<UiElement> = emptyList(),
     val focusedElementId: String?,
     val windowCandidates: List<WindowCandidate> = emptyList(),
     val selectedWindowReason: String? = null,
@@ -89,6 +90,9 @@ data class UiElement(
     val selected: Boolean = false,
     val scrollable: Boolean = false,
     val bounds: List<Int>,
+    val actions: List<String> = emptyList(),
+    val tapFallbackEligible: Boolean = false,
+    val clickabilityReason: String = "",
 )
 
 data class ElementRef(val elementId: String)
@@ -129,6 +133,8 @@ interface PhoneObserver {
 
 interface PhoneActuator {
     suspend fun tap(target: ElementRef): ActionResult
+
+    suspend fun tapPoint(x: Int, y: Int): ActionResult
 
     suspend fun type(target: ElementRef, text: String): ActionResult
 

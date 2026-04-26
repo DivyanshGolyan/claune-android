@@ -13,9 +13,12 @@ import java.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -39,6 +42,18 @@ class ScriptHost(
         val snapshot = phoneObserver.captureSnapshot()
         recordSnapshot(snapshot)
         return snapshot.toPayload()
+    }
+
+    suspend fun inspectScreen(optionsJson: String): ScreenInspectionPayload {
+        val options = decodeScreenInspectOptions(optionsJson)
+        val snapshot = phoneObserver.captureSnapshot()
+        recordSnapshot(snapshot)
+        return recordDataCall(
+            name = "inspectScreen",
+            arguments = buildJsonObject { put("options", optionsJson) },
+            result = snapshot.toInspectionPayload(options),
+            resultSerializer = ScreenInspectionPayload.serializer(),
+        )
     }
 
     suspend fun listInstalledApps(): List<InstalledAppPayload> = recordDataCall(
@@ -106,6 +121,44 @@ class ScriptHost(
                 put("matchedRef", element.ref)
                 put("matchedElementId", element.id)
                 put("matchedLabel", element.label)
+            },
+        )
+    }
+
+    suspend fun tapPoint(x: Int, y: Int): HostCallOutcome = recordCall(
+        name = "tapPoint",
+        arguments =
+        buildJsonObject {
+            put("x", x)
+            put("y", y)
+        },
+    ) {
+        phoneActuator.tapPoint(x, y).toOutcome(
+            data =
+            buildJsonObject {
+                put("x", x)
+                put("y", y)
+            },
+        )
+    }
+
+    suspend fun tapBounds(boundsJson: String): HostCallOutcome = recordCall(
+        name = "tapBounds",
+        arguments = buildJsonObject { put("bounds", boundsJson) },
+    ) {
+        val bounds = decodeBounds(boundsJson)
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "Invalid bounds. Expected [left, top, right, bottom].",
+            )
+        val centerX = (bounds[0] + bounds[2]) / 2
+        val centerY = (bounds[1] + bounds[3]) / 2
+        phoneActuator.tapPoint(centerX, centerY).toOutcome(
+            data =
+            buildJsonObject {
+                put("bounds", boundsJson)
+                put("x", centerX)
+                put("y", centerY)
             },
         )
     }
@@ -597,6 +650,16 @@ class ScriptHost(
     private fun recordSnapshot(snapshot: UiSnapshot) {
         sessionCoordinator.setLastKnownApp(snapshot.foregroundPackage)
         logStore.recordSnapshot(snapshot)
+    }
+
+    private fun decodeScreenInspectOptions(optionsJson: String): ScreenInspectOptionsPayload = runCatching {
+        ScriptJson.codec.decodeFromString<ScreenInspectOptionsPayload>(optionsJson)
+    }.getOrDefault(ScreenInspectOptionsPayload())
+
+    private fun decodeBounds(boundsJson: String): List<Int>? = runCatching {
+        ScriptJson.codec.parseToJsonElement(boundsJson).jsonArray.map { it.jsonPrimitive.int }
+    }.getOrNull()?.takeIf { bounds ->
+        bounds.size == 4 && bounds[2] > bounds[0] && bounds[3] > bounds[1]
     }
 
     private fun String.toScrollDirection(): ScrollDirection? = when (lowercase()) {

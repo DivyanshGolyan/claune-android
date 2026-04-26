@@ -137,6 +137,9 @@ class QuickJsScriptRuntime(
         context.registerJsonFunction("__clauneObservePhoneJson") {
             encodeSnapshot(host.observePhone())
         }
+        context.registerJsonFunction("__clauneInspectScreenJson") { args ->
+            encodeInspection(host.inspectScreen(args.stringArg(0)))
+        }
         context.registerJsonFunction("__clauneListInstalledAppsJson") {
             encodeInstalledApps(host.listInstalledApps())
         }
@@ -151,6 +154,12 @@ class QuickJsScriptRuntime(
         }
         context.registerJsonFunction("__clauneTapTextJson") { args ->
             encodeOutcome(host.tapText(args.stringArg(0), args.booleanArg(1)))
+        }
+        context.registerJsonFunction("__clauneTapPointJson") { args ->
+            encodeOutcome(host.tapPoint(args.intArg(0), args.intArg(1)))
+        }
+        context.registerJsonFunction("__clauneTapBoundsJson") { args ->
+            encodeOutcome(host.tapBounds(args.stringArg(0)))
         }
         context.registerJsonFunction("__clauneScrollRefJson") { args ->
             encodeOutcome(host.scrollRef(args.stringArg(0), args.stringArg(1)))
@@ -207,10 +216,15 @@ class QuickJsScriptRuntime(
     private suspend fun encodeInstalledApps(apps: List<InstalledAppPayload>): String =
         ScriptJson.codec.encodeToString(ListSerializer(InstalledAppPayload.serializer()), apps)
 
+    private suspend fun encodeInspection(inspection: ScreenInspectionPayload): String =
+        ScriptJson.codec.encodeToString(ScreenInspectionPayload.serializer(), inspection)
+
     private suspend fun encodeOutcome(outcome: HostCallOutcome): String =
         ScriptJson.codec.encodeToString(HostCallOutcome.serializer(), outcome)
 
     private fun Array<out Any?>.stringArg(index: Int): String = getOrNull(index)?.toString().orEmpty()
+
+    private fun Array<out Any?>.intArg(index: Int): Int = getOrNull(index)?.toString()?.toDoubleOrNull()?.toInt() ?: 0
 
     private fun Array<out Any?>.longArg(index: Int): Long = getOrNull(index)?.toString()?.toLongOrNull() ?: 0L
 

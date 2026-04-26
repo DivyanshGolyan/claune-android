@@ -24,11 +24,28 @@ internal fun selectElement(snapshot: UiSnapshot, selector: ElementSelectorPayloa
 
 internal fun selectorFailure(selector: ElementSelectorPayload, snapshot: UiSnapshot): HostCallOutcome {
     val rankedMatches = rankedMatches(snapshot, selector)
+    val visibleMatches = rankedVisibleMatches(snapshot, selector)
     return when {
         rankedMatches.isEmpty() ->
             HostCallOutcome(
                 ok = false,
-                message = "Selector did not match any actionable element on the current screen.",
+                message =
+                buildString {
+                    append("Selector did not match any actionable element on the current screen.")
+                    if (visibleMatches.isNotEmpty()) {
+                        append(
+                            " Visible non-actionable matches exist; call inspectScreen with the same text, verify bounds, then use tapBounds only if the requested target is visually present.",
+                        )
+                        val candidates = visibleMatches.take(3).joinToString(separator = "; ") { (element, _) ->
+                            "ref=${element.ref}, label=${element.label.ifBlank {
+                                "<blank>"
+                            }}, bounds=${element.bounds}, reason=${element.clickabilityReason}"
+                        }
+                        append(" Visible candidates: ")
+                        append(candidates)
+                        append('.')
+                    }
+                },
             )
 
         else ->
@@ -64,6 +81,14 @@ private fun rankedMatches(snapshot: UiSnapshot, selector: ElementSelectorPayload
         selector.matchScore(element)?.let { score -> element to score }
     }
     .sortedByDescending { (_, score) -> score }
+
+private fun rankedVisibleMatches(snapshot: UiSnapshot, selector: ElementSelectorPayload): List<Pair<UiElement, Int>> =
+    snapshot.visibleElements
+        .filterNot { visible -> snapshot.actionableElements.any { it.id == visible.id } }
+        .mapNotNull { element ->
+            selector.matchScore(element)?.let { score -> element to score }
+        }
+        .sortedByDescending { (_, score) -> score }
 
 private fun ElementSelectorPayload.hasCriteria(): Boolean = listOf(
     ref,

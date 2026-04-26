@@ -45,6 +45,7 @@ internal class FinishRunToolDefinition(private val recorder: TerminalOutcomeReco
             "Use status completed only after phone evidence verifies the requested outcome.",
             "Use ask_user instead of finish_run when the next step depends on a user choice.",
             "Use status blocked when progress is impossible, unsafe, or incomplete.",
+            "Do not use tool success or gesture dispatch success as completion evidence; cite the post-action phone state.",
             "The finish_run message is shown to the user and must be a final statement, not a question.",
         )
     override val parameters: JsonObject =

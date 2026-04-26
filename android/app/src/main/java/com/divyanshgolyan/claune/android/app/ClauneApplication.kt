@@ -67,8 +67,8 @@ class ClauneContainer(application: Application) {
     }
     val sessionCoordinator = SessionCoordinator(logStore, codingSessionStore)
     val questionPromptCoordinator = QuestionPromptCoordinator(sessionCoordinator)
-    val accessibilityBridge = AccessibilityBridge(application, sessionCoordinator)
     val overlayController = SessionOverlayController(application, sessionCoordinator.uiState, questionPromptCoordinator)
+    val accessibilityBridge = AccessibilityBridge(application, sessionCoordinator, overlayController)
     val scriptRuntime =
         QuickJsScriptRuntime(
             phoneObserver = accessibilityBridge,

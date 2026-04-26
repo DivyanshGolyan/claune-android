@@ -14,6 +14,7 @@ import com.divyanshgolyan.claune.android.runtime.WindowCandidate
 import java.nio.file.Files
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -346,6 +347,127 @@ class ScriptHostTest {
     }
 
     @Test
+    fun `tapText points to inspectScreen when only a visible non actionable match exists`() = runTest {
+        val nonActionable =
+            element(
+                id = "rapido-auto-text",
+                ref = "e4",
+                label = "Auto ride. Estimated fare ₹242",
+                text = "Auto ride. Estimated fare ₹242",
+                clickable = false,
+                bounds = listOf(40, 1200, 1040, 1360),
+                clickabilityReason = "visible_non_actionable",
+                tapFallbackEligible = true,
+            )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = emptyList(),
+                            visibleElements = listOf(nonActionable),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.tapText("Auto ride", exact = false)
+
+        assertFalse(result.ok)
+        assertTrue(result.message.contains("inspectScreen"))
+        assertTrue(result.message.contains("Visible candidates"))
+        assertTrue(result.message.contains("visible_non_actionable"))
+    }
+
+    @Test
+    fun `inspectScreen returns bounded visible non actionable matches`() = runTest {
+        val visibleAuto =
+            element(
+                id = "rapido-auto-text",
+                ref = "e4",
+                label = "Auto ride. Estimated fare ₹242",
+                text = "Auto ride. Estimated fare ₹242",
+                clickable = false,
+                bounds = listOf(40, 1200, 1040, 1360),
+                clickabilityReason = "visible_non_actionable",
+                tapFallbackEligible = true,
+            )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = emptyList(),
+                            visibleElements = listOf(
+                                element(id = "bike", label = "Bike Direct", text = "Bike Direct"),
+                                visibleAuto,
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val inspection = host.inspectScreen("""{"text":"Auto ride","limit":5}""")
+
+        assertEquals("Auto ride", inspection.query)
+        assertEquals(1, inspection.visibleElements.size)
+        assertEquals("rapido-auto-text", inspection.visibleElements.single().id)
+        assertEquals(listOf(540, 1280), inspection.visibleElements.single().center)
+        assertEquals("visible_non_actionable", inspection.visibleElements.single().clickabilityReason)
+        assertTrue(inspection.visibleElements.single().tapFallbackEligible)
+    }
+
+    @Test
+    fun `tapBounds taps the center point of inspected bounds`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped point."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot())),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.tapBounds("[40,1200,1040,1360]")
+
+        assertTrue(result.ok)
+        assertEquals(540 to 1280, actuator.lastTappedPoint)
+        val data = result.data!!.jsonObject
+        assertEquals(540, data["x"]!!.jsonPrimitive.int)
+        assertEquals(1280, data["y"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `tapBounds rejects malformed bounds`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped point."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot())),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.tapBounds("[40,1200,40,1360]")
+
+        assertFalse(result.ok)
+        assertEquals("Invalid bounds. Expected [left, top, right, bottom].", result.message)
+        assertEquals(null, actuator.lastTappedPoint)
+    }
+
+    @Test
     fun `typeIntoFocused targets the focused editable element`() = runTest {
         val actuator = FakePhoneActuator(typeResult = ActionResult.Success("Typed into focused field."))
         val host =
@@ -665,6 +787,7 @@ class ScriptHostTest {
     private fun snapshot(
         packageName: String = "com.example.app",
         elements: List<UiElement> = listOf(element()),
+        visibleElements: List<UiElement> = elements,
         focusedElementId: String? = null,
         windowCandidates: List<WindowCandidate> = emptyList(),
         selectedWindowReason: String? = null,
@@ -674,6 +797,7 @@ class ScriptHostTest {
         foregroundPackage = packageName,
         visibleText = listOf("Alpha"),
         actionableElements = elements,
+        visibleElements = visibleElements,
         focusedElementId = focusedElementId,
         windowCandidates = windowCandidates,
         selectedWindowReason = selectedWindowReason,
@@ -691,6 +815,9 @@ class ScriptHostTest {
         focused: Boolean = false,
         scrollable: Boolean = false,
         bounds: List<Int> = listOf(0, 0, 100, 100),
+        actions: List<String> = emptyList(),
+        tapFallbackEligible: Boolean = false,
+        clickabilityReason: String = "",
     ): UiElement = UiElement(
         id = id,
         ref = ref,
@@ -703,6 +830,9 @@ class ScriptHostTest {
         focused = focused,
         scrollable = scrollable,
         bounds = bounds,
+        actions = actions,
+        tapFallbackEligible = tapFallbackEligible,
+        clickabilityReason = clickabilityReason,
     )
 }
 
@@ -731,11 +861,17 @@ private class FakePhoneActuator(
     private val scrollResult: ActionResult = ActionResult.Blocked("No scroll configured."),
 ) : PhoneActuator {
     var lastTapped: ElementRef? = null
+    var lastTappedPoint: Pair<Int, Int>? = null
     var lastTyped: Pair<ElementRef, String>? = null
     var lastScrolled: Pair<ElementRef, ScrollDirection>? = null
 
     override suspend fun tap(target: ElementRef): ActionResult {
         lastTapped = target
+        return tapResult
+    }
+
+    override suspend fun tapPoint(x: Int, y: Int): ActionResult {
+        lastTappedPoint = x to y
         return tapResult
     }
 

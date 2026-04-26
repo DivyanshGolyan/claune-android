@@ -7,6 +7,7 @@ internal object ClauneHostContract {
     val typeDefinitions: String
         get() = buildString {
             appendLine("export type WaitStateType = \"package\" | \"element\" | \"text\";")
+            appendLine("export type Bounds = [number, number, number, number];")
             appendLine()
             appendLine("export interface HostSuccessOutcome<TData = unknown> {")
             appendLine("  ok: true;")
@@ -31,7 +32,11 @@ internal object ClauneHostContract {
             appendLine("  checked: boolean;")
             appendLine("  selected: boolean;")
             appendLine("  scrollable: boolean;")
-            appendLine("  bounds: [number, number, number, number];")
+            appendLine("  bounds: Bounds;")
+            appendLine("  center: [number, number];")
+            appendLine("  actions: string[];")
+            appendLine("  tapFallbackEligible: boolean;")
+            appendLine("  clickabilityReason: string;")
             appendLine("}")
             appendLine()
             appendLine("export interface WindowCandidate {")
@@ -56,6 +61,22 @@ internal object ClauneHostContract {
             appendLine("  actionableElements: UiElement[];")
             appendLine("  focusedElementId?: string | null;")
             appendLine("  windowCandidates: WindowCandidate[];")
+            appendLine("  selectedWindowReason?: string | null;")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface ScreenInspectOptions {")
+            appendLine("  text?: string;")
+            appendLine("  includeAll?: boolean;")
+            appendLine("  limit?: number;")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface ScreenInspection {")
+            appendLine("  snapshotId: string;")
+            appendLine("  capturedAt: string;")
+            appendLine("  foregroundPackage: string;")
+            appendLine("  query?: string | null;")
+            appendLine("  visibleElements: UiElement[];")
+            appendLine("  actionableElements: UiElement[];")
             appendLine("  selectedWindowReason?: string | null;")
             appendLine("}")
             appendLine()
@@ -141,6 +162,15 @@ internal object ClauneHostContract {
                 throwsOnFailure = false,
             ),
             HostFunction(
+                name = "inspectScreen",
+                nativeBinding = "__clauneInspectScreenJson",
+                returnType = "ScreenInspection",
+                documentation =
+                "Inspect bounded visible elements, including non-actionable text, when a semantic tap fails or the UI looks visually tappable but not accessibility-clickable.",
+                parameters = listOf(HostParameter("options", "ScreenInspectOptions", "JSON.stringify(%s ?? {})")),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
                 name = "listInstalledApps",
                 nativeBinding = "__clauneListInstalledAppsJson",
                 returnType = "InstalledApp[]",
@@ -171,6 +201,27 @@ internal object ClauneHostContract {
                     HostParameter("text", "string", "String(%s)"),
                     HostParameter("exact", "boolean", "Boolean(%s ?? true)"),
                 ),
+            ),
+            HostFunction(
+                name = "tapPoint",
+                nativeBinding = "__clauneTapPointJson",
+                returnType = "HostSuccessOutcome",
+                documentation =
+                "Tap absolute screen coordinates. Use only after semantic/ref taps fail " +
+                    "and a fresh inspection proves the requested target is visually present.",
+                parameters = listOf(
+                    HostParameter("x", "number", "Number(%s)"),
+                    HostParameter("y", "number", "Number(%s)"),
+                ),
+            ),
+            HostFunction(
+                name = "tapBounds",
+                nativeBinding = "__clauneTapBoundsJson",
+                returnType = "HostSuccessOutcome",
+                documentation =
+                "Tap the center of inspected bounds. Use only for verified visible non-actionable targets, " +
+                    "then immediately re-observe.",
+                parameters = listOf(HostParameter("bounds", "Bounds", "JSON.stringify(%s ?? [])")),
             ),
             HostFunction(
                 name = "scrollRef",
@@ -295,7 +346,7 @@ internal object ClauneHostContract {
 private data class HostParameter(val name: String, val typeSignature: String, val bootstrapExpression: String) {
     fun renderTypeSignature(): String = "$name: $typeSignature"
 
-    fun renderBootstrapArgument(): String = bootstrapExpression.format(name)
+    fun renderBootstrapArgument(): String = bootstrapExpression.replace("%s", name)
 }
 
 private data class HostFunction(

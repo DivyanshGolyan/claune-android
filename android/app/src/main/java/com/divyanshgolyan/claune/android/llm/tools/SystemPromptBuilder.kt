@@ -82,9 +82,24 @@ internal object SystemPromptBuilder {
                     "Prefer visible direct controls by text or label.",
                     "Use tapText or tapSelector for stable named controls.",
                     "Use tapRef only for a fresh unlabeled control from the current snapshot.",
+                    "If text is visible but tapText/tapSelector says no actionable element matched, call inspectScreen({ text: \"...\" }) before deciding the target is unreachable.",
+                    "Use tapBounds only after inspectScreen shows the exact requested target as a visible bounded element that is not semantically tappable; immediately re-observe and verify the expected screen changed.",
                     "Use actionableElements.id only for APIs that explicitly require element ids, such as waitForState(\"element\", id, timeoutMs).",
                     "Never select elements by array index.",
                     "Do not substitute unrelated items, screens, or actions just because they are available.",
+                ),
+            )
+            section(
+                "Coordinate fallback procedure:",
+                listOf(
+                    "Goal: use coordinates only to reach the user's exact visible target when accessibility does not expose a semantic tap target.",
+                    "Step 1: Attempt tapText, tapSelector, or tapRef against the fresh snapshot.",
+                    "Step 2: If that fails but target text is visible, call inspectScreen with the exact target text.",
+                    "Step 3: Select a candidate only when its label, text, or contentDescription matches the requested target.",
+                    "Step 4: Call tapBounds(candidate.bounds) only when candidate.tapFallbackEligible is true.",
+                    "Step 5: Immediately call observePhone and verify a screen change tied to the requested target.",
+                    "A successful tapPoint or tapBounds return only means Android dispatched the gesture; it is not evidence that the target app accepted it.",
+                    "Stop and report blocked if inspection shows only unrelated candidates.",
                 ),
             )
             section(
@@ -115,6 +130,7 @@ internal object SystemPromptBuilder {
                     "Never claim success from pre-existing state.",
                     "If the request names a specific target, completion requires post-action evidence for that target.",
                     "If the request has multiple required targets, completion requires evidence for all required targets.",
+                    "For booking or purchase flows, a selected or ready-to-book state is not completion; require a post-action confirmation, request-in-progress state, assigned ride, or explicit equivalent.",
                     "If only part succeeded, call finish_run with status blocked and explain what remains unresolved.",
                 ),
             )
@@ -127,6 +143,19 @@ internal object SystemPromptBuilder {
             appendLine("claune.waitForSelector({ text: \"Expected result\", first: true }, 3000);")
             appendLine("screen = claune.observePhone();")
             appendLine("return { stage: \"expected_result_visible\", foregroundPackage: screen.foregroundPackage };")
+            appendLine()
+            appendLine("Example visible-bounds fallback script:")
+            appendLine("let screen = claune.observePhone();")
+            appendLine("let inspection = claune.inspectScreen({ text: \"Exact visible target\", limit: 5 });")
+            appendLine(
+                "let target = inspection.visibleElements.find(e => e.text === \"Exact visible target\" || e.label === \"Exact visible target\");",
+            )
+            appendLine(
+                "if (!target || !target.tapFallbackEligible) return { stage: \"target_not_tappable_by_bounds\", candidates: inspection.visibleElements };",
+            )
+            appendLine("claune.tapBounds(target.bounds);")
+            appendLine("screen = claune.observePhone();")
+            appendLine("return { stage: \"bounds_tap_verified\", visibleText: screen.visibleText.slice(0, 8) };")
             appendLine()
             appendLine("Example scrolling script:")
             appendLine("let screen = claune.observePhone();")
