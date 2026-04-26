@@ -95,7 +95,7 @@ Notes:
 Start the app with a message:
 
 ```sh
-adb shell "am start -n com.divyanshgolyan.claune.android/.ui.MainActivity --es extra_autostart_message 'open settings and tell me what you see'"
+adb shell "am start -a com.divyanshgolyan.claune.android.DEBUG_AUTOSTART -n com.divyanshgolyan.claune.android/.ui.MainActivity --es extra_autostart_message 'open settings and tell me what you see'"
 ```
 
 Show the overlay without starting an agent run:
@@ -110,15 +110,15 @@ Check whether Claune's accessibility service is enabled:
 adb shell settings get secure enabled_accessibility_services
 ```
 
-Dump Claune's current reduced snapshot and raw accessibility tree:
+Dump Claune's current semantic screen state:
 
 ```sh
 adb shell am broadcast -n com.divyanshgolyan.claune.android/.debug.DebugSnapshotReceiver -a com.divyanshgolyan.claune.android.debug.DUMP_SNAPSHOT
-adb exec-out run-as com.divyanshgolyan.claune.android cat files/debug-snapshot.json > /tmp/claune-debug-snapshot.json
+adb exec-out run-as com.divyanshgolyan.claune.android cat files/debug-screen-state.json > /tmp/claune-debug-screen-state.json
 adb exec-out run-as com.divyanshgolyan.claune.android cat files/debug-raw-tree.json > /tmp/claune-debug-raw-tree.json
 ```
 
-Use `debug-snapshot.json` to see the compact model snapshot from `observePhone()`. Use `debug-raw-tree.json` when a control is visible to a user but Claune cannot activate it; the raw dump includes the full tree plus a flattened `actionableNodes` list with clickability, focusability, editability, exposed accessibility actions, bounds, and parent/descendant click fallback hints. This broadcast only works in debug builds.
+Use `debug-screen-state.json` to see the semantic tree that backs `observeScreen()`, `diffScreen()`, and `inspectScreen()`. Use `debug-raw-tree.json` when a control is visible to a user but Claune cannot activate it; it captures the same full `ScreenState` shape, including bounds, exposed accessibility actions, and parent/descendant click fallback hints. This broadcast only works in debug builds.
 
 If Droidrun Portal is installed on the same device, its content provider can show the current phone state while debugging:
 
@@ -130,9 +130,11 @@ adb shell content query --uri content://com.droidrun.portal/phone_state
 
 The model should observe and act through `execute_script`. The JavaScript host exposes the `claune` API for phone observation, targeted screen inspection, tapping, typing, scrolling, back/home, and waiting for UI state. The model should not invent raw Android objects or reuse stale element ids.
 
-The normal `observePhone()` result stays compact. It includes visible text, actionable elements, bounds for those actionable elements, and window-selection diagnostics. If a target is visible but `tapText`, `tapSelector`, or `tapRef` cannot match an actionable element, the model should call `inspectScreen({ text: "target text" })`. That inspection returns bounded visible elements, including non-clickable text nodes, with center coordinates, exposed accessibility actions, clickability reasons, and `tapFallbackEligible`.
+The normal `observeScreen()` result stays compact. It returns either canonical screen text or a canonical diff from the previous screen state. If a target is visible but `tapText`, `tapSelector`, or `tapRef` cannot match an actionable element, the model should call `inspectScreen({ text: "target text" })`. That inspection returns bounded visible elements, including non-clickable text nodes, with center coordinates, exposed accessibility actions, clickability reasons, and `tapFallbackEligible`.
 
-Coordinate tapping is a fallback. The model should use `tapBounds(candidate.bounds)` only after `inspectScreen` shows the requested target as a visible bounded element. After any coordinate tap, it must call `observePhone()` and verify an observable change tied to the requested target. `tapPoint(x, y)` exists for low-level debugging, but `tapBounds` is preferred because the host computes the center point.
+If an expected target should exist but the compact screen summary and `inspectScreen()` do not surface it, use `findRawNodes({ pattern: "book|confirm|request|continue" })`. This searches the latest raw accessibility tree inside the host and returns only bounded matches with refs, bounds, context labels, and nearest actionable targets; it does not dump the whole tree back into the model context.
+
+Coordinate tapping is a fallback. The model should use `tapBounds(candidate.bounds)` only after `inspectScreen` shows the requested target as a visible bounded element. After any coordinate tap, it must call `observeScreen()` and verify an observable change tied to the requested target. `tapPoint(x, y)` exists for low-level debugging, but `tapBounds` is preferred because the host computes the center point.
 
 When a run ends, the model records one terminal outcome through a tool call:
 

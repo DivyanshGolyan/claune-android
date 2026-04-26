@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
 
         reconcileOrphanedSessionState()
         maybeHandleDebugOverlayIntent(intent)
-        maybeHandleDebugAutostart(intent?.getStringExtra(EXTRA_AUTOSTART_MESSAGE))
+        maybeHandleDebugAutostart(intent)
     }
 
     override fun onResume() {
@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         maybeHandleDebugOverlayIntent(intent)
-        maybeHandleDebugAutostart(intent.getStringExtra(EXTRA_AUTOSTART_MESSAGE))
+        maybeHandleDebugAutostart(intent)
     }
 
     private fun maybeHandleDebugOverlayIntent(intent: Intent?) {
@@ -71,11 +71,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun maybeHandleDebugAutostart(message: String?) {
-        if (!BuildConfig.DEBUG || didHandleDebugAutostart) {
+    private fun maybeHandleDebugAutostart(intent: Intent?) {
+        if (!BuildConfig.DEBUG || didHandleDebugAutostart || intent?.action != ACTION_DEBUG_AUTOSTART) {
             return
         }
-        val autostartMessage = message?.trim().orEmpty()
+        val autostartMessage = intent.getStringExtra(EXTRA_AUTOSTART_MESSAGE)?.trim().orEmpty()
+        intent.removeExtra(EXTRA_AUTOSTART_MESSAGE)
         if (autostartMessage.isBlank()) {
             return
         }
@@ -116,6 +117,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        const val ACTION_DEBUG_AUTOSTART = "com.divyanshgolyan.claune.android.DEBUG_AUTOSTART"
         const val EXTRA_AUTOSTART_MESSAGE = "extra_autostart_message"
         const val EXTRA_DEBUG_OVERLAY = "extra_debug_overlay"
     }
