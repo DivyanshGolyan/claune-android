@@ -41,6 +41,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -51,6 +53,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -91,11 +96,16 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.data.local.ClauneModel
+import com.divyanshgolyan.claune.android.data.local.ClauneThinkingLevel
+import com.divyanshgolyan.claune.android.data.local.MAX_HAIKU_THINKING_BUDGET
+import com.divyanshgolyan.claune.android.data.local.MIN_HAIKU_THINKING_BUDGET
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetail
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetailEntry
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionDetailKind
 import com.divyanshgolyan.claune.android.data.local.SettingsState
+import com.divyanshgolyan.claune.android.llm.ClauneApiKeySlot
 import com.divyanshgolyan.claune.android.llm.ClauneModelCatalog
+import com.divyanshgolyan.claune.android.llm.apiKeyFor
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import kotlinx.coroutines.flow.Flow
@@ -312,6 +322,8 @@ internal fun ClauneApp(
                     onSelectModel = { onEvent(ClauneUiEvent.UpdateSelectedModel(it)) },
                     onSaveAnthropicKey = { onEvent(ClauneUiEvent.UpdateAnthropicKey(it)) },
                     onSaveGeminiKey = { onEvent(ClauneUiEvent.UpdateGeminiKey(it)) },
+                    onSelectThinkingLevel = { onEvent(ClauneUiEvent.UpdateThinkingLevel(it)) },
+                    onSaveHaikuThinkingBudget = { onEvent(ClauneUiEvent.UpdateHaikuThinkingBudget(it)) },
                     onOpenAccessibilitySettings = { onEvent(ClauneUiEvent.OpenAccessibilitySettings) },
                     onDebugOverlayVisibleChanged = { onEvent(ClauneUiEvent.SetDebugOverlayVisible(it)) },
                     onNavigateBack = { navController.navigateUp() },
@@ -331,7 +343,7 @@ private fun SessionChooserHomeScreen(
     onOpenAccessibilitySettings: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    val isReady = settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
+    val isReady = settingsState.hasSelectedApiKey() && sessionState.accessibilityConnected
     Scaffold(
         topBar = {
             ClauneTopAppBar(
@@ -363,7 +375,8 @@ private fun SessionChooserHomeScreen(
             if (!isReady) {
                 item {
                     SetupRunwayCard(
-                        hasApiKey = settingsState.anthropicApiKey.isNotBlank(),
+                        apiKeyLabel = settingsState.selectedApiKeyStepLabel(),
+                        hasApiKey = settingsState.hasSelectedApiKey(),
                         accessibilityConnected = sessionState.accessibilityConnected,
                         onOpenSettings = onOpenSettings,
                         onOpenAccessibilitySettings = onOpenAccessibilitySettings,
@@ -412,11 +425,12 @@ private fun SessionDetailScreen(
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val canEdit = settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
-    val canSend = message.isNotBlank() && settingsState.anthropicApiKey.isNotBlank() && sessionState.accessibilityConnected
+    val hasSelectedApiKey = settingsState.hasSelectedApiKey()
+    val canEdit = hasSelectedApiKey && sessionState.accessibilityConnected
+    val canSend = message.isNotBlank() && hasSelectedApiKey && sessionState.accessibilityConnected
     val inputHelpText =
         when {
-            settingsState.anthropicApiKey.isBlank() -> "Add an Anthropic API key before starting."
+            !hasSelectedApiKey -> "Add a ${settingsState.selectedProviderLabel()} API key before starting."
             !sessionState.accessibilityConnected -> "Turn on accessibility access before starting."
             else -> "Claune starts only after you send a message."
         }
@@ -687,6 +701,7 @@ private fun ComposerTopBar(statusText: String?) {
 
 @Composable
 private fun SetupRunwayCard(
+    apiKeyLabel: String,
     hasApiKey: Boolean,
     accessibilityConnected: Boolean,
     onOpenSettings: () -> Unit,
@@ -714,7 +729,7 @@ private fun SetupRunwayCard(
                 color = ClaunePalette.Ink,
             )
             SetupStepRow(
-                title = "Anthropic API key",
+                title = apiKeyLabel,
                 complete = hasApiKey,
                 actionLabel = "Open settings",
                 onAction = onOpenSettings,
@@ -752,6 +767,7 @@ private fun SessionHistoryRow(entry: SessionHistoryEntry, onOpenSession: () -> U
     HorizontalDivider(color = ClaunePalette.RuleSoft)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsScreen(
     settingsState: SettingsState,
@@ -759,14 +775,29 @@ private fun SettingsScreen(
     onSelectModel: (ClauneModel) -> Unit,
     onSaveAnthropicKey: (String) -> Unit,
     onSaveGeminiKey: (String) -> Unit,
+    onSelectThinkingLevel: (ClauneThinkingLevel) -> Unit,
+    onSaveHaikuThinkingBudget: (Int) -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
     onDebugOverlayVisibleChanged: (Boolean) -> Unit,
     onNavigateBack: () -> Unit,
 ) {
     var anthropicKeyDraft by rememberSaveable { mutableStateOf(settingsState.anthropicApiKey) }
     var geminiKeyDraft by rememberSaveable { mutableStateOf(settingsState.geminiApiKey) }
+    var haikuBudgetDraft by rememberSaveable { mutableStateOf(settingsState.haikuThinkingBudget.toString()) }
     var showKeys by rememberSaveable { mutableStateOf(false) }
     var debugOverlayVisible by rememberSaveable { mutableStateOf(false) }
+    val selectedOption = ClauneModelCatalog.optionFor(settingsState.selectedModel)
+    val selectedProviderLabel = settingsState.selectedProviderLabel()
+    val selectedKeyDraft =
+        when (selectedOption.apiKeySlot) {
+            ClauneApiKeySlot.Anthropic -> anthropicKeyDraft
+            ClauneApiKeySlot.Gemini -> geminiKeyDraft
+        }
+    val budgetValue = haikuBudgetDraft.toIntOrNull()
+    val showHaikuBudget = settingsState.selectedModel == ClauneModel.Haiku && settingsState.thinkingLevel != ClauneThinkingLevel.Off
+    val budgetIsInvalid =
+        showHaikuBudget &&
+            (budgetValue == null || budgetValue !in MIN_HAIKU_THINKING_BUDGET..MAX_HAIKU_THINKING_BUDGET)
 
     LaunchedEffect(settingsState.anthropicApiKey) {
         anthropicKeyDraft = settingsState.anthropicApiKey
@@ -774,6 +805,10 @@ private fun SettingsScreen(
 
     LaunchedEffect(settingsState.geminiApiKey) {
         geminiKeyDraft = settingsState.geminiApiKey
+    }
+
+    LaunchedEffect(settingsState.haikuThinkingBudget) {
+        haikuBudgetDraft = settingsState.haikuThinkingBudget.toString()
     }
 
     Scaffold(
@@ -804,12 +839,12 @@ private fun SettingsScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Control room",
+                        text = "Settings",
                         style = MaterialTheme.typography.headlineLarge,
                         color = ClaunePalette.Ink,
                     )
                     Text(
-                        text = "Keep model keys on-device and check whether phone control is ready.",
+                        text = "Choose the model, credentials, and thinking behavior used by the next run.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = ClaunePalette.InkSoft,
                     )
@@ -830,56 +865,31 @@ private fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
                     ) {
                         SectionLabel("Model")
-                        Text(
-                            text = "The next run uses the selected model.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = ClaunePalette.InkSoft,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap)) {
-                            ClauneModelCatalog.options.forEach { option ->
-                                val selected = settingsState.selectedModel == option.id
-                                if (selected) {
-                                    ClaunePrimaryButton(
-                                        text = option.label,
-                                        onClick = { onSelectModel(option.id) },
-                                    )
-                                } else {
-                                    ClauneSecondaryButton(
-                                        text = option.label,
-                                        onClick = { onSelectModel(option.id) },
-                                    )
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            ClauneModelCatalog.options.forEachIndexed { index, option ->
+                                SegmentedButton(
+                                    selected = settingsState.selectedModel == option.id,
+                                    onClick = { onSelectModel(option.id) },
+                                    shape = SegmentedButtonDefaults.itemShape(index, ClauneModelCatalog.options.size),
+                                ) {
+                                    Text(option.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }
                         HorizontalDivider(color = ClaunePalette.RuleSoft)
-                        SectionLabel("Anthropic key")
+                        SectionLabel("Credentials")
                         OutlinedTextField(
-                            value = anthropicKeyDraft,
-                            onValueChange = { anthropicKeyDraft = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 2,
-                            shape = ClauneShapes.Control,
-                            label = { Text("Anthropic API key") },
-                            visualTransformation =
-                            if (showKeys) {
-                                VisualTransformation.None
-                            } else {
-                                PasswordVisualTransformation()
+                            value = selectedKeyDraft,
+                            onValueChange = { value ->
+                                when (selectedOption.apiKeySlot) {
+                                    ClauneApiKeySlot.Anthropic -> anthropicKeyDraft = value
+                                    ClauneApiKeySlot.Gemini -> geminiKeyDraft = value
+                                }
                             },
-                            keyboardOptions =
-                            KeyboardOptions(
-                                capitalization = KeyboardCapitalization.None,
-                                keyboardType = KeyboardType.Password,
-                            ),
-                        )
-                        SectionLabel("Gemini key")
-                        OutlinedTextField(
-                            value = geminiKeyDraft,
-                            onValueChange = { geminiKeyDraft = it },
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 2,
                             shape = ClauneShapes.Control,
-                            label = { Text("Gemini API key") },
+                            label = { Text("$selectedProviderLabel API key") },
                             visualTransformation =
                             if (showKeys) {
                                 VisualTransformation.None
@@ -896,15 +906,49 @@ private fun SettingsScreen(
                             horizontalArrangement = Arrangement.spacedBy(ClauneLayout.ControlGap),
                         ) {
                             ClaunePrimaryButton(
-                                text = "Save keys",
+                                text = "Save key",
                                 onClick = {
-                                    onSaveAnthropicKey(anthropicKeyDraft)
-                                    onSaveGeminiKey(geminiKeyDraft)
+                                    when (selectedOption.apiKeySlot) {
+                                        ClauneApiKeySlot.Anthropic -> onSaveAnthropicKey(anthropicKeyDraft)
+                                        ClauneApiKeySlot.Gemini -> onSaveGeminiKey(geminiKeyDraft)
+                                    }
                                 },
                             )
                             ClauneSecondaryButton(
                                 text = if (showKeys) "Hide" else "Show",
                                 onClick = { showKeys = !showKeys },
+                            )
+                        }
+                        HorizontalDivider(color = ClaunePalette.RuleSoft)
+                        SectionLabel("Thinking")
+                        ThinkingLevelDropdown(
+                            selected = settingsState.thinkingLevel,
+                            onSelect = onSelectThinkingLevel,
+                        )
+                        if (showHaikuBudget) {
+                            OutlinedTextField(
+                                value = haikuBudgetDraft,
+                                onValueChange = { value ->
+                                    val filtered = value.filter(Char::isDigit)
+                                    haikuBudgetDraft = filtered
+                                    filtered.toIntOrNull()
+                                        ?.takeIf { it in MIN_HAIKU_THINKING_BUDGET..MAX_HAIKU_THINKING_BUDGET }
+                                        ?.let(onSaveHaikuThinkingBudget)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = ClauneShapes.Control,
+                                label = { Text("Thinking budget") },
+                                suffix = { Text("tokens") },
+                                isError = budgetIsInvalid,
+                                supportingText = {
+                                    Text("$MIN_HAIKU_THINKING_BUDGET to $MAX_HAIKU_THINKING_BUDGET tokens")
+                                },
+                                keyboardOptions =
+                                KeyboardOptions(
+                                    capitalization = KeyboardCapitalization.None,
+                                    keyboardType = KeyboardType.Number,
+                                ),
+                                singleLine = true,
                             )
                         }
                     }
@@ -989,6 +1033,71 @@ private fun SettingsScreen(
         }
     }
 }
+
+@Composable
+private fun ThinkingLevelDropdown(selected: ClauneThinkingLevel, onSelect: (ClauneThinkingLevel) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            shape = ClauneShapes.Control,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = selected.label(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "Change",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = ClaunePalette.InkSoft,
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            ClauneThinkingLevel.entries.forEach { level ->
+                DropdownMenuItem(
+                    text = { Text(level.label()) },
+                    onClick = {
+                        expanded = false
+                        onSelect(level)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun ClauneThinkingLevel.label(): String = when (this) {
+    ClauneThinkingLevel.Off -> "Off"
+    ClauneThinkingLevel.Minimal -> "Minimal"
+    ClauneThinkingLevel.Low -> "Low"
+    ClauneThinkingLevel.Medium -> "Medium"
+    ClauneThinkingLevel.High -> "High"
+    ClauneThinkingLevel.XHigh -> "XHigh"
+}
+
+private fun SettingsState.hasSelectedApiKey(): Boolean {
+    val option = ClauneModelCatalog.optionFor(selectedModel)
+    return apiKeyFor(option.apiKeySlot).isNotBlank()
+}
+
+private fun SettingsState.selectedProviderLabel(): String = when (ClauneModelCatalog.optionFor(selectedModel).apiKeySlot) {
+    ClauneApiKeySlot.Anthropic -> "Anthropic"
+    ClauneApiKeySlot.Gemini -> "Gemini"
+}
+
+private fun SettingsState.selectedApiKeyStepLabel(): String = "${selectedProviderLabel()} API key"
 
 @Composable
 private fun NewSessionCard(onCreateSession: () -> Unit) {

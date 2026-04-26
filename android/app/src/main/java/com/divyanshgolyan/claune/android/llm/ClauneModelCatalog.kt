@@ -1,8 +1,11 @@
 package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.data.local.ClauneModel
+import com.divyanshgolyan.claune.android.data.local.ClauneThinkingLevel
 import com.divyanshgolyan.claune.android.data.local.SettingsState
+import pi.agent.core.AgentThinkingLevel
 import pi.ai.core.Model
+import pi.ai.core.ThinkingBudgets
 import pi.ai.core.getModel
 
 enum class ClauneApiKeySlot {
@@ -19,6 +22,8 @@ data class ClauneModelOption(
 ) {
     val canonicalName: String = "$provider/$modelId"
 }
+
+data class ClauneThinkingConfig(val level: AgentThinkingLevel, val budgets: ThinkingBudgets?)
 
 class ResolvedClauneModel {
     val option: ClauneModelOption
@@ -79,4 +84,29 @@ object ClauneModelCatalog {
 fun SettingsState.apiKeyFor(slot: ClauneApiKeySlot): String = when (slot) {
     ClauneApiKeySlot.Anthropic -> anthropicApiKey
     ClauneApiKeySlot.Gemini -> geminiApiKey
+}
+
+fun SettingsState.thinkingConfigFor(model: ClauneModel): ClauneThinkingConfig {
+    val level = thinkingLevel.toAgentThinkingLevel()
+    val budgets =
+        if (model == ClauneModel.Haiku && level != AgentThinkingLevel.OFF) {
+            ThinkingBudgets(
+                minimal = haikuThinkingBudget,
+                low = haikuThinkingBudget,
+                medium = haikuThinkingBudget,
+                high = haikuThinkingBudget,
+            )
+        } else {
+            null
+        }
+    return ClauneThinkingConfig(level = level, budgets = budgets)
+}
+
+private fun ClauneThinkingLevel.toAgentThinkingLevel(): AgentThinkingLevel = when (this) {
+    ClauneThinkingLevel.Off -> AgentThinkingLevel.OFF
+    ClauneThinkingLevel.Minimal -> AgentThinkingLevel.MINIMAL
+    ClauneThinkingLevel.Low -> AgentThinkingLevel.LOW
+    ClauneThinkingLevel.Medium -> AgentThinkingLevel.MEDIUM
+    ClauneThinkingLevel.High -> AgentThinkingLevel.HIGH
+    ClauneThinkingLevel.XHigh -> AgentThinkingLevel.XHIGH
 }

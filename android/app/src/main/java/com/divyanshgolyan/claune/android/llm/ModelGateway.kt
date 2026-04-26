@@ -33,11 +33,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import pi.agent.core.AgentEvent
-import pi.agent.core.AgentThinkingLevel
 import pi.ai.core.Message
 import pi.ai.core.Model
 import pi.ai.core.TextContent
-import pi.ai.core.ThinkingBudgets
 import pi.coding.agent.core.AgentSession
 
 interface ModelGateway {
@@ -69,6 +67,7 @@ class PiAgentModelGateway(
     private var activeApiKey: String? = null
     private var activeModelProvider: String? = null
     private var activeModelId: String? = null
+    private var activeThinkingConfig: ClauneThinkingConfig? = null
     private var activeSessionUnsubscribe: (() -> Unit)? = null
     private var activeRunId: String? = null
     private var activeEventTrace = CopyOnWriteArrayList<SerializedAgentEvent>()
@@ -86,7 +85,9 @@ class PiAgentModelGateway(
             artifactStore.writeModelInput(input.runId, prompt)
         }
 
-        val modelConfig = ClauneModelCatalog.resolve(settingsStore.state.value)
+        val settings = settingsStore.state.value
+        val modelConfig = ClauneModelCatalog.resolve(settings)
+        val thinkingConfig = settings.thinkingConfigFor(modelConfig.option.id)
         val apiKey = modelConfig.apiKey
         if (apiKey.isBlank()) {
             return ModelTurnOutput.Blocked(modelConfig.missingKeyMessage)
@@ -98,7 +99,7 @@ class PiAgentModelGateway(
             )
         }
 
-        val agentSession = ensureMainSession(input, systemPrompt, modelConfig.model, apiKey, mainTools)
+        val agentSession = ensureMainSession(input, systemPrompt, modelConfig.model, apiKey, thinkingConfig, mainTools)
         activeRunId = input.runId
         activeEventTrace = CopyOnWriteArrayList()
         sessionCoordinator.logEvent("Agent started.")
@@ -120,7 +121,7 @@ class PiAgentModelGateway(
                 }
                 runCatching { artifactStore.writeFinalOutput(input.runId, parsedResult.toArtifactText()) }
                 if (assistantError.isNullOrBlank() && terminalOutcome != null) {
-                    runMemoryReflection(input, parsedResult, modelConfig.model, apiKey)
+                    runMemoryReflection(input, parsedResult, modelConfig.model, apiKey, thinkingConfig)
                 }
                 parsedResult
             } catch (cancelled: CancellationException) {
@@ -173,6 +174,7 @@ class PiAgentModelGateway(
         systemPrompt: String,
         model: Model<*>,
         apiKey: String,
+        thinkingConfig: ClauneThinkingConfig,
         tools: List<ToolDefinition<*>>,
     ): AgentSession = sessionFactory.create(
         sessionPath = input.persistentSessionPath,
@@ -180,8 +182,8 @@ class PiAgentModelGateway(
         model = model,
         tools = agentTools(tools),
         apiKey = apiKey,
-        thinkingLevel = AgentThinkingLevel.MEDIUM,
-        thinkingBudgets = ThinkingBudgets(medium = 4096),
+        thinkingLevel = thinkingConfig.level,
+        thinkingBudgets = thinkingConfig.budgets,
     )
 
     @Suppress("ktlint:standard:function-signature")
@@ -190,6 +192,7 @@ class PiAgentModelGateway(
         systemPrompt: String,
         model: Model<*>,
         apiKey: String,
+        thinkingConfig: ClauneThinkingConfig,
         tools: List<ToolDefinition<*>>,
     ): AgentSession = activeSessionLock.withLock {
         val needsReplacement = when {
@@ -199,17 +202,19 @@ class PiAgentModelGateway(
             activeApiKey != apiKey -> true
             activeModelProvider != model.provider -> true
             activeModelId != model.id -> true
+            activeThinkingConfig != thinkingConfig -> true
             else -> false
         }
         if (needsReplacement) {
             activeSessionUnsubscribe?.invoke()
             activeAgentSession?.dispose()
-            val session = createMainSession(input, systemPrompt, model, apiKey, tools)
+            val session = createMainSession(input, systemPrompt, model, apiKey, thinkingConfig, tools)
             activeSessionPath = input.persistentSessionPath
             activeSystemPrompt = systemPrompt
             activeApiKey = apiKey
             activeModelProvider = model.provider
             activeModelId = model.id
+            activeThinkingConfig = thinkingConfig
             activeAgentSession = session
             activeSessionUnsubscribe =
                 session.subscribe { sessionEvent ->
@@ -275,6 +280,7 @@ class PiAgentModelGateway(
         result: ModelTurnOutput,
         model: Model<*>,
         apiKey: String,
+        thinkingConfig: ClauneThinkingConfig,
     ) {
         if (result !is ModelTurnOutput.Completion && result !is ModelTurnOutput.Blocked) {
             return
@@ -301,8 +307,8 @@ class PiAgentModelGateway(
                 model = model,
                 tools = agentTools(reflectionTools),
                 apiKey = apiKey,
-                thinkingLevel = AgentThinkingLevel.MEDIUM,
-                thinkingBudgets = ThinkingBudgets(medium = 4096),
+                thinkingLevel = thinkingConfig.level,
+                thinkingBudgets = thinkingConfig.budgets,
                 beforeToolCall = { context, _ -> reflectionBudget.beforeToolCall(context) },
             )
 

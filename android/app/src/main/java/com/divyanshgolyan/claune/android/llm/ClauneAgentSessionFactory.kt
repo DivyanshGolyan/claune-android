@@ -31,7 +31,7 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
         tools: List<AgentTool<*>>,
         apiKey: String,
         thinkingLevel: AgentThinkingLevel = AgentThinkingLevel.MEDIUM,
-        thinkingBudgets: ThinkingBudgets = ThinkingBudgets(medium = 4096),
+        thinkingBudgets: ThinkingBudgets? = null,
         beforeToolCall: (suspend (BeforeToolCallContext, AbortSignal?) -> BeforeToolCallResult?)? = null,
     ): AgentSession {
         val authStorage = AuthStorage.create(File(agentDir, "auth.json").absolutePath)
@@ -59,7 +59,7 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
         val resolvedModel = model
         val resolvedThinkingLevel =
             if (resolvedModel.reasoning) {
-                parseThinkingLevel(restored.thinkingLevel) ?: thinkingLevel
+                thinkingLevel
             } else {
                 AgentThinkingLevel.OFF
             }
@@ -95,7 +95,8 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
         if (restored.messages.isEmpty() || !restoredModelMatches) {
             sessionManager.appendModelChange(resolvedModel.provider, resolvedModel.id)
         }
-        if (restored.messages.isEmpty()) {
+        val restoredThinkingLevel = parseThinkingLevel(restored.thinkingLevel)
+        if (restoredThinkingLevel != resolvedThinkingLevel) {
             sessionManager.appendThinkingLevelChange(resolvedThinkingLevel.name.lowercase())
         }
 
