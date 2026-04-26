@@ -3,7 +3,7 @@
 package com.divyanshgolyan.claune.android.runtime
 
 import com.divyanshgolyan.claune.android.data.local.PersistedSessionSummary
-import java.time.Instant
+import kotlinx.serialization.Serializable
 
 data class SessionUiState(
     val activeRunId: String? = null,
@@ -46,19 +46,18 @@ enum class SessionStatus {
     Cancelled,
 }
 
-data class UiSnapshot(
+@Serializable
+data class ScreenState(
     val snapshotId: String,
-    val capturedAt: Instant,
+    val capturedAt: String,
     val foregroundPackage: String,
-    val visibleText: List<String>,
-    val actionableElements: List<UiElement>,
-    val visibleElements: List<UiElement> = emptyList(),
-    val focusedElementId: String?,
-    val windowCandidates: List<WindowCandidate> = emptyList(),
+    val root: ScreenNode? = null,
+    val windows: List<ScreenWindow> = emptyList(),
     val selectedWindowReason: String? = null,
 )
 
-data class WindowCandidate(
+@Serializable
+data class ScreenWindow(
     val packageName: String,
     val className: String?,
     val type: String,
@@ -72,15 +71,19 @@ data class WindowCandidate(
     val selectionReason: String? = null,
 )
 
-data class UiElement(
-    val id: String,
-    val ref: String = id,
+@Serializable
+data class ScreenNode(
+    val path: List<Int>,
+    val ref: String,
+    val elementId: String,
     val role: String,
     val label: String,
     val text: String? = null,
     val contentDescription: String? = null,
     val resourceId: String? = null,
     val className: String? = null,
+    val packageName: String? = null,
+    val visibleToUser: Boolean = false,
     val clickable: Boolean,
     val focusable: Boolean = false,
     val editable: Boolean,
@@ -89,13 +92,48 @@ data class UiElement(
     val checked: Boolean = false,
     val selected: Boolean = false,
     val scrollable: Boolean = false,
+    val importantForAccessibility: Boolean = false,
     val bounds: List<Int>,
     val actions: List<String> = emptyList(),
     val tapFallbackEligible: Boolean = false,
     val clickabilityReason: String = "",
+    val clickableParentDepth: Int? = null,
+    val clickableParentClassName: String? = null,
+    val clickableDescendantPath: String? = null,
+    val clickableDescendantClassName: String? = null,
+    val children: List<ScreenNode> = emptyList(),
 )
 
 data class ElementRef(val elementId: String)
+
+enum class CanonicalScreenMode {
+    Compact,
+    Full,
+}
+
+@Serializable
+data class ScreenDiffStats(
+    val additions: Int,
+    val removals: Int,
+    val unchanged: Int,
+    val beforeLineCount: Int,
+    val afterLineCount: Int,
+    val changeRatio: Double,
+)
+
+@Serializable
+data class ScreenObservation(
+    val mode: String,
+    val reason: String,
+    val baselineSnapshotId: String? = null,
+    val currentSnapshotId: String,
+    val foregroundPackage: String,
+    val selectedWindowReason: String? = null,
+    val baselineMissing: Boolean = false,
+    val stats: ScreenDiffStats,
+    val canonicalText: String? = null,
+    val diff: String? = null,
+)
 
 enum class ScrollDirection {
     Up,
@@ -115,7 +153,7 @@ data class ModelTurnInput(
     val persistentSessionPath: String?,
     val persistentSessionId: String?,
     val userMessage: String,
-    val snapshot: UiSnapshot,
+    val screenObservation: ScreenObservation,
     val recentEvents: List<String>,
 )
 
@@ -128,7 +166,7 @@ sealed interface ModelTurnOutput {
 }
 
 interface PhoneObserver {
-    suspend fun captureSnapshot(): UiSnapshot
+    suspend fun captureScreenState(): ScreenState
 }
 
 interface PhoneActuator {
@@ -137,6 +175,8 @@ interface PhoneActuator {
     suspend fun tapPoint(x: Int, y: Int): ActionResult
 
     suspend fun type(target: ElementRef, text: String): ActionResult
+
+    suspend fun typeFocused(text: String): ActionResult
 
     suspend fun scroll(target: ElementRef, direction: ScrollDirection): ActionResult
 

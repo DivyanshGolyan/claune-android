@@ -51,7 +51,7 @@ internal object SystemPromptBuilder {
                     "The JS runtime exposes a global object named `claune`.",
                     "The TypeScript contract below is the source of truth. Do not invent APIs or fields.",
                     "claune APIs are synchronous. Do not use async, await, Promise syntax, or Promise-based patterns.",
-                    "Every claune action except observePhone throws immediately if the host call fails.",
+                    "Every claune action except observeScreen throws immediately if the host call fails.",
                 ),
             )
             appendLine(ClauneHostContract.modelContractBlock)
@@ -67,10 +67,10 @@ internal object SystemPromptBuilder {
             section(
                 "Phone-control invariants:",
                 listOf(
-                    "Start each script with observePhone(), unless returning immediately after a just-observed action.",
-                    "Do not trust injected snapshots, stale refs, stale ids, or assumptions as current truth.",
-                    "After any UI-changing action, re-observe or use postActionSnapshot before the next action.",
-                    "Refs and element ids are snapshot-scoped. Never invent them.",
+                    "Start each script with observeScreen(), unless returning immediately after a just-observed action.",
+                    "Do not trust injected screen observations, stale refs, stale ids, or assumptions as current truth.",
+                    "After any UI-changing action, re-observe or use postActionObservation before the next action.",
+                    "Refs and element ids are screen observation-scoped. Never invent them.",
                     "If a wait, tap, launch, or selector assumption fails, re-observe and adapt instead of repeating it.",
                     "When opening an app and the package is unknown, call listInstalledApps() and launchApp(packageName) instead of using Play Store or guessing package names.",
                     "Prefer the fewest scripts that safely complete the task; one script may observe, act, wait, and return a compact summary.",
@@ -81,10 +81,12 @@ internal object SystemPromptBuilder {
                 listOf(
                     "Prefer visible direct controls by text or label.",
                     "Use tapText or tapSelector for stable named controls.",
-                    "Use tapRef only for a fresh unlabeled control from the current snapshot.",
+                    "Use tapRef only for a fresh unlabeled control from the current screen observation.",
                     "If text is visible but tapText/tapSelector says no actionable element matched, call inspectScreen({ text: \"...\" }) before deciding the target is unreachable.",
+                    "If an expected target should exist but observeScreen and inspectScreen do not surface it, call findRawNodes with generic likely terms, such as { pattern: \"book|confirm|request|continue|pay|add to cart\" }, and inspect only the returned matches.",
+                    "When findRawNodes returns matches, prefer nearestActionable.ref; otherwise use node.ref only if it is actionable. Use tapBounds(node.bounds) only for an exact visible bounded target.",
                     "Use tapBounds only after inspectScreen shows the exact requested target as a visible bounded element that is not semantically tappable; immediately re-observe and verify the expected screen changed.",
-                    "Use actionableElements.id only for APIs that explicitly require element ids, such as waitForState(\"element\", id, timeoutMs).",
+                    "Use ScreenInspection actionableElements[].elementId only for APIs that explicitly require element ids, such as waitForState(\"element\", id, timeoutMs).",
                     "Never select elements by array index.",
                     "Do not substitute unrelated items, screens, or actions just because they are available.",
                 ),
@@ -93,11 +95,11 @@ internal object SystemPromptBuilder {
                 "Coordinate fallback procedure:",
                 listOf(
                     "Goal: use coordinates only to reach the user's exact visible target when accessibility does not expose a semantic tap target.",
-                    "Step 1: Attempt tapText, tapSelector, or tapRef against the fresh snapshot.",
+                    "Step 1: Attempt tapText, tapSelector, or tapRef against the fresh screen observation.",
                     "Step 2: If that fails but target text is visible, call inspectScreen with the exact target text.",
                     "Step 3: Select a candidate only when its label, text, or contentDescription matches the requested target.",
                     "Step 4: Call tapBounds(candidate.bounds) only when candidate.tapFallbackEligible is true.",
-                    "Step 5: Immediately call observePhone and verify a screen change tied to the requested target.",
+                    "Step 5: Immediately call observeScreen and verify a screen change tied to the requested target.",
                     "A successful tapPoint or tapBounds return only means Android dispatched the gesture; it is not evidence that the target app accepted it.",
                     "Stop and report blocked if inspection shows only unrelated candidates.",
                 ),
@@ -116,10 +118,10 @@ internal object SystemPromptBuilder {
             section(
                 "Observation recovery:",
                 listOf(
-                    "Use windowCandidates and selectedWindowReason when the selected root looks wrong.",
+                    "Use foregroundPackage and selectedWindowReason when the selected root looks wrong.",
                     "If the selected root is bare System UI but an app or launcher candidate exists, re-observe before blocking.",
                     "If foregroundPackage is ${BuildConfig.APPLICATION_ID}, you are seeing Claune's control shell, not the target app.",
-                    "If Back or Home returns to Claune Android, treat it as a context reset and rebuild from a fresh snapshot.",
+                    "If Back or Home returns to Claune Android, treat it as a context reset and rebuild from a fresh screen observation.",
                     "Do not hardcode launcher package names; vendor launchers vary.",
                 ),
             )
@@ -138,14 +140,14 @@ internal object SystemPromptBuilder {
                 section("Additional tool rules:", toolGuidelines)
             }
             appendLine("Example observe-and-wait script:")
-            appendLine("let screen = claune.observePhone();")
+            appendLine("let screen = claune.observeScreen();")
             appendLine("claune.tapSelector({ text: \"Target\", first: true });")
             appendLine("claune.waitForSelector({ text: \"Expected result\", first: true }, 3000);")
-            appendLine("screen = claune.observePhone();")
+            appendLine("screen = claune.observeScreen();")
             appendLine("return { stage: \"expected_result_visible\", foregroundPackage: screen.foregroundPackage };")
             appendLine()
             appendLine("Example visible-bounds fallback script:")
-            appendLine("let screen = claune.observePhone();")
+            appendLine("let screen = claune.observeScreen();")
             appendLine("let inspection = claune.inspectScreen({ text: \"Exact visible target\", limit: 5 });")
             appendLine(
                 "let target = inspection.visibleElements.find(e => e.text === \"Exact visible target\" || e.label === \"Exact visible target\");",
@@ -154,21 +156,40 @@ internal object SystemPromptBuilder {
                 "if (!target || !target.tapFallbackEligible) return { stage: \"target_not_tappable_by_bounds\", candidates: inspection.visibleElements };",
             )
             appendLine("claune.tapBounds(target.bounds);")
-            appendLine("screen = claune.observePhone();")
-            appendLine("return { stage: \"bounds_tap_verified\", visibleText: screen.visibleText.slice(0, 8) };")
+            appendLine("screen = claune.observeScreen();")
+            appendLine(
+                "return { stage: \"bounds_tap_verified\", foregroundPackage: screen.foregroundPackage, observation: screen.canonicalText || screen.diff };",
+            )
+            appendLine()
+            appendLine("Example raw-tree search fallback script:")
+            appendLine("let screen = claune.observeScreen();")
+            appendLine("let raw = claune.findRawNodes({ pattern: \"book|confirm|request|continue\", limit: 10 });")
+            appendLine("let match = raw.matches.find(m => m.nearestActionable) || raw.matches[0];")
+            appendLine("if (!match) return { stage: \"expected_target_missing\", rawError: raw.error || null };")
+            appendLine("if (match.nearestActionable) claune.tapRef(match.nearestActionable.ref);")
+            appendLine("else claune.tapBounds(match.node.bounds);")
+            appendLine("screen = claune.observeScreen();")
+            appendLine(
+                "return { stage: \"raw_match_tapped\", matched: match.matchedText, " +
+                    "observation: screen.canonicalText || screen.diff };",
+            )
             appendLine()
             appendLine("Example scrolling script:")
-            appendLine("let screen = claune.observePhone();")
+            appendLine("let screen = claune.observeScreen();")
             appendLine("claune.scrollScreen(\"down\");")
-            appendLine("screen = claune.observePhone();")
-            appendLine("return { stage: \"scrolled_page\", visibleText: screen.visibleText.slice(0, 5) };")
+            appendLine("screen = claune.observeScreen();")
+            appendLine(
+                "return { stage: \"scrolled_page\", foregroundPackage: screen.foregroundPackage, observation: screen.canonicalText || screen.diff };",
+            )
             appendLine()
             appendLine("Example wrapper-input script:")
-            appendLine("let screen = claune.observePhone();")
+            appendLine("let screen = claune.observeScreen();")
             appendLine("claune.focusSelector({ label: \"Search\" }, 2000);")
             appendLine("claune.typeIntoFocused(\"target query\");")
-            appendLine("screen = claune.observePhone();")
-            appendLine("return { stage: \"typed_query\", focusedElementId: screen.focusedElementId };")
+            appendLine("screen = claune.observeScreen();")
+            appendLine(
+                "return { stage: \"typed_query\", foregroundPackage: screen.foregroundPackage, observation: screen.canonicalText || screen.diff };",
+            )
             appendLine()
             appendLine("Example app launch script:")
             appendLine("const apps = claune.listInstalledApps();")

@@ -5,6 +5,7 @@ import com.divyanshgolyan.claune.android.data.local.AgentTranscriptSerializer
 import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
+import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
 import com.divyanshgolyan.claune.android.llm.tools.AskUserToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
@@ -53,6 +54,7 @@ class PiAgentModelGateway(
     private val memoryStore: MemoryStore,
     private val scriptRuntime: ScriptRuntime,
     private val phoneObserver: PhoneObserver,
+    private val logStore: SessionLogStore,
     private val sessionCoordinator: SessionCoordinator,
     private val questionPromptCoordinator: QuestionPromptCoordinator,
     private val artifactStore: AgentRunArtifactStore,
@@ -93,9 +95,9 @@ class PiAgentModelGateway(
             return ModelTurnOutput.Blocked(modelConfig.missingKeyMessage)
         }
 
-        if (input.snapshot.actionableElements.isEmpty()) {
+        if (input.screenObservation.foregroundPackage == "unavailable") {
             return ModelTurnOutput.Blocked(
-                "No actionable elements were captured. Enable the accessibility service, reopen the target app, and retry.",
+                "No screen state was captured. Enable the accessibility service, reopen the target app, and retry.",
             )
         }
 
@@ -257,7 +259,7 @@ class PiAgentModelGateway(
     }
 
     private fun mainToolDefinitions(): List<ToolDefinition<*>> = listOf(
-        ExecuteScriptToolDefinition(scriptRuntime, phoneObserver),
+        ExecuteScriptToolDefinition(scriptRuntime, phoneObserver, logStore),
         FinishRunToolDefinition(terminalOutcomeRecorder),
         AskUserToolDefinition(questionPromptCoordinator),
         ReadMemoryToolDefinition(memoryStore),
@@ -425,7 +427,7 @@ private object FailingScriptRuntime : ScriptRuntime {
 }
 
 private object FailingPhoneObserver : PhoneObserver {
-    override suspend fun captureSnapshot() = error("Test helper should not capture snapshots")
+    override suspend fun captureScreenState() = error("Test helper should not capture screen states")
 }
 
 private object FailingMemoryStore : MemoryStore {

@@ -36,25 +36,38 @@ class AgentLoopTest {
 }
 
 private object FakePhoneObserver : PhoneObserver {
-    override suspend fun captureSnapshot(): UiSnapshot = UiSnapshot(
-        snapshotId = "snapshot-1",
-        capturedAt = Instant.parse("2026-04-18T00:00:00Z"),
-        foregroundPackage = "com.android.settings",
-        visibleText = listOf("Settings"),
-        actionableElements = listOf(
-            UiElement(
-                id = "id-1",
-                ref = "e0",
-                role = "button",
-                label = "Wi-Fi",
-                clickable = true,
+    override suspend fun captureScreenState(): ScreenState {
+        val wifi = ScreenNode(
+            path = listOf(0),
+            ref = "e0",
+            elementId = "id-1",
+            role = "button",
+            label = "Wi-Fi",
+            visibleToUser = true,
+            clickable = true,
+            editable = false,
+            focused = false,
+            bounds = listOf(0, 0, 100, 100),
+        )
+        return ScreenState(
+            snapshotId = "snapshot-1",
+            capturedAt = Instant.parse("2026-04-18T00:00:00Z").toString(),
+            foregroundPackage = "com.android.settings",
+            root = ScreenNode(
+                path = emptyList(),
+                ref = "root",
+                elementId = "root",
+                role = "root",
+                label = "Settings",
+                visibleToUser = true,
+                clickable = false,
                 editable = false,
                 focused = false,
-                bounds = listOf(0, 0, 100, 100),
+                bounds = listOf(0, 0, 1080, 2400),
+                children = listOf(wifi),
             ),
-        ),
-        focusedElementId = null,
-    )
+        )
+    }
 }
 
 private object SlowModelGateway : ModelGateway {
@@ -75,7 +88,7 @@ private object NoOpArtifactStore : AgentRunArtifactStore {
 
     override fun recordState(state: SessionUiState) = Unit
 
-    override fun recordSnapshot(runId: String, snapshot: UiSnapshot) = Unit
+    override fun recordScreenState(runId: String, screenState: ScreenState) = Unit
 
     override fun recordScriptExecution(runId: String, execution: ScriptExecutionRecord) = Unit
 

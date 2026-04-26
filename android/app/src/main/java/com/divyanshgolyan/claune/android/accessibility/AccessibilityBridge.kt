@@ -16,16 +16,15 @@ import com.divyanshgolyan.claune.android.runtime.ActionResult
 import com.divyanshgolyan.claune.android.runtime.ElementRef
 import com.divyanshgolyan.claune.android.runtime.PhoneActuator
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
+import com.divyanshgolyan.claune.android.runtime.ScreenNode
+import com.divyanshgolyan.claune.android.runtime.ScreenState
+import com.divyanshgolyan.claune.android.runtime.ScreenWindow
 import com.divyanshgolyan.claune.android.runtime.ScrollDirection
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
-import com.divyanshgolyan.claune.android.runtime.UiElement
-import com.divyanshgolyan.claune.android.runtime.UiSnapshot
-import com.divyanshgolyan.claune.android.runtime.WindowCandidate
 import java.time.Instant
 import java.util.Locale
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.serialization.Serializable
 
 class AccessibilityBridge(
     private val context: Context,
@@ -65,19 +64,17 @@ class AccessibilityBridge(
         packageName != SYSTEM_UI_PACKAGE &&
         KEYBOARD_PACKAGE_PREFIXES.none(packageName::startsWith)
 
-    override suspend fun captureSnapshot(): UiSnapshot {
+    override suspend fun captureScreenState(): ScreenState {
         val activeService = service
         val rootSelection = selectRoot(activeService)
         val root = rootSelection?.root
         if (activeService == null || root == null) {
-            return UiSnapshot(
+            return ScreenState(
                 snapshotId = "snapshot-${System.currentTimeMillis()}",
-                capturedAt = Instant.now(),
+                capturedAt = Instant.now().toString(),
                 foregroundPackage = "unavailable",
-                visibleText = emptyList(),
-                actionableElements = emptyList(),
-                focusedElementId = null,
-                windowCandidates = rootSelection?.windowCandidates.orEmpty(),
+                root = null,
+                windows = rootSelection?.windows.orEmpty(),
                 selectedWindowReason = rootSelection?.reason,
             )
         }
@@ -87,27 +84,13 @@ class AccessibilityBridge(
                 ?.toString()
                 .orEmpty()
                 .ifBlank { "unknown" }
-        val elements = mutableListOf<UiElement>()
-        val visibleElements = mutableListOf<UiElement>()
-        val visibleText = linkedSetOf<String>()
-        flattenNode(
-            node = root,
-            packageName = packageName,
-            elements = elements,
-            visibleElements = visibleElements,
-            visibleText = visibleText,
-            path = emptyList(),
-        )
 
-        return UiSnapshot(
+        return ScreenState(
             snapshotId = "snapshot-${System.currentTimeMillis()}",
-            capturedAt = Instant.now(),
+            capturedAt = Instant.now().toString(),
             foregroundPackage = packageName,
-            visibleText = visibleText.toList(),
-            actionableElements = elements.take(40),
-            visibleElements = visibleElements.distinctBy(UiElement::id).take(MAX_VISIBLE_ELEMENTS),
-            focusedElementId = elements.firstOrNull { it.focused }?.id,
-            windowCandidates = rootSelection.windowCandidates,
+            root = root.toScreenNode(packageName = packageName, path = emptyList()),
+            windows = rootSelection.windows,
             selectedWindowReason = rootSelection.reason,
         )
     }
@@ -167,8 +150,26 @@ class AccessibilityBridge(
         val node = findNodeByElementId(target.elementId)
             ?: return ActionResult.Blocked("Could not find element '${target.elementId}' in the latest active window.")
 
+        return typeIntoNode(node, target.elementId, text)
+    }
+
+    override suspend fun typeFocused(text: String): ActionResult {
+        val root = currentRoot(service)
+            ?: return ActionResult.Blocked("Could not find a current active window for focused text input.")
+        val node = findFocusedEditableNode(root)
+            ?: return ActionResult.Blocked("No focused editable element was found in the latest active window.")
+        val elementId = buildElementId(
+            packageName = root.packageName?.toString().orEmpty().ifBlank { "unknown" },
+            node = node,
+            path = findNodePath(root, node).orEmpty(),
+            label = deriveElementLabel(node),
+        )
+        return typeIntoNode(node, elementId, text)
+    }
+
+    private fun typeIntoNode(node: AccessibilityNodeInfo, elementId: String, text: String): ActionResult {
         if (!node.isEditable) {
-            return ActionResult.Blocked("Element '${target.elementId}' is not editable.")
+            return ActionResult.Blocked("Element '$elementId' is not editable.")
         }
 
         val arguments =
@@ -176,9 +177,9 @@ class AccessibilityBridge(
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
         return if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-            ActionResult.Success("Typed into '${target.elementId}'.")
+            ActionResult.Success("Typed into '$elementId'.")
         } else {
-            ActionResult.Blocked("System rejected text input for '${target.elementId}'.")
+            ActionResult.Blocked("System rejected text input for '$elementId'.")
         }
     }
 
@@ -228,93 +229,72 @@ class AccessibilityBridge(
         }
     }
 
-    fun captureRawTreeDump(): RawTreeDump? {
+    fun captureDebugScreenState(): ScreenState? {
         val rootSelection = selectRoot(service) ?: return null
         val root = rootSelection.root
-        return RawTreeDump(
+        val packageName = root.packageName?.toString().orEmpty().ifBlank { "unknown" }
+        return ScreenState(
+            snapshotId = "snapshot-${System.currentTimeMillis()}",
             capturedAt = Instant.now().toString(),
+            foregroundPackage = packageName,
+            root = root.toScreenNode(packageName = packageName, path = emptyList()),
+            windows = rootSelection.windows,
             selectedWindowReason = rootSelection.reason,
-            foregroundPackage = root.packageName?.toString().orEmpty().ifBlank { "unknown" },
-            actionableNodes = dumpActionableNodes(root, emptyList()),
-            nodes = dumpNode(root, emptyList()),
         )
     }
 
-    private fun flattenNode(
-        node: AccessibilityNodeInfo,
-        packageName: String,
-        elements: MutableList<UiElement>,
-        visibleElements: MutableList<UiElement>,
-        visibleText: MutableSet<String>,
-        path: List<Int>,
-    ) {
-        val bounds = node.visibleSnapshotBounds()
-        val ownText = node.text?.toString()?.trim().orEmpty().ifBlank { null }
-        val ownContentDescription = node.contentDescription?.toString()?.trim().orEmpty().ifBlank { null }
-        val label = deriveElementLabel(node)
-
-        if (bounds != null && !label.isNullOrBlank()) {
-            visibleText += label
-        }
-
-        val clickable = node.isClickable
-        val focusable = node.isFocusable
-        val editable = node.isEditable
-        val scrollable = node.isScrollable
-        val actions = node.actionNames()
-        if (bounds != null && shouldExportVisibleNode(node, label, ownText, ownContentDescription)) {
-            val ref = buildElementRef(path)
-            visibleElements += node.toUiElement(
-                packageName = packageName,
-                path = path,
-                bounds = bounds,
-                ref = ref,
-                label = label.orEmpty(),
-                ownText = ownText,
-                ownContentDescription = ownContentDescription,
-                clickable = clickable,
-                focusable = focusable,
-                editable = editable,
-                scrollable = scrollable,
-                actions = actions,
-            )
-        }
-        if (bounds != null && shouldExportNode(node, ownText, ownContentDescription, clickable, focusable, editable, scrollable)) {
-            val ref = buildElementRef(path)
-            elements +=
-                node.toUiElement(
-                    packageName = packageName,
-                    path = path,
-                    bounds = bounds,
-                    ref = ref,
-                    label = label.orEmpty(),
-                    ownText = ownText,
-                    ownContentDescription = ownContentDescription,
-                    clickable = clickable,
-                    focusable = focusable,
-                    editable = editable,
-                    scrollable = scrollable,
-                    actions = actions,
-                )
-        }
-
-        for (index in 0 until node.childCount) {
-            node.getChild(index)?.let { child ->
-                flattenNode(
-                    node = child,
-                    packageName = packageName,
-                    elements = elements,
-                    visibleElements = visibleElements,
-                    visibleText = visibleText,
-                    path = path + index,
-                )
+    private fun AccessibilityNodeInfo.toScreenNode(packageName: String, path: List<Int>): ScreenNode {
+        val bounds = visibleSnapshotBounds()
+        val ownText = text?.toString()?.trim().orEmpty().ifBlank { null }
+        val ownContentDescription = contentDescription?.toString()?.trim().orEmpty().ifBlank { null }
+        val label = deriveElementLabel(this).orEmpty()
+        val actions = actionNames()
+        val clickableParent = findClickableParent(this)
+        val clickableDescendant = findClickableDescendantWithPath(this)
+        val children =
+            buildList {
+                for (index in 0 until childCount) {
+                    val child = getChild(index) ?: continue
+                    add(child.toScreenNode(packageName = packageName, path = path + index))
+                }
             }
-        }
+        return ScreenNode(
+            path = path,
+            ref = buildElementRef(path),
+            elementId = buildElementId(packageName, this, path, label),
+            role = inferRole(this),
+            label = label,
+            text = ownText,
+            contentDescription = ownContentDescription,
+            resourceId = viewIdResourceName,
+            className = className?.toString(),
+            packageName = this.packageName?.toString(),
+            visibleToUser = bounds != null,
+            clickable = isClickable,
+            focusable = isFocusable,
+            editable = isEditable,
+            focused = isFocused,
+            enabled = isEnabled,
+            checked = isChecked,
+            selected = isSelected,
+            scrollable = isScrollable,
+            importantForAccessibility = isImportantForAccessibility,
+            bounds = bounds ?: boundsRect(),
+            actions = actions,
+            tapFallbackEligible = isEnabled && bounds?.size == 4,
+            clickabilityReason = clickabilityReason(isClickable, isFocusable, isEditable, isScrollable, actions),
+            clickableParentDepth = clickableParent?.first,
+            clickableParentClassName = clickableParent?.second?.className?.toString(),
+            clickableDescendantPath = clickableDescendant?.first,
+            clickableDescendantClassName = clickableDescendant?.second?.className?.toString(),
+            children = children,
+        )
     }
 
     private fun findNodeByElementId(elementId: String): AccessibilityNodeInfo? {
         val root = currentRoot(service) ?: return null
         return findNodeByElementId(root, elementId)
+            ?: findNodeByElementDescriptor(root, elementId)
     }
 
     private fun currentRoot(activeService: ClauneAccessibilityService?): AccessibilityNodeInfo? = selectRoot(activeService)?.root
@@ -368,8 +348,8 @@ class AccessibilityBridge(
         return RootSelection(
             root = selected.root,
             reason = reason,
-            windowCandidates = candidates.map {
-                it.toWindowCandidate(
+            windows = candidates.map {
+                it.toScreenWindow(
                     selected = it === selected,
                     reason = if (it ===
                         selected
@@ -415,6 +395,50 @@ class AccessibilityBridge(
         return null
     }
 
+    private fun findNodeByElementDescriptor(root: AccessibilityNodeInfo, elementId: String): AccessibilityNodeInfo? {
+        val resourceId = elementId.split('|').firstOrNull { RESOURCE_ID_MARKER in it } ?: return null
+        val className = elementId.split('|').firstOrNull { it.startsWith("android.") }
+        val matches = mutableListOf<AccessibilityNodeInfo>()
+        collectNodes(root, matches) { node ->
+            node.viewIdResourceName?.equals(resourceId, ignoreCase = true) == true &&
+                (className == null || node.className?.toString()?.equals(className, ignoreCase = true) == true)
+        }
+        return matches
+            .filter { it.isEditable }
+            .maxWithOrNull(compareBy<AccessibilityNodeInfo> { it.isFocused }.thenBy { it.isClickable })
+            ?: matches.singleOrNull()
+    }
+
+    private fun findFocusedEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val nodes = mutableListOf<AccessibilityNodeInfo>()
+        collectNodes(root, nodes) { it.isEditable && it.isFocused }
+        return nodes.firstOrNull()
+    }
+
+    private fun collectNodes(
+        node: AccessibilityNodeInfo,
+        collector: MutableList<AccessibilityNodeInfo>,
+        predicate: (AccessibilityNodeInfo) -> Boolean,
+    ) {
+        if (predicate(node)) {
+            collector += node
+        }
+        for (index in 0 until node.childCount) {
+            node.getChild(index)?.let { child -> collectNodes(child, collector, predicate) }
+        }
+    }
+
+    private fun findNodePath(current: AccessibilityNodeInfo, target: AccessibilityNodeInfo, path: List<Int> = emptyList()): List<Int>? {
+        if (current == target) {
+            return path
+        }
+        for (index in 0 until current.childCount) {
+            val child = current.getChild(index) ?: continue
+            findNodePath(child, target, path + index)?.let { return it }
+        }
+        return null
+    }
+
     private fun buildElementId(packageName: String, node: AccessibilityNodeInfo, path: List<Int>, label: String?): String {
         val parts =
             listOfNotNull(
@@ -436,164 +460,6 @@ class AccessibilityBridge(
         val candidates = linkedSetOf<String>()
         collectVisibleText(node, candidates, limit = DESCENDANT_TEXT_LIMIT)
         return candidates.firstOrNull { it.isNotBlank() }
-    }
-
-    private fun shouldExportNode(
-        node: AccessibilityNodeInfo,
-        ownText: String?,
-        ownContentDescription: String?,
-        clickable: Boolean,
-        focusable: Boolean,
-        editable: Boolean,
-        scrollable: Boolean,
-    ): Boolean {
-        if (clickable || focusable || editable || scrollable) {
-            return true
-        }
-        val hasStableIdentity = !node.viewIdResourceName.isNullOrBlank() || !ownContentDescription.isNullOrBlank()
-        val hasUsefulClassHint = node.className?.toString()?.contains("EditText", ignoreCase = true) == true
-        return node.isImportantForAccessibility &&
-            (hasStableIdentity || hasUsefulClassHint) &&
-            (node.childCount > 0 || !ownText.isNullOrBlank())
-    }
-
-    private fun shouldExportVisibleNode(
-        node: AccessibilityNodeInfo,
-        label: String?,
-        ownText: String?,
-        ownContentDescription: String?,
-    ): Boolean {
-        if (label.isNullOrBlank()) {
-            return false
-        }
-        return !ownText.isNullOrBlank() ||
-            !ownContentDescription.isNullOrBlank() ||
-            !node.viewIdResourceName.isNullOrBlank() ||
-            node.isClickable ||
-            node.isFocusable ||
-            node.isEditable ||
-            node.isScrollable ||
-            node.isImportantForAccessibility
-    }
-
-    private fun AccessibilityNodeInfo.toUiElement(
-        packageName: String,
-        path: List<Int>,
-        bounds: List<Int>,
-        ref: String,
-        label: String,
-        ownText: String?,
-        ownContentDescription: String?,
-        clickable: Boolean,
-        focusable: Boolean,
-        editable: Boolean,
-        scrollable: Boolean,
-        actions: List<String>,
-    ): UiElement = UiElement(
-        id = buildElementId(packageName, this, path, label),
-        ref = ref,
-        role = inferRole(this),
-        label = label,
-        text = ownText,
-        contentDescription = ownContentDescription,
-        resourceId = viewIdResourceName,
-        className = className?.toString(),
-        clickable = clickable,
-        focusable = focusable,
-        editable = editable,
-        focused = isFocused,
-        enabled = isEnabled,
-        checked = isChecked,
-        selected = isSelected,
-        scrollable = scrollable,
-        bounds = bounds,
-        actions = actions,
-        tapFallbackEligible = isEnabled && bounds.size == 4,
-        clickabilityReason = clickabilityReason(clickable, focusable, editable, scrollable, actions),
-    )
-
-    private fun dumpNode(node: AccessibilityNodeInfo, path: List<Int>): RawNodeDump {
-        val children =
-            buildList {
-                for (index in 0 until node.childCount) {
-                    val child = node.getChild(index) ?: continue
-                    add(dumpNode(child, path + index))
-                }
-            }
-        return RawNodeDump(
-            path = path.joinToString(separator = "_").ifBlank { "root" },
-            className = node.className?.toString(),
-            packageName = node.packageName?.toString(),
-            text = node.text?.toString(),
-            contentDescription = node.contentDescription?.toString(),
-            resourceId = node.viewIdResourceName,
-            visibleToUser = node.isVisibleToUser,
-            clickable = node.isClickable,
-            focusable = node.isFocusable,
-            focused = node.isFocused,
-            editable = node.isEditable,
-            enabled = node.isEnabled,
-            scrollable = node.isScrollable,
-            importantForAccessibility = node.isImportantForAccessibility,
-            actions = node.actionNames(),
-            bounds = node.visibleSnapshotBounds() ?: node.boundsRect(),
-            childCount = node.childCount,
-            children = children,
-        )
-    }
-
-    private fun dumpActionableNodes(node: AccessibilityNodeInfo, path: List<Int>): List<RawActionableNodeDump> = buildList {
-        val actionNames = node.actionNames()
-        val visibleBounds = node.visibleSnapshotBounds()
-        if (
-            visibleBounds != null &&
-            (
-                node.isClickable ||
-                    node.isFocusable ||
-                    node.isEditable ||
-                    node.isScrollable ||
-                    actionNames.isNotEmpty()
-                )
-        ) {
-            val clickableParent = findClickableParent(node)
-            val clickableDescendant = findClickableDescendantWithPath(node)
-            add(
-                RawActionableNodeDump(
-                    path = path.joinToString(separator = "_").ifBlank { "root" },
-                    elementId = buildElementId(
-                        packageName = node.packageName?.toString().orEmpty().ifBlank { "unknown" },
-                        node = node,
-                        path = path,
-                        label = deriveElementLabel(node),
-                    ),
-                    className = node.className?.toString(),
-                    packageName = node.packageName?.toString(),
-                    text = node.text?.toString(),
-                    contentDescription = node.contentDescription?.toString(),
-                    resourceId = node.viewIdResourceName,
-                    clickable = node.isClickable,
-                    focusable = node.isFocusable,
-                    focused = node.isFocused,
-                    editable = node.isEditable,
-                    enabled = node.isEnabled,
-                    scrollable = node.isScrollable,
-                    importantForAccessibility = node.isImportantForAccessibility,
-                    actions = actionNames,
-                    bounds = visibleBounds,
-                    clickableParentDepth = clickableParent?.first,
-                    clickableParentClassName = clickableParent?.second?.className?.toString(),
-                    clickableDescendantPath = clickableDescendant?.first,
-                    clickableDescendantClassName = clickableDescendant?.second?.className?.toString(),
-                    gestureTapFallbackEligible = true,
-                ),
-            )
-        }
-
-        for (index in 0 until node.childCount) {
-            node.getChild(index)?.let { child ->
-                addAll(dumpActionableNodes(child, path + index))
-            }
-        }
     }
 
     private fun collectVisibleText(node: AccessibilityNodeInfo, collector: MutableSet<String>, limit: Int) {
@@ -743,7 +609,6 @@ class AccessibilityBridge(
         private const val DESCENDANT_TEXT_LIMIT = 4
         private const val WINDOW_TEXT_LIMIT = 8
         private const val MAX_DESCENDANT_CLICK_SEARCH_DEPTH = 6
-        private const val MAX_VISIBLE_ELEMENTS = 100
         private const val TAP_GESTURE_DURATION_MS = 40L
         private const val CLAUNE_ACCESSIBILITY_SERVICE =
             "${BuildConfig.APPLICATION_ID}/com.divyanshgolyan.claune.android.accessibility.ClauneAccessibilityService"
@@ -781,63 +646,7 @@ private fun boundsListCenterX(bounds: List<Int>): Int = (bounds[0] + bounds[2]) 
 
 private fun boundsListCenterY(bounds: List<Int>): Int = (bounds[1] + bounds[3]) / 2
 
-private data class RootSelection(val root: AccessibilityNodeInfo, val reason: String, val windowCandidates: List<WindowCandidate>)
-
-@Serializable
-data class RawTreeDump(
-    val capturedAt: String,
-    val selectedWindowReason: String,
-    val foregroundPackage: String,
-    val actionableNodes: List<RawActionableNodeDump>,
-    val nodes: RawNodeDump,
-)
-
-@Serializable
-data class RawActionableNodeDump(
-    val path: String,
-    val elementId: String,
-    val className: String? = null,
-    val packageName: String? = null,
-    val text: String? = null,
-    val contentDescription: String? = null,
-    val resourceId: String? = null,
-    val clickable: Boolean,
-    val focusable: Boolean,
-    val focused: Boolean,
-    val editable: Boolean,
-    val enabled: Boolean,
-    val scrollable: Boolean,
-    val importantForAccessibility: Boolean,
-    val actions: List<String>,
-    val bounds: List<Int>,
-    val clickableParentDepth: Int? = null,
-    val clickableParentClassName: String? = null,
-    val clickableDescendantPath: String? = null,
-    val clickableDescendantClassName: String? = null,
-    val gestureTapFallbackEligible: Boolean,
-)
-
-@Serializable
-data class RawNodeDump(
-    val path: String,
-    val className: String? = null,
-    val packageName: String? = null,
-    val text: String? = null,
-    val contentDescription: String? = null,
-    val resourceId: String? = null,
-    val visibleToUser: Boolean,
-    val clickable: Boolean,
-    val focusable: Boolean,
-    val focused: Boolean,
-    val editable: Boolean,
-    val enabled: Boolean,
-    val scrollable: Boolean,
-    val importantForAccessibility: Boolean,
-    val actions: List<String>,
-    val bounds: List<Int>,
-    val childCount: Int,
-    val children: List<RawNodeDump>,
-)
+private data class RootSelection(val root: AccessibilityNodeInfo, val reason: String, val windows: List<ScreenWindow>)
 
 private data class RootCandidate(
     val root: AccessibilityNodeInfo,
@@ -872,7 +681,7 @@ private data class RootCandidate(
         visibleText.isNotEmpty() &&
         visibleText.all { it in SYSTEM_NAVIGATION_LABELS }
 
-    fun toWindowCandidate(selected: Boolean, reason: String?): WindowCandidate = WindowCandidate(
+    fun toScreenWindow(selected: Boolean, reason: String?): ScreenWindow = ScreenWindow(
         packageName = packageName,
         className = className,
         type = typeLabel,
@@ -1015,6 +824,7 @@ private fun accessibilityActionName(id: Int): String = when (id) {
 
 private const val MAX_PARENT_CLICK_SEARCH_DEPTH = 5
 private const val WINDOW_TEXT_LIMIT = 8
+private const val RESOURCE_ID_MARKER = ":id/"
 private val KEYBOARD_PACKAGE_PREFIXES =
     listOf(
         "com.android.inputmethod",

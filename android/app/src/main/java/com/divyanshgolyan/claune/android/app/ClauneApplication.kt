@@ -83,6 +83,7 @@ class ClauneContainer(application: Application) {
             memoryStore = memoryStore,
             scriptRuntime = scriptRuntime,
             phoneObserver = accessibilityBridge,
+            logStore = logStore,
             sessionCoordinator = sessionCoordinator,
             questionPromptCoordinator = questionPromptCoordinator,
             artifactStore = artifactStore,

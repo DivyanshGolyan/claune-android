@@ -15,8 +15,8 @@ internal object ClauneHostContract {
             appendLine("  data?: TData;")
             appendLine("}")
             appendLine()
-            appendLine("export interface UiElement {")
-            appendLine("  id: string;")
+            appendLine("export interface ScreenNode {")
+            appendLine("  elementId: string;")
             appendLine("  ref: string;")
             appendLine("  role: string;")
             appendLine("  label: string;")
@@ -37,31 +37,41 @@ internal object ClauneHostContract {
             appendLine("  actions: string[];")
             appendLine("  tapFallbackEligible: boolean;")
             appendLine("  clickabilityReason: string;")
+            appendLine("  clickableParentDepth?: number | null;")
+            appendLine("  clickableParentClassName?: string | null;")
+            appendLine("  clickableDescendantPath?: string | null;")
+            appendLine("  clickableDescendantClassName?: string | null;")
             appendLine("}")
             appendLine()
-            appendLine("export interface WindowCandidate {")
-            appendLine("  packageName: string;")
-            appendLine("  className?: string | null;")
-            appendLine("  type: string;")
-            appendLine("  layer: number;")
-            appendLine("  active: boolean;")
-            appendLine("  focused: boolean;")
-            appendLine("  bounds: [number, number, number, number];")
-            appendLine("  visibleText: string[];")
-            appendLine("  actionableElementCount: number;")
-            appendLine("  selected: boolean;")
-            appendLine("  selectionReason?: string | null;")
+            appendLine("export interface ScreenDiffStats {")
+            appendLine("  additions: number;")
+            appendLine("  removals: number;")
+            appendLine("  unchanged: number;")
+            appendLine("  beforeLineCount: number;")
+            appendLine("  afterLineCount: number;")
+            appendLine("  changeRatio: number;")
             appendLine("}")
             appendLine()
-            appendLine("export interface UiSnapshot {")
-            appendLine("  snapshotId: string;")
-            appendLine("  capturedAt: string;")
+            appendLine("export interface ScreenObservation {")
+            appendLine("  mode: \"diff\" | \"compact_snapshot\" | \"full_snapshot\";")
+            appendLine("  reason: string;")
+            appendLine("  baselineSnapshotId?: string | null;")
+            appendLine("  currentSnapshotId: string;")
             appendLine("  foregroundPackage: string;")
-            appendLine("  visibleText: string[];")
-            appendLine("  actionableElements: UiElement[];")
-            appendLine("  focusedElementId?: string | null;")
-            appendLine("  windowCandidates: WindowCandidate[];")
             appendLine("  selectedWindowReason?: string | null;")
+            appendLine("  baselineMissing: boolean;")
+            appendLine("  stats: ScreenDiffStats;")
+            appendLine("  canonicalText?: string | null;")
+            appendLine("  diff?: string | null;")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface ScreenObserveOptions {")
+            appendLine("  mode?: \"compact\" | \"full\";")
+            appendLine("  includeDiff?: boolean;")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface ScreenDiffOptions {")
+            appendLine("  baselineSnapshotId?: string | null;")
             appendLine("}")
             appendLine()
             appendLine("export interface ScreenInspectOptions {")
@@ -75,9 +85,39 @@ internal object ClauneHostContract {
             appendLine("  capturedAt: string;")
             appendLine("  foregroundPackage: string;")
             appendLine("  query?: string | null;")
-            appendLine("  visibleElements: UiElement[];")
-            appendLine("  actionableElements: UiElement[];")
+            appendLine("  visibleElements: ScreenNode[];")
+            appendLine("  actionableElements: ScreenNode[];")
             appendLine("  selectedWindowReason?: string | null;")
+            appendLine("}")
+            appendLine()
+            appendLine(
+                "export type RawNodeSearchField = \"label\" | \"text\" | \"contentDescription\" | " +
+                    "\"resourceId\" | \"className\" | \"role\" | \"actions\";",
+            )
+            appendLine()
+            appendLine("export interface RawNodeSearchOptions {")
+            appendLine("  pattern: string;")
+            appendLine("  flags?: string;")
+            appendLine("  fields?: RawNodeSearchField[];")
+            appendLine("  limit?: number;")
+            appendLine("  includeContext?: boolean;")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface RawNodeMatch {")
+            appendLine("  node: ScreenNode;")
+            appendLine("  matchedFields: string[];")
+            appendLine("  matchedText: string;")
+            appendLine("  nearestActionable?: ScreenNode | null;")
+            appendLine("  ancestorLabels: string[];")
+            appendLine("  childLabels: string[];")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface RawNodeSearchResult {")
+            appendLine("  snapshotId: string;")
+            appendLine("  foregroundPackage: string;")
+            appendLine("  pattern: string;")
+            appendLine("  error?: string | null;")
+            appendLine("  matches: RawNodeMatch[];")
             appendLine("}")
             appendLine()
             appendLine("export interface InstalledApp {")
@@ -149,16 +189,26 @@ internal object ClauneHostContract {
 
     val scriptLabSummary: String =
         "Run JS directly against the embedded runtime using the generated Claune host contract. " +
-            "The `claune` global exposes installed-app discovery, app launch, snapshot, selector, focused input, tap, typing, scroll, navigation, and wait helpers."
+            "The `claune` global exposes installed-app discovery, app launch, screen observation/diff, raw-node search, selector, focused input, tap, typing, scroll, navigation, and wait helpers."
 
     private val hostFunctions =
         listOf(
             HostFunction(
-                name = "observePhone",
-                nativeBinding = "__clauneObservePhoneJson",
-                returnType = "UiSnapshot",
-                documentation = "Capture the latest phone snapshot. Re-observe after every UI-changing action before reusing refs or ids.",
-                parameters = emptyList(),
+                name = "observeScreen",
+                nativeBinding = "__clauneObserveScreenJson",
+                returnType = "ScreenObservation",
+                documentation = "Capture the latest screen observation. Returns compact canonical text or diff, " +
+                    "depending on baseline availability.",
+                parameters = listOf(HostParameter("options", "ScreenObserveOptions", "JSON.stringify(%s ?? {})")),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "diffScreen",
+                nativeBinding = "__clauneDiffScreenJson",
+                returnType = "ScreenObservation",
+                documentation = "Capture the current screen and compare it with a prior baseline snapshot id, " +
+                    "or the previous screen state in this run.",
+                parameters = listOf(HostParameter("options", "ScreenDiffOptions", "JSON.stringify(%s ?? {})")),
                 throwsOnFailure = false,
             ),
             HostFunction(
@@ -168,6 +218,15 @@ internal object ClauneHostContract {
                 documentation =
                 "Inspect bounded visible elements, including non-actionable text, when a semantic tap fails or the UI looks visually tappable but not accessibility-clickable.",
                 parameters = listOf(HostParameter("options", "ScreenInspectOptions", "JSON.stringify(%s ?? {})")),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "findRawNodes",
+                nativeBinding = "__clauneFindRawNodesJson",
+                returnType = "RawNodeSearchResult",
+                documentation =
+                "Search the latest raw accessibility tree for expected targets that the canonical screen summary did not surface. Returns bounded node matches with refs, bounds, and nearest actionable targets.",
+                parameters = listOf(HostParameter("options", "RawNodeSearchOptions", "JSON.stringify(%s ?? {})")),
                 throwsOnFailure = false,
             ),
             HostFunction(

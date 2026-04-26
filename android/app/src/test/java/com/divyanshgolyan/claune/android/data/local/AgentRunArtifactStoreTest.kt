@@ -1,9 +1,9 @@
 package com.divyanshgolyan.claune.android.data.local
 
+import com.divyanshgolyan.claune.android.runtime.ScreenNode
+import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
-import com.divyanshgolyan.claune.android.runtime.UiElement
-import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
 import java.nio.file.Files
 import java.time.Instant as JavaInstant
@@ -53,7 +53,7 @@ class AgentRunArtifactStoreTest {
                     timeline = listOf("Run started", "Timed out reaching Wi-Fi."),
                 ),
             )
-            store.recordSnapshot("run-1", snapshot())
+            store.recordScreenState("run-1", snapshot())
             store.writeSystemPrompt("run-1", "system prompt")
             store.writeModelInput("run-1", "formatted prompt")
             store.writeFinalOutput("run-1", """{"status":"blocked","message":"Timed out"}""")
@@ -85,7 +85,7 @@ class AgentRunArtifactStoreTest {
             assertEquals("agent_start", serializedEvents.first().type)
             assertEquals("run-1", metadata.runId)
             assertEquals("Open Wi-Fi settings", metadata.userMessage)
-            assertTrue(root.resolve("run-1/snapshots.json").exists())
+            assertTrue(root.resolve("run-1/screen-states.json").exists())
             assertEquals("formatted prompt", root.resolve("run-1/model-input.txt").readText())
         } finally {
             root.deleteRecursively()
@@ -101,7 +101,7 @@ class AgentRunArtifactStoreTest {
         val firstBlock = payload["content"].toString()
         assertTrue(firstBlock.contains("tool_call"))
         assertTrue(firstBlock.contains("execute_script"))
-        assertTrue(firstBlock.contains("claune.observePhone"))
+        assertTrue(firstBlock.contains("claune.observeScreen"))
     }
 
     @Test
@@ -138,24 +138,38 @@ class AgentRunArtifactStoreTest {
         }
     }
 
-    private fun snapshot(): UiSnapshot = UiSnapshot(
-        snapshotId = "snapshot-1",
-        capturedAt = JavaInstant.parse("2026-04-17T10:00:00Z"),
-        foregroundPackage = "com.android.settings",
-        visibleText = listOf("Settings", "Wi-Fi"),
-        actionableElements = listOf(
-            UiElement(
-                id = "el-1",
-                role = "button",
-                label = "Wi-Fi",
-                clickable = true,
+    private fun snapshot(): ScreenState {
+        val wifi = ScreenNode(
+            path = listOf(0),
+            ref = "el-1",
+            elementId = "el-1",
+            role = "button",
+            label = "Wi-Fi",
+            visibleToUser = true,
+            clickable = true,
+            editable = false,
+            focused = false,
+            bounds = listOf(0, 0, 100, 100),
+        )
+        return ScreenState(
+            snapshotId = "snapshot-1",
+            capturedAt = JavaInstant.parse("2026-04-17T10:00:00Z").toString(),
+            foregroundPackage = "com.android.settings",
+            root = ScreenNode(
+                path = emptyList(),
+                ref = "root",
+                elementId = "root",
+                role = "root",
+                label = "Settings",
+                visibleToUser = true,
+                clickable = false,
                 editable = false,
                 focused = false,
-                bounds = listOf(0, 0, 100, 100),
+                bounds = listOf(0, 0, 1080, 2400),
+                children = listOf(wifi),
             ),
-        ),
-        focusedElementId = null,
-    )
+        )
+    }
 
     private fun history(): List<pi.ai.core.Message> = listOf(
         UserMessage(
@@ -170,7 +184,7 @@ class AgentRunArtifactStoreTest {
                     name = "execute_script",
                     arguments =
                     buildJsonObject {
-                        put("script", "const screen = claune.observePhone(); return screen;")
+                        put("script", "const screen = claune.observeScreen(); return screen;")
                     },
                 ),
             ),
@@ -187,7 +201,7 @@ class AgentRunArtifactStoreTest {
             content =
             listOf(
                 TextContent(
-                    """{"ok":true,"summary":"Observed settings","postActionSnapshot":{"snapshotId":"snapshot-1"}}""",
+                    """{"ok":true,"summary":"Observed settings","postActionObservation":{"currentSnapshotId":"snapshot-1"}}""",
                 ),
             ),
             isError = false,
@@ -210,7 +224,7 @@ class AgentRunArtifactStoreTest {
             AgentEvent.ToolExecutionStart(
                 toolCallId = "tool-call-1",
                 toolName = "execute_script",
-                args = buildJsonObject { put("script", "const screen = claune.observePhone();") },
+                args = buildJsonObject { put("script", "const screen = claune.observeScreen();") },
             ),
         ),
         AgentTranscriptSerializer.serializeEvent(

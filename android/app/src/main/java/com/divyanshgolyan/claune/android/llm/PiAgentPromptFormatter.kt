@@ -18,82 +18,29 @@ internal object PiAgentPromptFormatter {
             }
         }
         appendLine()
-        appendLine("Last known phone snapshot before your next action:")
-        appendLine("This snapshot may already be stale. Observe the phone yourself before acting.")
-        appendLine("lastKnownForegroundPackage: ${input.snapshot.foregroundPackage}")
-        input.snapshot.selectedWindowReason?.let { reason ->
-            appendLine("lastKnownSelectedWindowReason: $reason")
+        appendLine("Last known phone screen before your next action:")
+        appendLine("This observation may already be stale. Observe the screen yourself before acting.")
+        appendLine("observationMode: ${input.screenObservation.mode}")
+        appendLine("observationReason: ${input.screenObservation.reason}")
+        appendLine("currentSnapshotId: ${input.screenObservation.currentSnapshotId}")
+        input.screenObservation.baselineSnapshotId?.let { appendLine("baselineSnapshotId: $it") }
+        appendLine("foregroundPackage: ${input.screenObservation.foregroundPackage}")
+        input.screenObservation.selectedWindowReason?.let { reason ->
+            appendLine("selectedWindowReason: $reason")
         }
-        if (input.snapshot.windowCandidates.isNotEmpty()) {
-            appendLine("lastKnownWindowCandidates:")
-            input.snapshot.windowCandidates.take(8).forEach { candidate ->
-                append("- ")
-                if (candidate.selected) {
-                    append("selected ")
-                }
-                append(candidate.packageName)
-                append(", type=")
-                append(candidate.type)
-                append(", layer=")
-                append(candidate.layer)
-                append(", active=")
-                append(candidate.active)
-                append(", focused=")
-                append(candidate.focused)
-                append(", actionableCount=")
-                append(candidate.actionableElementCount)
-                append(", text=")
-                appendLine(candidate.visibleText.take(4).joinToString(" | ").ifBlank { "<none>" })
-            }
-        }
-        if (input.snapshot.foregroundPackage == BuildConfig.APPLICATION_ID) {
+        appendLine(
+            "diffStats: additions=${input.screenObservation.stats.additions}, " +
+                "removals=${input.screenObservation.stats.removals}, " +
+                "unchanged=${input.screenObservation.stats.unchanged}, " +
+                "changeRatio=${"%.2f".format(input.screenObservation.stats.changeRatio)}",
+        )
+        if (input.screenObservation.foregroundPackage == BuildConfig.APPLICATION_ID) {
             appendLine(
                 "shellContext: The last known UI was Claune Android's own control shell. Leave Claune before operating the destination app.",
             )
         }
-        appendLine("lastKnownFocusedElementId: ${input.snapshot.focusedElementId ?: "none"}")
-        appendLine("lastKnownVisibleText:")
-        if (input.snapshot.visibleText.isEmpty()) {
-            appendLine("- none")
-        } else {
-            input.snapshot.visibleText.take(20).forEach { line ->
-                append("- ")
-                appendLine(line)
-            }
-        }
-        appendLine("lastKnownActionableElements:")
-        if (input.snapshot.actionableElements.isEmpty()) {
-            appendLine("- none")
-        } else {
-            input.snapshot.actionableElements.take(20).forEach { element ->
-                append("- ref=")
-                append(element.ref)
-                append(", role=")
-                append(element.role)
-                append(", label=")
-                append(if (element.label.isBlank()) "<blank>" else element.label)
-                append(", text=")
-                append(element.text ?: "<none>")
-                append(", contentDescription=")
-                append(element.contentDescription ?: "<none>")
-                append(", resourceId=")
-                append(element.resourceId ?: "<none>")
-                append(", idForIdOnlyApis=")
-                append(element.id)
-                append(", clickable=")
-                append(element.clickable)
-                append(", editable=")
-                append(element.editable)
-                append(", enabled=")
-                append(element.enabled)
-                append(", checked=")
-                append(element.checked)
-                append(", scrollable=")
-                append(element.scrollable)
-                append(", focused=")
-                appendLine(element.focused)
-            }
-        }
+        appendLine("screenObservation:")
+        appendLine(input.screenObservation.canonicalText ?: input.screenObservation.diff ?: "<empty>")
         appendLine()
         appendLine("When the current request is complete or blocked, call finish_run exactly once.")
         appendLine("When you need a user decision before continuing, call ask_user.")

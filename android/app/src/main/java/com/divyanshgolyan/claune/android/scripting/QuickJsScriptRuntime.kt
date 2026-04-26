@@ -134,11 +134,17 @@ class QuickJsScriptRuntime(
     }
 
     private fun registerHostFunctions(context: QuickJSContext, host: ScriptHost) {
-        context.registerJsonFunction("__clauneObservePhoneJson") {
-            encodeSnapshot(host.observePhone())
+        context.registerJsonFunction("__clauneObserveScreenJson") { args ->
+            encodeScreenObservation(host.observeScreen(args.stringArg(0)))
+        }
+        context.registerJsonFunction("__clauneDiffScreenJson") { args ->
+            encodeScreenObservation(host.diffScreen(args.stringArg(0)))
         }
         context.registerJsonFunction("__clauneInspectScreenJson") { args ->
             encodeInspection(host.inspectScreen(args.stringArg(0)))
+        }
+        context.registerJsonFunction("__clauneFindRawNodesJson") { args ->
+            encodeRawNodeSearchResult(host.findRawNodes(args.stringArg(0)))
         }
         context.registerJsonFunction("__clauneListInstalledAppsJson") {
             encodeInstalledApps(host.listInstalledApps())
@@ -210,14 +216,17 @@ class QuickJsScriptRuntime(
         )
     }
 
-    private suspend fun encodeSnapshot(snapshot: UiSnapshotPayload): String =
-        ScriptJson.codec.encodeToString(UiSnapshotPayload.serializer(), snapshot)
+    private suspend fun encodeScreenObservation(observation: ScreenObservationPayload): String =
+        ScriptJson.codec.encodeToString(ScreenObservationPayload.serializer(), observation)
 
     private suspend fun encodeInstalledApps(apps: List<InstalledAppPayload>): String =
         ScriptJson.codec.encodeToString(ListSerializer(InstalledAppPayload.serializer()), apps)
 
     private suspend fun encodeInspection(inspection: ScreenInspectionPayload): String =
         ScriptJson.codec.encodeToString(ScreenInspectionPayload.serializer(), inspection)
+
+    private suspend fun encodeRawNodeSearchResult(result: RawNodeSearchResultPayload): String =
+        ScriptJson.codec.encodeToString(RawNodeSearchResultPayload.serializer(), result)
 
     private suspend fun encodeOutcome(outcome: HostCallOutcome): String =
         ScriptJson.codec.encodeToString(HostCallOutcome.serializer(), outcome)

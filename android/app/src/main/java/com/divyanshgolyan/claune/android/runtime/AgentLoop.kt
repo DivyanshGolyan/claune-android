@@ -45,12 +45,13 @@ class AgentLoop(
             )
             artifactStore.recordState(sessionCoordinator.uiState.value)
         }
-        val snapshot = phoneObserver.captureSnapshot()
-        logStore.recordSnapshot(snapshot)
-        sessionCoordinator.setAccessibilityConnected(snapshot.foregroundPackage != "unavailable")
-        sessionCoordinator.setLastKnownApp(snapshot.foregroundPackage)
+        val previousScreenState = logStore.recentScreenStates().lastOrNull()
+        val screenState = phoneObserver.captureScreenState()
+        logStore.recordScreenState(screenState)
+        sessionCoordinator.setAccessibilityConnected(screenState.foregroundPackage != "unavailable")
+        sessionCoordinator.setLastKnownApp(screenState.foregroundPackage)
         sessionCoordinator.logEvent(
-            "Observed ${snapshot.actionableElements.size} actionable elements from ${snapshot.foregroundPackage}.",
+            "Observed ${screenState.actionableNodes().size} actionable elements from ${screenState.foregroundPackage}.",
         )
 
         val modelOutput =
@@ -60,7 +61,7 @@ class AgentLoop(
                     persistentSessionPath = selectedSession.path,
                     persistentSessionId = selectedSession.sessionId,
                     userMessage = userMessage,
-                    snapshot = snapshot,
+                    screenObservation = buildScreenObservation(previousScreenState, screenState),
                     recentEvents = sessionCoordinator.uiState.value.timeline,
                 ),
             )

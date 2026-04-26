@@ -5,10 +5,17 @@ import com.divyanshgolyan.claune.android.runtime.ActionResult
 import com.divyanshgolyan.claune.android.runtime.ElementRef
 import com.divyanshgolyan.claune.android.runtime.PhoneActuator
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
+import com.divyanshgolyan.claune.android.runtime.ScreenNode
+import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.ScrollDirection
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
-import com.divyanshgolyan.claune.android.runtime.UiElement
-import com.divyanshgolyan.claune.android.runtime.UiSnapshot
+import com.divyanshgolyan.claune.android.runtime.actionableNodes
+import com.divyanshgolyan.claune.android.runtime.boundsArea
+import com.divyanshgolyan.claune.android.runtime.buildScreenObservation
+import com.divyanshgolyan.claune.android.runtime.focusedElementId
+import com.divyanshgolyan.claune.android.runtime.isSearchLike
+import com.divyanshgolyan.claune.android.runtime.visibleNodes
+import com.divyanshgolyan.claune.android.runtime.visibleText
 import java.time.Instant
 import kotlinx.coroutines.delay
 import kotlinx.serialization.KSerializer
@@ -38,21 +45,50 @@ class ScriptHost(
 
     fun hostCalls(): List<HostCallRecord> = recordedCalls.toList()
 
-    suspend fun observePhone(): UiSnapshotPayload {
-        val snapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(snapshot)
-        return snapshot.toPayload()
+    suspend fun observeScreen(optionsJson: String): ScreenObservationPayload {
+        val options = decodeScreenObserveOptions(optionsJson)
+        val mode = options.mode.toCanonicalScreenMode()
+        val previous = logStore.recentScreenStates().lastOrNull()
+        val screenState = phoneObserver.captureScreenState()
+        recordScreenState(screenState)
+        return if (options.includeDiff && mode.name == "Compact") {
+            buildScreenObservation(previous, screenState).toPayload()
+        } else {
+            screenState.toObservationPayload(mode)
+        }
+    }
+
+    suspend fun diffScreen(optionsJson: String): ScreenObservationPayload {
+        val options = decodeScreenDiffOptions(optionsJson)
+        val previous = options.baselineSnapshotId
+            ?.let { id -> logStore.recentScreenStates().lastOrNull { it.snapshotId == id } }
+            ?: logStore.recentScreenStates().lastOrNull()
+        val screenState = phoneObserver.captureScreenState()
+        recordScreenState(screenState)
+        return buildScreenObservation(previous, screenState).toPayload()
     }
 
     suspend fun inspectScreen(optionsJson: String): ScreenInspectionPayload {
         val options = decodeScreenInspectOptions(optionsJson)
-        val snapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(snapshot)
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
         return recordDataCall(
             name = "inspectScreen",
             arguments = buildJsonObject { put("options", optionsJson) },
             result = snapshot.toInspectionPayload(options),
             resultSerializer = ScreenInspectionPayload.serializer(),
+        )
+    }
+
+    suspend fun findRawNodes(optionsJson: String): RawNodeSearchResultPayload {
+        val options = decodeRawNodeSearchOptions(optionsJson)
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
+        return recordDataCall(
+            name = "findRawNodes",
+            arguments = buildJsonObject { put("options", optionsJson) },
+            result = snapshot.toRawNodeSearchResult(options),
+            resultSerializer = RawNodeSearchResultPayload.serializer(),
         )
     }
 
@@ -85,18 +121,18 @@ class ScriptHost(
         name = "tapRef",
         arguments = buildJsonObject { put("ref", ref) },
     ) {
-        val snapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(snapshot)
-        val element = snapshot.actionableElements.firstOrNull { it.ref == ref }
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
+        val element = snapshot.actionableNodes().firstOrNull { it.ref == ref }
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "Ref '$ref' was not found in the current snapshot.",
             )
-        phoneActuator.tap(ElementRef(element.id)).toOutcome(
+        phoneActuator.tap(ElementRef(element.elementId)).toOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
-                put("matchedElementId", element.id)
+                put("matchedElementId", element.elementId)
                 put("matchedLabel", element.label)
             },
         )
@@ -110,16 +146,16 @@ class ScriptHost(
             put("exact", exact)
         },
     ) {
-        val snapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(snapshot)
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
         val selector = ElementSelectorPayload(text = text, textExact = exact)
         val element = selectElement(snapshot, selector)
             ?: return@recordCall selectorFailure(selector, snapshot)
-        phoneActuator.tap(ElementRef(element.id)).toOutcome(
+        phoneActuator.tap(ElementRef(element.elementId)).toOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
-                put("matchedElementId", element.id)
+                put("matchedElementId", element.elementId)
                 put("matchedLabel", element.label)
             },
         )
@@ -176,9 +212,9 @@ class ScriptHost(
                 ok = false,
                 message = "Unsupported scroll direction '$direction'.",
             )
-        val snapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(snapshot)
-        val element = snapshot.actionableElements.firstOrNull { it.ref == ref }
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
+        val element = snapshot.actionableNodes().firstOrNull { it.ref == ref }
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "Ref '$ref' was not found in the current snapshot.",
@@ -187,21 +223,21 @@ class ScriptHost(
             return@recordCall HostCallOutcome(
                 ok = false,
                 message =
-                "Matched element '${element.label.ifBlank { element.id }}' is not scrollable. " +
+                "Matched element '${element.label.ifBlank { element.elementId }}' is not scrollable. " +
                     "Use scrollScreen(direction) unless the snapshot shows a scrollable ref.",
                 data =
                 buildJsonObject {
                     put("matchedRef", element.ref)
-                    put("matchedElementId", element.id)
+                    put("matchedElementId", element.elementId)
                     put("matchedLabel", element.label)
                 },
             )
         }
-        phoneActuator.scroll(ElementRef(element.id), parsedDirection).toOutcome(
+        phoneActuator.scroll(ElementRef(element.elementId), parsedDirection).toOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
-                put("matchedElementId", element.id)
+                put("matchedElementId", element.elementId)
                 put("matchedLabel", element.label)
             },
         )
@@ -219,18 +255,18 @@ class ScriptHost(
                 ok = false,
                 message = "Unsupported scroll direction '$direction'.",
             )
-        val snapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(snapshot)
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
         val element = snapshot.bestScrollableElement()
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "No scrollable element was found on the current screen.",
             )
-        phoneActuator.scroll(ElementRef(element.id), parsedDirection).toOutcome(
+        phoneActuator.scroll(ElementRef(element.elementId), parsedDirection).toOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
-                put("matchedElementId", element.id)
+                put("matchedElementId", element.elementId)
                 put("matchedLabel", element.label)
             },
         )
@@ -245,15 +281,15 @@ class ScriptHost(
                 ok = false,
                 message = "Invalid selector JSON.",
             )
-        val snapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(snapshot)
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
         val element = selectElement(snapshot, selector)
             ?: return@recordCall selectorFailure(selector, snapshot)
-        phoneActuator.tap(ElementRef(element.id)).toOutcome(
+        phoneActuator.tap(ElementRef(element.elementId)).toOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
-                put("matchedElementId", element.id)
+                put("matchedElementId", element.elementId)
                 put("matchedLabel", element.label)
             },
         )
@@ -287,13 +323,13 @@ class ScriptHost(
         if (!activation.ok) {
             return@recordCall activation
         }
-        val activatedElementId = activation.data?.jsonObject?.get("activatedElementId")?.jsonPrimitive?.content
+        activation.data?.jsonObject?.get("activatedElementId")?.jsonPrimitive?.content
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "No editable element became available for the selector.",
                 data = activation.data,
             )
-        phoneActuator.type(ElementRef(activatedElementId), text).toOutcome(
+        phoneActuator.typeFocused(text).toOutcome(
             data = activation.data as? JsonObject,
         )
     }
@@ -321,20 +357,15 @@ class ScriptHost(
             put("text", text)
         },
     ) {
-        val snapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(snapshot)
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
         val element = snapshot.findFocusedEditableElement()
             ?: return@recordCall HostCallOutcome(
                 ok = false,
                 message = "No focused editable element was found on the current screen.",
             )
-        phoneActuator.type(ElementRef(element.id), text).toOutcome(
-            data =
-            buildJsonObject {
-                put("matchedRef", element.ref)
-                put("matchedElementId", element.id)
-                put("matchedLabel", element.label)
-            },
+        phoneActuator.typeFocused(text).toOutcome(
+            data = buildMatchedData(element),
         )
     }
 
@@ -399,14 +430,14 @@ class ScriptHost(
     private suspend fun waitForStateInternal(type: String, value: String, timeoutMs: Long): HostCallOutcome {
         val deadline = now().plusMillis(timeoutMs.coerceAtLeast(0L))
         while (true) {
-            val snapshot = phoneObserver.captureSnapshot()
-            recordSnapshot(snapshot)
+            val snapshot = phoneObserver.captureScreenState()
+            recordScreenState(snapshot)
 
             val matched =
                 when (type) {
                     "package" -> snapshot.foregroundPackage == value
-                    "element" -> snapshot.actionableElements.any { it.id == value }
-                    "text" -> snapshot.visibleText.any { it.contains(value, ignoreCase = true) }
+                    "element" -> snapshot.actionableNodes().any { it.elementId == value }
+                    "text" -> snapshot.visibleText().any { it.contains(value, ignoreCase = true) }
                     else -> {
                         return HostCallOutcome(
                             ok = false,
@@ -436,11 +467,11 @@ class ScriptHost(
     private suspend fun verifyAppLaunch(packageName: String): HostCallOutcome {
         val timeoutMs = LAUNCH_VERIFICATION_TIMEOUT_MS
         val deadline = now().plusMillis(timeoutMs)
-        var lastSnapshot: UiSnapshot? = null
+        var lastSnapshot: ScreenState? = null
 
         while (true) {
-            val snapshot = phoneObserver.captureSnapshot()
-            recordSnapshot(snapshot)
+            val snapshot = phoneObserver.captureScreenState()
+            recordScreenState(snapshot)
             lastSnapshot = snapshot
 
             if (snapshot.foregroundPackage == packageName) {
@@ -458,7 +489,7 @@ class ScriptHost(
         }
 
         val resolvedSnapshot = lastSnapshot
-        val targetWindow = resolvedSnapshot.windowCandidates.firstOrNull { it.packageName == packageName }
+        val targetWindow = resolvedSnapshot.windows.firstOrNull { it.packageName == packageName }
         return HostCallOutcome(
             ok = false,
             message =
@@ -483,22 +514,22 @@ class ScriptHost(
     private suspend fun waitForSelectorInternal(selector: ElementSelectorPayload, timeoutMs: Long): HostCallOutcome {
         val deadline = now().plusMillis(timeoutMs.coerceAtLeast(0L))
         while (true) {
-            val snapshot = phoneObserver.captureSnapshot()
-            recordSnapshot(snapshot)
+            val snapshot = phoneObserver.captureScreenState()
+            recordScreenState(snapshot)
             val matched = selectElement(snapshot, selector)
             if (matched != null) {
                 return HostCallOutcome(
                     ok = true,
-                    message = "Matched selector for '${matched.label.ifBlank { matched.id }}'.",
+                    message = "Matched selector for '${matched.label.ifBlank { matched.elementId }}'.",
                     data =
                     buildJsonObject {
                         put("matchedRef", matched.ref)
-                        put("matchedElementId", matched.id)
+                        put("matchedElementId", matched.elementId)
                         put("matchedLabel", matched.label)
                     },
                 )
             }
-            if (snapshot.actionableElements.any { it.matches(selector) } && !selector.first) {
+            if (snapshot.actionableNodes().any { it.matches(selector) } && !selector.first) {
                 return selectorFailure(selector, snapshot)
             }
 
@@ -514,16 +545,17 @@ class ScriptHost(
     }
 
     private suspend fun focusSelectorInternal(selector: ElementSelectorPayload, timeoutMs: Long): HostCallOutcome {
-        val initialSnapshot = phoneObserver.captureSnapshot()
-        recordSnapshot(initialSnapshot)
+        val initialSnapshot = phoneObserver.captureScreenState()
+        recordScreenState(initialSnapshot)
         val matchedElement = selectElement(initialSnapshot, selector)
+            ?: initialSnapshot.visibleNodes().firstOrNull { it.matches(selector) }
             ?: return selectorFailure(selector, initialSnapshot)
 
         resolveEditableTarget(
             snapshot = initialSnapshot,
             matchedElement = matchedElement,
         )?.let { editable ->
-            val editableLabel = editable.label.ifBlank { editable.id }
+            val editableLabel = editable.label.ifBlank { editable.elementId }
             return HostCallOutcome(
                 ok = true,
                 message = "Editable element '$editableLabel' is ready for input.",
@@ -531,21 +563,21 @@ class ScriptHost(
             )
         }
 
-        val tapResult = phoneActuator.tap(ElementRef(matchedElement.id))
+        val tapResult = phoneActuator.tap(ElementRef(matchedElement.elementId))
         if (tapResult is ActionResult.Blocked) {
             return tapResult.toOutcome(data = buildMatchedData(matchedElement))
         }
 
         val deadline = now().plusMillis(timeoutMs.coerceAtLeast(0L))
         while (true) {
-            val snapshot = phoneObserver.captureSnapshot()
-            recordSnapshot(snapshot)
+            val snapshot = phoneObserver.captureScreenState()
+            recordScreenState(snapshot)
             resolveEditableTarget(
                 snapshot = snapshot,
                 matchedElement = matchedElement,
             )?.let { editable ->
-                val matchedLabel = matchedElement.label.ifBlank { matchedElement.id }
-                val editableLabel = editable.label.ifBlank { editable.id }
+                val matchedLabel = matchedElement.label.ifBlank { matchedElement.elementId }
+                val editableLabel = editable.label.ifBlank { editable.elementId }
                 return HostCallOutcome(
                     ok = true,
                     message = "Activated '$matchedLabel' and found editable element '$editableLabel'.",
@@ -554,7 +586,7 @@ class ScriptHost(
             }
 
             if (now().isAfter(deadline)) {
-                val matchedLabel = matchedElement.label.ifBlank { matchedElement.id }
+                val matchedLabel = matchedElement.label.ifBlank { matchedElement.elementId }
                 return HostCallOutcome(
                     ok = false,
                     message = "Timed out waiting for an editable element after activating '$matchedLabel'.",
@@ -566,34 +598,35 @@ class ScriptHost(
         }
     }
 
-    private fun resolveEditableTarget(snapshot: UiSnapshot, matchedElement: UiElement): UiElement? = snapshot.findFocusedEditableElement()
-        ?: snapshot.actionableElements.firstOrNull { it.editable && it.ref == matchedElement.ref }
-        ?: snapshot.actionableElements.firstOrNull { it.editable && matchedElement.isSearchLike() && it.isSearchLike() }
-        ?: snapshot.actionableElements.singleOrNull { it.editable }
+    private fun resolveEditableTarget(snapshot: ScreenState, matchedElement: ScreenNode): ScreenNode? =
+        snapshot.findFocusedEditableElement()
+            ?: snapshot.actionableNodes().firstOrNull { it.editable && it.ref == matchedElement.ref }
+            ?: snapshot.actionableNodes().firstOrNull { it.editable && matchedElement.isSearchLike() && it.isSearchLike() }
+            ?: snapshot.actionableNodes().singleOrNull { it.editable }
 
-    private fun UiSnapshot.bestScrollableElement(): UiElement? = actionableElements
+    private fun ScreenState.bestScrollableElement(): ScreenNode? = actionableNodes()
         .filter { it.scrollable }
         .maxWithOrNull(
-            compareBy<UiElement> { it.focused }
+            compareBy<ScreenNode> { it.focused }
                 .thenBy { it.boundsArea() }
                 .thenBy { it.clickable },
         )
 
-    private fun UiSnapshot.findFocusedEditableElement(): UiElement? =
-        actionableElements.firstOrNull { it.id == focusedElementId && it.editable }
-            ?: actionableElements.firstOrNull { it.focused && it.editable }
+    private fun ScreenState.findFocusedEditableElement(): ScreenNode? =
+        actionableNodes().firstOrNull { it.elementId == focusedElementId() && it.editable }
+            ?: actionableNodes().firstOrNull { it.focused && it.editable }
 
-    private fun buildMatchedData(element: UiElement): JsonObject = buildJsonObject {
+    private fun buildMatchedData(element: ScreenNode): JsonObject = buildJsonObject {
         put("matchedRef", element.ref)
-        put("matchedElementId", element.id)
+        put("matchedElementId", element.elementId)
         put("matchedLabel", element.label)
     }
 
-    private fun buildActivationData(matchedElement: UiElement, editableElement: UiElement): JsonObject = buildJsonObject {
+    private fun buildActivationData(matchedElement: ScreenNode, editableElement: ScreenNode): JsonObject = buildJsonObject {
         put("matchedRef", matchedElement.ref)
-        put("matchedElementId", matchedElement.id)
+        put("matchedElementId", matchedElement.elementId)
         put("matchedLabel", matchedElement.label)
-        put("activatedElementId", editableElement.id)
+        put("activatedElementId", editableElement.elementId)
         put("activatedRef", editableElement.ref)
         put("activatedLabel", editableElement.label)
     }
@@ -647,14 +680,26 @@ class ScriptHost(
         return result
     }
 
-    private fun recordSnapshot(snapshot: UiSnapshot) {
+    private fun recordScreenState(snapshot: ScreenState) {
         sessionCoordinator.setLastKnownApp(snapshot.foregroundPackage)
-        logStore.recordSnapshot(snapshot)
+        logStore.recordScreenState(snapshot)
     }
 
     private fun decodeScreenInspectOptions(optionsJson: String): ScreenInspectOptionsPayload = runCatching {
         ScriptJson.codec.decodeFromString<ScreenInspectOptionsPayload>(optionsJson)
     }.getOrDefault(ScreenInspectOptionsPayload())
+
+    private fun decodeRawNodeSearchOptions(optionsJson: String): RawNodeSearchOptionsPayload = runCatching {
+        ScriptJson.codec.decodeFromString<RawNodeSearchOptionsPayload>(optionsJson)
+    }.getOrDefault(RawNodeSearchOptionsPayload(pattern = ""))
+
+    private fun decodeScreenObserveOptions(optionsJson: String): ScreenObserveOptionsPayload = runCatching {
+        ScriptJson.codec.decodeFromString<ScreenObserveOptionsPayload>(optionsJson)
+    }.getOrDefault(ScreenObserveOptionsPayload())
+
+    private fun decodeScreenDiffOptions(optionsJson: String): ScreenDiffOptionsPayload = runCatching {
+        ScriptJson.codec.decodeFromString<ScreenDiffOptionsPayload>(optionsJson)
+    }.getOrDefault(ScreenDiffOptionsPayload())
 
     private fun decodeBounds(boundsJson: String): List<Int>? = runCatching {
         ScriptJson.codec.parseToJsonElement(boundsJson).jsonArray.map { it.jsonPrimitive.int }
@@ -675,13 +720,6 @@ class ScriptHost(
         private const val DEFAULT_FOCUS_TIMEOUT_MS = 1500L
         private const val LAUNCH_VERIFICATION_TIMEOUT_MS = 2500L
     }
-}
-
-private fun UiElement.boundsArea(): Int {
-    if (bounds.size < 4) return 0
-    val width = (bounds[2] - bounds[0]).coerceAtLeast(0)
-    val height = (bounds[3] - bounds[1]).coerceAtLeast(0)
-    return width * height
 }
 
 private fun ActionResult.toOutcome(data: JsonObject? = null): HostCallOutcome = when (this) {

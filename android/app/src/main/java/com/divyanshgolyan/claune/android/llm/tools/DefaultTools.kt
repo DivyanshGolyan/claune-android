@@ -1,11 +1,13 @@
 package com.divyanshgolyan.claune.android.llm.tools
 
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
+import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
+import com.divyanshgolyan.claune.android.runtime.ScreenState
+import com.divyanshgolyan.claune.android.runtime.buildScreenObservation
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
 import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
-import com.divyanshgolyan.claune.android.scripting.UiSnapshotPayload
 import com.divyanshgolyan.claune.android.scripting.toPayload
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -17,17 +19,22 @@ import kotlinx.serialization.json.put
 import pi.agent.core.AgentToolResult
 import pi.ai.core.TextContent
 
-internal class ExecuteScriptToolDefinition(private val scriptRuntime: ScriptRuntime, private val phoneObserver: PhoneObserver) :
-    ToolDefinition<String> {
+internal class ExecuteScriptToolDefinition(
+    private val scriptRuntime: ScriptRuntime,
+    private val phoneObserver: PhoneObserver,
+    private val logStore: SessionLogStore? = null,
+) : ToolDefinition<String> {
+    private var lastPostActionScreenState: ScreenState? = null
+
     override val name: String = "execute_script"
     override val label: String = "Execute Script"
     override val description: String =
-        "Execute a JavaScript snippet against the live Claune host runtime. Use this tool for any phone interaction or phone-state recheck. Return value is JSON text with script result and a post-action snapshot, which is the current truth after the script finishes."
+        "Execute a JavaScript snippet against the live Claune host runtime. Use this tool for any phone interaction or phone-state recheck. Return value is compact JSON with the script result and a post-action screen observation."
     override val promptSnippet: String = "Run one or more phone actions or observations through the JS host runtime."
     override val promptGuidelines: List<String> = listOf(
         "Use execute_script whenever you need to act on the phone or observe fresh UI state.",
         "A single script may do multiple host calls before returning a compact summary object.",
-        "After execute_script returns, trust postActionSnapshot as the current screen state for the next step.",
+        "After execute_script returns, use postActionObservation as the current screen summary or diff for the next step.",
     )
     override val parameters =
         objectParameters(
@@ -58,14 +65,18 @@ internal class ExecuteScriptToolDefinition(private val scriptRuntime: ScriptRunt
                     source = "pi_agent",
                 ),
             )
-        val postActionSnapshot = phoneObserver.captureSnapshot().toPayload()
+        val previousScreenState = lastPostActionScreenState
+        val postActionScreenState = phoneObserver.captureScreenState()
+        logStore?.recordScreenState(postActionScreenState)
+        lastPostActionScreenState = postActionScreenState
+        val postActionObservation = buildScreenObservation(previousScreenState, postActionScreenState).toPayload()
         val payload =
             ExecuteScriptToolResult(
                 ok = result.ok,
                 summary = result.summary,
                 error = result.error,
                 scriptData = result.data,
-                postActionSnapshot = postActionSnapshot,
+                postActionObservation = postActionObservation,
             )
         val encoded = ScriptJson.codec.encodeToString(ExecuteScriptToolResult.serializer(), payload)
         return AgentToolResult(
@@ -162,5 +173,5 @@ internal data class ExecuteScriptToolResult(
     val summary: String,
     val error: String? = null,
     val scriptData: JsonElement? = null,
-    val postActionSnapshot: UiSnapshotPayload,
+    val postActionObservation: com.divyanshgolyan.claune.android.scripting.ScreenObservationPayload,
 )

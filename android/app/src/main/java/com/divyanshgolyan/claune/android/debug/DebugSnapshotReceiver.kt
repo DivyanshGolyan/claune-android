@@ -5,9 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.app.clauneContainer
-import com.divyanshgolyan.claune.android.scripting.ScriptJson
-import com.divyanshgolyan.claune.android.scripting.UiSnapshotPayload
-import com.divyanshgolyan.claune.android.scripting.toPayload
+import com.divyanshgolyan.claune.android.runtime.ScreenState
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,17 +23,14 @@ class DebugSnapshotReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.Default).launch {
             runCatching {
                 val container = context.clauneContainer()
-                val snapshot = container.accessibilityBridge.captureSnapshot()
-                val outputFile = File(context.filesDir, "debug-snapshot.json")
+                val screenState = container.accessibilityBridge.captureScreenState()
+                val outputFile = File(context.filesDir, "debug-screen-state.json")
                 outputFile.writeText(
-                    ScriptJson.codec.encodeToString(
-                        UiSnapshotPayload.serializer(),
-                        snapshot.toPayload(),
-                    ),
+                    PRETTY_JSON.encodeToString(ScreenState.serializer(), screenState),
                 )
-                container.accessibilityBridge.captureRawTreeDump()?.let { rawTree ->
+                container.accessibilityBridge.captureDebugScreenState()?.let { debugState ->
                     File(context.filesDir, "debug-raw-tree.json").writeText(
-                        PRETTY_JSON.encodeToString(rawTree),
+                        PRETTY_JSON.encodeToString(ScreenState.serializer(), debugState),
                     )
                 }
             }

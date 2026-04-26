@@ -1,33 +1,33 @@
 package com.divyanshgolyan.claune.android.data.local
 
+import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
-import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import com.divyanshgolyan.claune.android.scripting.HostCallRecord
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRecord
 
 interface SessionLogStore {
     fun record(state: SessionUiState)
 
-    fun recordSnapshot(snapshot: UiSnapshot)
+    fun recordScreenState(screenState: ScreenState)
 
     fun recordScriptExecution(execution: ScriptExecutionRecord)
 
     fun recordHostCall(hostCall: HostCallRecord)
 
-    fun recentSnapshots(): List<UiSnapshot>
+    fun recentScreenStates(): List<ScreenState>
 
     fun recentHostCalls(): List<HostCallRecord>
 }
 
 class InMemorySessionLogStore : SessionLogStore {
-    private val snapshots = ArrayDeque<UiSnapshot>()
+    private val screenStates = ArrayDeque<ScreenState>()
     private val hostCalls = ArrayDeque<HostCallRecord>()
 
     override fun record(state: SessionUiState) = Unit
 
-    override fun recordSnapshot(snapshot: UiSnapshot) {
-        snapshots += snapshot
-        trim(snapshots)
+    override fun recordScreenState(screenState: ScreenState) {
+        screenStates += screenState
+        trim(screenStates)
     }
 
     override fun recordScriptExecution(execution: ScriptExecutionRecord) = Unit
@@ -37,7 +37,7 @@ class InMemorySessionLogStore : SessionLogStore {
         trim(hostCalls)
     }
 
-    override fun recentSnapshots(): List<UiSnapshot> = snapshots.toList()
+    override fun recentScreenStates(): List<ScreenState> = screenStates.toList()
 
     override fun recentHostCalls(): List<HostCallRecord> = hostCalls.toList()
 

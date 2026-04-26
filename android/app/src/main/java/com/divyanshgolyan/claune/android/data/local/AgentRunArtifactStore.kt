@@ -1,12 +1,11 @@
 package com.divyanshgolyan.claune.android.data.local
 
+import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
-import com.divyanshgolyan.claune.android.runtime.UiSnapshot
 import com.divyanshgolyan.claune.android.scripting.HostCallRecord
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRecord
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
-import com.divyanshgolyan.claune.android.scripting.toPayload
 import java.io.File
 import java.time.Instant
 import kotlinx.serialization.KSerializer
@@ -36,7 +35,7 @@ interface AgentRunArtifactStore {
 
     fun recordState(state: SessionUiState)
 
-    fun recordSnapshot(runId: String, snapshot: UiSnapshot)
+    fun recordScreenState(runId: String, screenState: ScreenState)
 
     fun recordScriptExecution(runId: String, execution: ScriptExecutionRecord)
 
@@ -111,12 +110,12 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
     }
 
     @Synchronized
-    override fun recordSnapshot(runId: String, snapshot: UiSnapshot) {
+    override fun recordScreenState(runId: String, screenState: ScreenState) {
         appendArray(
             runId = runId,
-            fileName = SNAPSHOTS_FILE_NAME,
-            serializer = com.divyanshgolyan.claune.android.scripting.UiSnapshotPayload.serializer(),
-            value = snapshot.toPayload(),
+            fileName = SCREEN_STATES_FILE_NAME,
+            serializer = ScreenState.serializer(),
+            value = screenState,
         )
     }
 
@@ -237,7 +236,7 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
     private companion object {
         private const val METADATA_FILE_NAME = "metadata.json"
         private const val STATES_FILE_NAME = "states.json"
-        private const val SNAPSHOTS_FILE_NAME = "snapshots.json"
+        private const val SCREEN_STATES_FILE_NAME = "screen-states.json"
         private const val SCRIPT_EXECUTIONS_FILE_NAME = "script-executions.json"
         private const val HOST_CALLS_FILE_NAME = "host-calls.json"
         private const val SYSTEM_PROMPT_FILE_NAME = "system-prompt.txt"
@@ -260,10 +259,10 @@ class ArtifactSessionLogStore(
         runCatching { artifactStore.recordState(state) }
     }
 
-    override fun recordSnapshot(snapshot: UiSnapshot) {
-        delegate.recordSnapshot(snapshot)
+    override fun recordScreenState(screenState: ScreenState) {
+        delegate.recordScreenState(screenState)
         val runId = currentRunIdProvider() ?: return
-        runCatching { artifactStore.recordSnapshot(runId, snapshot) }
+        runCatching { artifactStore.recordScreenState(runId, screenState) }
     }
 
     override fun recordScriptExecution(execution: ScriptExecutionRecord) {
@@ -278,7 +277,7 @@ class ArtifactSessionLogStore(
         runCatching { artifactStore.recordHostCall(runId, hostCall) }
     }
 
-    override fun recentSnapshots(): List<UiSnapshot> = delegate.recentSnapshots()
+    override fun recentScreenStates(): List<ScreenState> = delegate.recentScreenStates()
 
     override fun recentHostCalls(): List<HostCallRecord> = delegate.recentHostCalls()
 }

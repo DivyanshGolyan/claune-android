@@ -48,19 +48,46 @@ data class HostCallRecord(
 data class HostCallOutcome(val ok: Boolean, val message: String, val data: JsonElement? = null)
 
 @Serializable
-data class UiSnapshotPayload(
-    val snapshotId: String,
-    val capturedAt: String,
+data class ScreenObservationPayload(
+    val mode: String,
+    val reason: String,
+    val baselineSnapshotId: String? = null,
+    val currentSnapshotId: String,
     val foregroundPackage: String,
-    val visibleText: List<String>,
-    val actionableElements: List<UiElementPayload>,
-    val focusedElementId: String? = null,
-    val windowCandidates: List<WindowCandidatePayload> = emptyList(),
     val selectedWindowReason: String? = null,
+    val baselineMissing: Boolean = false,
+    val stats: ScreenDiffStatsPayload,
+    val canonicalText: String? = null,
+    val diff: String? = null,
 )
 
 @Serializable
+data class ScreenDiffStatsPayload(
+    val additions: Int,
+    val removals: Int,
+    val unchanged: Int,
+    val beforeLineCount: Int,
+    val afterLineCount: Int,
+    val changeRatio: Double,
+)
+
+@Serializable
+data class ScreenObserveOptionsPayload(val mode: String = "compact", val includeDiff: Boolean = true)
+
+@Serializable
+data class ScreenDiffOptionsPayload(val baselineSnapshotId: String? = null)
+
+@Serializable
 data class ScreenInspectOptionsPayload(val text: String? = null, val includeAll: Boolean = false, val limit: Int = 20)
+
+@Serializable
+data class RawNodeSearchOptionsPayload(
+    val pattern: String,
+    val flags: String = "i",
+    val fields: List<String> = emptyList(),
+    val limit: Int = 20,
+    val includeContext: Boolean = true,
+)
 
 @Serializable
 data class ScreenInspectionPayload(
@@ -68,16 +95,35 @@ data class ScreenInspectionPayload(
     val capturedAt: String,
     val foregroundPackage: String,
     val query: String? = null,
-    val visibleElements: List<UiElementPayload>,
-    val actionableElements: List<UiElementPayload>,
+    val visibleElements: List<ScreenNodePayload>,
+    val actionableElements: List<ScreenNodePayload>,
     val selectedWindowReason: String? = null,
+)
+
+@Serializable
+data class RawNodeSearchResultPayload(
+    val snapshotId: String,
+    val foregroundPackage: String,
+    val pattern: String,
+    val error: String? = null,
+    val matches: List<RawNodeMatchPayload> = emptyList(),
+)
+
+@Serializable
+data class RawNodeMatchPayload(
+    val node: ScreenNodePayload,
+    val matchedFields: List<String>,
+    val matchedText: String,
+    val nearestActionable: ScreenNodePayload? = null,
+    val ancestorLabels: List<String> = emptyList(),
+    val childLabels: List<String> = emptyList(),
 )
 
 @Serializable
 data class InstalledAppPayload(val label: String, val packageName: String, val activityName: String? = null)
 
 @Serializable
-data class WindowCandidatePayload(
+data class ScreenWindowPayload(
     val packageName: String,
     val className: String? = null,
     val type: String,
@@ -92,8 +138,8 @@ data class WindowCandidatePayload(
 )
 
 @Serializable
-data class UiElementPayload(
-    val id: String,
+data class ScreenNodePayload(
+    val elementId: String,
     val ref: String,
     val role: String,
     val label: String,
@@ -114,6 +160,10 @@ data class UiElementPayload(
     val actions: List<String> = emptyList(),
     val tapFallbackEligible: Boolean = false,
     val clickabilityReason: String = "",
+    val clickableParentDepth: Int? = null,
+    val clickableParentClassName: String? = null,
+    val clickableDescendantPath: String? = null,
+    val clickableDescendantClassName: String? = null,
 )
 
 @Serializable

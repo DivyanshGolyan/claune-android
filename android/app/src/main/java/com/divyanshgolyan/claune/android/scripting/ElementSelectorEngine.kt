@@ -1,15 +1,17 @@
 package com.divyanshgolyan.claune.android.scripting
 
-import com.divyanshgolyan.claune.android.runtime.UiElement
-import com.divyanshgolyan.claune.android.runtime.UiSnapshot
+import com.divyanshgolyan.claune.android.runtime.ScreenNode
+import com.divyanshgolyan.claune.android.runtime.ScreenState
+import com.divyanshgolyan.claune.android.runtime.actionableNodes
+import com.divyanshgolyan.claune.android.runtime.visibleNodes
 import kotlinx.serialization.decodeFromString
 
 internal fun decodeElementSelector(selectorJson: String): ElementSelectorPayload? = runCatching {
     ScriptJson.codec.decodeFromString(ElementSelectorPayload.serializer(), selectorJson)
 }.getOrNull()?.takeIf { it.hasCriteria() }
 
-internal fun selectElement(snapshot: UiSnapshot, selector: ElementSelectorPayload): UiElement? {
-    val rankedMatches = rankedMatches(snapshot, selector)
+internal fun selectElement(screenState: ScreenState, selector: ElementSelectorPayload): ScreenNode? {
+    val rankedMatches = rankedMatches(screenState, selector)
     if (rankedMatches.isEmpty()) {
         return null
     }
@@ -22,9 +24,9 @@ internal fun selectElement(snapshot: UiSnapshot, selector: ElementSelectorPayloa
     return topMatches.singleOrNull()?.first
 }
 
-internal fun selectorFailure(selector: ElementSelectorPayload, snapshot: UiSnapshot): HostCallOutcome {
-    val rankedMatches = rankedMatches(snapshot, selector)
-    val visibleMatches = rankedVisibleMatches(snapshot, selector)
+internal fun selectorFailure(selector: ElementSelectorPayload, screenState: ScreenState): HostCallOutcome {
+    val rankedMatches = rankedMatches(screenState, selector)
+    val visibleMatches = rankedVisibleMatches(screenState, selector)
     return when {
         rankedMatches.isEmpty() ->
             HostCallOutcome(
@@ -55,7 +57,7 @@ internal fun selectorFailure(selector: ElementSelectorPayload, snapshot: UiSnaps
                 buildString {
                     append("Selector matched multiple elements. Refine the selector or set first=true.")
                     val candidates = rankedMatches.take(3).joinToString(separator = "; ") { (element, _) ->
-                        "ref=${element.ref}, label=${element.label.ifBlank { "<blank>" }}, id=${element.id}"
+                        "ref=${element.ref}, label=${element.label.ifBlank { "<blank>" }}, id=${element.elementId}"
                     }
                     if (candidates.isNotBlank()) {
                         append(" Top candidates: ")
@@ -67,24 +69,18 @@ internal fun selectorFailure(selector: ElementSelectorPayload, snapshot: UiSnaps
     }
 }
 
-internal fun UiElement.matches(selector: ElementSelectorPayload): Boolean = selector.matchScore(this) != null
+internal fun ScreenNode.matches(selector: ElementSelectorPayload): Boolean = selector.matchScore(this) != null
 
-internal fun UiElement.isSearchLike(): Boolean {
-    val candidates = listOfNotNull(label, text, contentDescription, resourceId, className)
-    return candidates.any { candidate ->
-        candidate.contains("search", ignoreCase = true)
-    }
-}
+private fun rankedMatches(screenState: ScreenState, selector: ElementSelectorPayload): List<Pair<ScreenNode, Int>> =
+    screenState.actionableNodes()
+        .mapNotNull { element ->
+            selector.matchScore(element)?.let { score -> element to score }
+        }
+        .sortedByDescending { (_, score) -> score }
 
-private fun rankedMatches(snapshot: UiSnapshot, selector: ElementSelectorPayload): List<Pair<UiElement, Int>> = snapshot.actionableElements
-    .mapNotNull { element ->
-        selector.matchScore(element)?.let { score -> element to score }
-    }
-    .sortedByDescending { (_, score) -> score }
-
-private fun rankedVisibleMatches(snapshot: UiSnapshot, selector: ElementSelectorPayload): List<Pair<UiElement, Int>> =
-    snapshot.visibleElements
-        .filterNot { visible -> snapshot.actionableElements.any { it.id == visible.id } }
+private fun rankedVisibleMatches(screenState: ScreenState, selector: ElementSelectorPayload): List<Pair<ScreenNode, Int>> =
+    screenState.visibleNodes()
+        .filterNot { visible -> screenState.actionableNodes().any { it.elementId == visible.elementId } }
         .mapNotNull { element ->
             selector.matchScore(element)?.let { score -> element to score }
         }
@@ -100,7 +96,7 @@ private fun ElementSelectorPayload.hasCriteria(): Boolean = listOf(
 ).any { !it.isNullOrBlank() } ||
     listOf(clickable, focusable, editable, focused, enabled, checked, selected, scrollable).any { it != null }
 
-private fun ElementSelectorPayload.matchScore(element: UiElement): Int? {
+private fun ElementSelectorPayload.matchScore(element: ScreenNode): Int? {
     if (ref != null && ref != element.ref) {
         return null
     }
@@ -165,7 +161,7 @@ private fun ElementSelectorPayload.matchScore(element: UiElement): Int? {
     return score
 }
 
-private fun UiElement.textMatchScore(target: String, textExact: Boolean): Int? {
+private fun ScreenNode.textMatchScore(target: String, textExact: Boolean): Int? {
     val exactCandidates = listOfNotNull(label.takeIf { it.isNotBlank() }, text, contentDescription)
     val hasExact = exactCandidates.any { it.equals(target, ignoreCase = false) }
     if (textExact) {
@@ -193,7 +189,7 @@ private fun UiElement.textMatchScore(target: String, textExact: Boolean): Int? {
     }
 }
 
-private fun UiElement.matchesTextCandidate(target: String, textExact: Boolean, candidate: String?): Boolean {
+private fun ScreenNode.matchesTextCandidate(target: String, textExact: Boolean, candidate: String?): Boolean {
     val safeCandidate = candidate?.takeIf { it.isNotBlank() } ?: return false
     return if (textExact) {
         safeCandidate == target

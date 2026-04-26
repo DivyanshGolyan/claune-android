@@ -11,7 +11,7 @@ class QuickJsScriptRuntimeTest {
         val unsupported =
             ScriptSourceValidator.firstUnsupportedFeature(
                 """
-                const screen = claune.observePhone();
+                const screen = claune.observeScreen();
                 console.log(screen.foregroundPackage);
                 return {};
                 """.trimIndent(),
@@ -57,7 +57,7 @@ class QuickJsScriptRuntimeTest {
         val unsupported =
             ScriptSourceValidator.firstUnsupportedFeature(
                 """
-                const screen = claune.observePhone();
+                const screen = claune.observeScreen();
                 claune.pressHome();
                 return { foregroundPackage: screen.foregroundPackage };
                 """.trimIndent(),
@@ -82,6 +82,8 @@ class QuickJsScriptRuntimeTest {
         assertTrue(declarations.contains("focusable?: boolean;"))
         assertTrue(declarations.contains("type Bounds = [number, number, number, number];"))
         assertTrue(declarations.contains("interface ScreenInspection"))
+        assertTrue(declarations.contains("interface RawNodeSearchResult"))
+        assertTrue(declarations.contains("findRawNodes(options: RawNodeSearchOptions): RawNodeSearchResult;"))
         assertTrue(declarations.contains("center: [number, number];"))
         assertTrue(declarations.contains("clickabilityReason: string;"))
         assertTrue(declarations.contains("inspectScreen(options: ScreenInspectOptions): ScreenInspection;"))
@@ -95,8 +97,9 @@ class QuickJsScriptRuntimeTest {
         assertTrue(declarations.contains("scrollScreen(direction: \"up\" | \"down\"): HostSuccessOutcome;"))
         assertTrue(declarations.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
         assertTrue(bootstrap.contains("globalThis.claune = Object.freeze"))
-        assertTrue(bootstrap.contains("return JSON.parse(__clauneObservePhoneJson());"))
+        assertTrue(bootstrap.contains("return JSON.parse(__clauneObserveScreenJson(JSON.stringify(options ?? {})));"))
         assertTrue(bootstrap.contains("return JSON.parse(__clauneInspectScreenJson(JSON.stringify(options ?? {})));"))
+        assertTrue(bootstrap.contains("return JSON.parse(__clauneFindRawNodesJson(JSON.stringify(options ?? {})));"))
         assertTrue(bootstrap.contains("return JSON.parse(__clauneListInstalledAppsJson());"))
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"launchApp\", __clauneLaunchAppJson(String(packageName)));"))
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"tapText\", __clauneTapTextJson(String(text), Boolean(exact ?? true)));"))

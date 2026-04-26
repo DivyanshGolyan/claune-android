@@ -6,11 +6,11 @@ import com.divyanshgolyan.claune.android.runtime.ActionResult
 import com.divyanshgolyan.claune.android.runtime.ElementRef
 import com.divyanshgolyan.claune.android.runtime.PhoneActuator
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
+import com.divyanshgolyan.claune.android.runtime.ScreenNode
+import com.divyanshgolyan.claune.android.runtime.ScreenState
+import com.divyanshgolyan.claune.android.runtime.ScreenWindow
 import com.divyanshgolyan.claune.android.runtime.ScrollDirection
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
-import com.divyanshgolyan.claune.android.runtime.UiElement
-import com.divyanshgolyan.claune.android.runtime.UiSnapshot
-import com.divyanshgolyan.claune.android.runtime.WindowCandidate
 import java.nio.file.Files
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
@@ -24,29 +24,13 @@ import org.junit.Test
 
 class ScriptHostTest {
     @Test
-    fun `observePhone returns snapshot payload and records snapshot`() = runTest {
+    fun `observeScreen returns screen observation payload and records screen state`() = runTest {
         val logStore = InMemorySessionLogStore()
         val coordinator = testSessionCoordinator(logStore)
-        val snapshot =
-            UiSnapshot(
-                snapshotId = "snapshot-1",
-                capturedAt = Instant.parse("2026-04-16T00:00:00Z"),
-                foregroundPackage = "com.android.settings",
-                visibleText = listOf("Settings"),
-                actionableElements =
-                listOf(
-                    UiElement(
-                        id = "el-1",
-                        role = "button",
-                        label = "Wi-Fi",
-                        clickable = true,
-                        editable = false,
-                        focused = false,
-                        bounds = listOf(0, 0, 100, 100),
-                    ),
-                ),
-                focusedElementId = null,
-            )
+        val snapshot = snapshot(
+            packageName = "com.android.settings",
+            elements = listOf(element(id = "el-1", label = "Wi-Fi")),
+        )
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
@@ -56,12 +40,12 @@ class ScriptHostTest {
                 logStore = logStore,
             )
 
-        val payload = host.observePhone()
+        val payload = host.observeScreen("{}")
 
         assertEquals("com.android.settings", payload.foregroundPackage)
-        assertEquals(1, payload.actionableElements.size)
-        assertEquals("el-1", payload.actionableElements.first().ref)
-        assertEquals(1, logStore.recentSnapshots().size)
+        assertEquals("snapshot", payload.currentSnapshotId)
+        assertTrue(payload.canonicalText.orEmpty().contains("Wi-Fi"))
+        assertEquals(1, logStore.recentScreenStates().size)
     }
 
     @Test
@@ -203,9 +187,9 @@ class ScriptHostTest {
                     listOf(
                         snapshot(
                             packageName = "com.divyanshgolyan.claune.android",
-                            windowCandidates =
+                            windows =
                             listOf(
-                                WindowCandidate(
+                                ScreenWindow(
                                     packageName = "in.swiggy.android",
                                     className = "android.widget.FrameLayout",
                                     type = "APPLICATION",
@@ -421,10 +405,120 @@ class ScriptHostTest {
 
         assertEquals("Auto ride", inspection.query)
         assertEquals(1, inspection.visibleElements.size)
-        assertEquals("rapido-auto-text", inspection.visibleElements.single().id)
+        assertEquals("rapido-auto-text", inspection.visibleElements.single().elementId)
         assertEquals(listOf(540, 1280), inspection.visibleElements.single().center)
         assertEquals("visible_non_actionable", inspection.visibleElements.single().clickabilityReason)
         assertTrue(inspection.visibleElements.single().tapFallbackEligible)
+    }
+
+    @Test
+    fun `inspectScreen honors requested limit and ranks actionable leaves before large ancestors`() = runTest {
+        val rootContainer =
+            element(
+                id = "bottom-sheet",
+                ref = "sheet",
+                label = "Bottom Sheet",
+                role = "control",
+                clickable = false,
+                bounds = listOf(0, 0, 1080, 2400),
+            )
+        val usefulButton =
+            element(
+                id = "book",
+                ref = "book",
+                label = "Book ride",
+                text = "Book ride",
+                bounds = listOf(44, 2100, 1036, 2228),
+                actions = listOf("ACTION_CLICK"),
+            )
+        val filler = (1..25).map { index ->
+            element(
+                id = "filler-$index",
+                ref = "filler-$index",
+                label = "Filler $index",
+                clickable = false,
+                bounds = listOf(0, 100 + index, 1080, 2400),
+            )
+        }
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = emptyList(),
+                            visibleElements = listOf(rootContainer, usefulButton) + filler,
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val inspection = host.inspectScreen("""{"limit":25}""")
+
+        assertEquals(25, inspection.visibleElements.size)
+        assertEquals("book", inspection.visibleElements.first().elementId)
+    }
+
+    @Test
+    fun `findRawNodes searches latest screen and returns nearest actionable target`() = runTest {
+        val reasonText =
+            element(
+                id = "reason-text",
+                ref = "reason-text",
+                label = "Driver not getting closer",
+                text = "Driver not getting closer",
+                clickable = false,
+                bounds = listOf(80, 1420, 900, 1480),
+            ).copy(path = listOf(0, 0))
+        val reasonRow =
+            element(
+                id = "reason-row",
+                ref = "reason-row",
+                label = "Cancellation reason row",
+                role = "button",
+                clickable = true,
+                bounds = listOf(0, 1397, 1080, 1529),
+                children = listOf(reasonText),
+            )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(elements = emptyList(), visibleElements = listOf(reasonRow)))),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.findRawNodes("""{"pattern":"driver.*closer","limit":5}""")
+
+        assertEquals("snapshot", result.snapshotId)
+        assertEquals(null, result.error)
+        assertEquals(1, result.matches.size)
+        assertEquals("reason-text", result.matches.single().node.elementId)
+        assertEquals(listOf("label", "text"), result.matches.single().matchedFields)
+        assertEquals("reason-row", result.matches.single().nearestActionable?.elementId)
+        assertTrue(result.matches.single().ancestorLabels.contains("Cancellation reason row"))
+    }
+
+    @Test
+    fun `findRawNodes returns bounded error for invalid regex`() = runTest {
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot())),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.findRawNodes("""{"pattern":"["}""")
+
+        assertTrue(result.error.orEmpty().contains("invalid regex"))
+        assertTrue(result.matches.isEmpty())
     }
 
     @Test
@@ -494,8 +588,7 @@ class ScriptHostTest {
         val result = host.typeIntoFocused("apple")
 
         assertTrue(result.ok)
-        assertEquals("search-box", actuator.lastTyped?.first?.elementId)
-        assertEquals("apple", actuator.lastTyped?.second)
+        assertEquals("apple", actuator.lastTypedFocused)
     }
 
     @Test
@@ -542,8 +635,7 @@ class ScriptHostTest {
 
         assertTrue(result.ok)
         assertEquals("search-wrapper", actuator.lastTapped?.elementId)
-        assertEquals("search-input", actuator.lastTyped?.first?.elementId)
-        assertEquals("oranges", actuator.lastTyped?.second)
+        assertEquals("oranges", actuator.lastTypedFocused)
     }
 
     @Test
@@ -786,22 +878,39 @@ class ScriptHostTest {
 
     private fun snapshot(
         packageName: String = "com.example.app",
-        elements: List<UiElement> = listOf(element()),
-        visibleElements: List<UiElement> = elements,
+        elements: List<ScreenNode> = listOf(element()),
+        visibleElements: List<ScreenNode> = elements,
         focusedElementId: String? = null,
-        windowCandidates: List<WindowCandidate> = emptyList(),
+        windows: List<ScreenWindow> = emptyList(),
         selectedWindowReason: String? = null,
-    ): UiSnapshot = UiSnapshot(
-        snapshotId = "snapshot",
-        capturedAt = Instant.parse("2026-04-16T00:00:00Z"),
-        foregroundPackage = packageName,
-        visibleText = listOf("Alpha"),
-        actionableElements = elements,
-        visibleElements = visibleElements,
-        focusedElementId = focusedElementId,
-        windowCandidates = windowCandidates,
-        selectedWindowReason = selectedWindowReason,
-    )
+    ): ScreenState {
+        val children = (visibleElements + elements)
+            .distinctBy { it.elementId }
+            .mapIndexed { index, node ->
+                node.copy(
+                    path = listOf(index),
+                    focused = node.focused || node.elementId == focusedElementId,
+                )
+            }
+        val root = element(
+            id = "root",
+            ref = "root",
+            label = "Root",
+            role = "root",
+            clickable = false,
+            bounds = listOf(0, 0, 1080, 2400),
+            children = children,
+            visibleToUser = true,
+        )
+        return ScreenState(
+            snapshotId = "snapshot",
+            capturedAt = Instant.parse("2026-04-16T00:00:00Z").toString(),
+            foregroundPackage = packageName,
+            root = root,
+            windows = windows,
+            selectedWindowReason = selectedWindowReason,
+        )
+    }
 
     private fun element(
         id: String = "el-1",
@@ -818,12 +927,16 @@ class ScriptHostTest {
         actions: List<String> = emptyList(),
         tapFallbackEligible: Boolean = false,
         clickabilityReason: String = "",
-    ): UiElement = UiElement(
-        id = id,
+        children: List<ScreenNode> = emptyList(),
+        visibleToUser: Boolean = true,
+    ): ScreenNode = ScreenNode(
+        path = emptyList(),
         ref = ref,
+        elementId = id,
         role = role,
         label = label,
         text = text,
+        visibleToUser = visibleToUser,
         clickable = clickable,
         focusable = focusable,
         editable = editable,
@@ -833,6 +946,7 @@ class ScriptHostTest {
         actions = actions,
         tapFallbackEligible = tapFallbackEligible,
         clickabilityReason = clickabilityReason,
+        children = children,
     )
 }
 
@@ -842,10 +956,10 @@ private fun testSessionCoordinator(logStore: InMemorySessionLogStore): SessionCo
     return SessionCoordinator(logStore, store)
 }
 
-private class FakePhoneObserver(private val snapshots: List<UiSnapshot>) : PhoneObserver {
+private class FakePhoneObserver(private val snapshots: List<ScreenState>) : PhoneObserver {
     private var index = 0
 
-    override suspend fun captureSnapshot(): UiSnapshot {
+    override suspend fun captureScreenState(): ScreenState {
         val resolvedIndex = index.coerceAtMost(snapshots.lastIndex)
         val snapshot = snapshots[resolvedIndex]
         if (index < snapshots.lastIndex) {
@@ -863,6 +977,7 @@ private class FakePhoneActuator(
     var lastTapped: ElementRef? = null
     var lastTappedPoint: Pair<Int, Int>? = null
     var lastTyped: Pair<ElementRef, String>? = null
+    var lastTypedFocused: String? = null
     var lastScrolled: Pair<ElementRef, ScrollDirection>? = null
 
     override suspend fun tap(target: ElementRef): ActionResult {
@@ -877,6 +992,11 @@ private class FakePhoneActuator(
 
     override suspend fun type(target: ElementRef, text: String): ActionResult {
         lastTyped = target to text
+        return typeResult
+    }
+
+    override suspend fun typeFocused(text: String): ActionResult {
+        lastTypedFocused = text
         return typeResult
     }
 

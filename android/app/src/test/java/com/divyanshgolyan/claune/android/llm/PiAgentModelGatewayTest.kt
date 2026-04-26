@@ -1,6 +1,7 @@
 package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.BuildConfig
+import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.llm.tools.AskUserArguments
 import com.divyanshgolyan.claune.android.llm.tools.AskUserToolDefinition
@@ -18,9 +19,10 @@ import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
 import com.divyanshgolyan.claune.android.runtime.QuestionAnswer
 import com.divyanshgolyan.claune.android.runtime.QuestionAnswerKind
-import com.divyanshgolyan.claune.android.runtime.UiElement
-import com.divyanshgolyan.claune.android.runtime.UiSnapshot
+import com.divyanshgolyan.claune.android.runtime.ScreenNode
+import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.UserQuestionPrompter
+import com.divyanshgolyan.claune.android.runtime.buildScreenObservation
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionResult
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
@@ -46,7 +48,7 @@ class PiAgentModelGatewayTest {
                     persistentSessionPath = null,
                     persistentSessionId = null,
                     userMessage = "Open Wi-Fi settings",
-                    snapshot = snapshot(),
+                    screenObservation = screenObservation(),
                     recentEvents = listOf("Run started", "Observed Settings app"),
                 ),
             )
@@ -54,11 +56,11 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("Open Wi-Fi settings"))
         assertTrue(prompt.contains("Current request:"))
         assertTrue(prompt.contains("Run started"))
-        assertTrue(prompt.contains("Last known phone snapshot before your next action:"))
-        assertTrue(prompt.contains("This snapshot may already be stale. Observe the phone yourself before acting."))
-        assertTrue(prompt.contains("lastKnownForegroundPackage: com.android.settings"))
-        assertTrue(prompt.contains("ref=el-1, role=button, label=Wi-Fi"))
-        assertTrue(prompt.contains("idForIdOnlyApis=el-1"))
+        assertTrue(prompt.contains("Last known phone screen before your next action:"))
+        assertTrue(prompt.contains("This observation may already be stale. Observe the screen yourself before acting."))
+        assertTrue(prompt.contains("foregroundPackage: com.android.settings"))
+        assertTrue(prompt.contains("ref=el-1"))
+        assertTrue(prompt.contains("label=\"Wi-Fi\""))
     }
 
     @Test
@@ -70,7 +72,7 @@ class PiAgentModelGatewayTest {
                     persistentSessionPath = null,
                     persistentSessionId = null,
                     userMessage = "Find the current weather",
-                    snapshot = snapshot(packageName = BuildConfig.APPLICATION_ID),
+                    screenObservation = screenObservation(snapshot(packageName = BuildConfig.APPLICATION_ID)),
                     recentEvents = emptyList(),
                 ),
             )
@@ -134,7 +136,7 @@ class PiAgentModelGatewayTest {
                     persistentSessionPath = null,
                     persistentSessionId = null,
                     userMessage = "Open Settings",
-                    snapshot = snapshot(),
+                    screenObservation = screenObservation(),
                     recentEvents = emptyList(),
                 ),
                 ModelTurnOutput.Completion("Opened Settings."),
@@ -148,7 +150,8 @@ class PiAgentModelGatewayTest {
     }
 
     @Test
-    fun `execute script tool returns runtime result plus post action snapshot`() = runTest {
+    fun `execute script tool returns runtime result plus post action observation`() = runTest {
+        val logStore = InMemorySessionLogStore()
         val toolSet =
             ExecuteScriptToolDefinition(
                 scriptRuntime = FakeScriptRuntime(
@@ -159,6 +162,7 @@ class PiAgentModelGatewayTest {
                     ),
                 ),
                 phoneObserver = FakePhoneObserver(snapshot(snapshotId = "after-script")),
+                logStore = logStore,
             )
 
         val encoded =
@@ -174,7 +178,8 @@ class PiAgentModelGatewayTest {
 
         assertTrue(payload.ok)
         assertEquals("Script completed with 1 host call.", payload.summary)
-        assertEquals("after-script", payload.postActionSnapshot.snapshotId)
+        assertEquals("after-script", payload.postActionObservation.currentSnapshotId)
+        assertEquals("after-script", logStore.recentScreenStates().single().snapshotId)
         assertEquals("opened_settings", payload.scriptData?.jsonObject?.get("step")?.toString()?.trim('"'))
     }
 
@@ -324,32 +329,49 @@ class PiAgentModelGatewayTest {
         assertEquals("Updated memory.md.", (result.content.single() as pi.ai.core.TextContent).text)
     }
 
-    private fun snapshot(snapshotId: String = "snapshot-1", packageName: String = "com.android.settings"): UiSnapshot = UiSnapshot(
-        snapshotId = snapshotId,
-        capturedAt = Instant.parse("2026-04-16T00:00:00Z"),
-        foregroundPackage = packageName,
-        visibleText = listOf("Settings", "Wi-Fi"),
-        actionableElements = listOf(
-            UiElement(
-                id = "el-1",
-                role = "button",
-                label = "Wi-Fi",
-                clickable = true,
-                editable = false,
-                focused = false,
-                bounds = listOf(0, 0, 100, 100),
-            ),
-        ),
-        focusedElementId = null,
-    )
+    private fun screenObservation(screenState: ScreenState = snapshot()) = buildScreenObservation(null, screenState)
+
+    private fun snapshot(snapshotId: String = "snapshot-1", packageName: String = "com.android.settings"): ScreenState {
+        val wifi = ScreenNode(
+            path = listOf(0),
+            ref = "el-1",
+            elementId = "el-1",
+            role = "button",
+            label = "Wi-Fi",
+            visibleToUser = true,
+            clickable = true,
+            editable = false,
+            focused = false,
+            bounds = listOf(0, 0, 100, 100),
+        )
+        val root = ScreenNode(
+            path = emptyList(),
+            ref = "root",
+            elementId = "root",
+            role = "root",
+            label = "Settings",
+            visibleToUser = true,
+            clickable = false,
+            editable = false,
+            focused = false,
+            bounds = listOf(0, 0, 1080, 2400),
+            children = listOf(wifi),
+        )
+        return ScreenState(
+            snapshotId = snapshotId,
+            capturedAt = Instant.parse("2026-04-16T00:00:00Z").toString(),
+            foregroundPackage = packageName,
+            root = root,
+        )
+    }
 }
 
 private class FakeScriptRuntime(private val result: ScriptExecutionResult) : ScriptRuntime {
     override suspend fun execute(request: ScriptExecutionRequest): ScriptExecutionResult = result
 }
 
-private class FakePhoneObserver(private val snapshot: UiSnapshot) : PhoneObserver {
-    override suspend fun captureSnapshot(): UiSnapshot = snapshot
+private class FakePhoneObserver(private val snapshot: ScreenState) : PhoneObserver {
+    override suspend fun captureScreenState(): ScreenState = snapshot
 }
 
 private class FakeMemoryStore(private var content: String) : MemoryStore {
