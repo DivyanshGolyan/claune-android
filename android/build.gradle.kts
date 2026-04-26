@@ -10,23 +10,6 @@ plugins {
     alias(libs.plugins.ktlint) apply false
 }
 
-val vendoredProjects =
-    setOf(
-        ":pi-ai-core",
-        ":pi-agent-core",
-        ":pi-coding-agent-core",
-    )
-
-configure(subprojects.filter { it.path in vendoredProjects }) {
-    pluginManager.withPlugin("org.jlleitschuh.gradle.ktlint") {
-        tasks.configureEach {
-            if (name == "loadKtlintReporters" || name.startsWith("ktlint") || name.startsWith("runKtlint")) {
-                enabled = false
-            }
-        }
-    }
-}
-
 tasks.register("qualityCheck") {
     group = "verification"
     description = "Runs the prototype code quality gates."
