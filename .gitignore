@@ -6,3 +6,4 @@ android/.kotlin/
 android/local.properties
 android/**/build/
 docs/packages/
+artifacts/
