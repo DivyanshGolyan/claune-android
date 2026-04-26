@@ -1,6 +1,6 @@
 # Claune Android
 
-Claune Android is a prototype Android app for a phone-control agent. The user gives it a task by voice or text, and the app runs an agent on the phone that observes and controls the real device through Android accessibility APIs.
+Claune Android is a prototype app for a phone-control agent. The user gives it a task by voice or text, and the app runs an agent on the phone. The agent observes and controls the real device through Android accessibility APIs.
 
 This repo is for local development, live demos, and debugging on a known Android 12+ device. It is not a distribution build.
 
@@ -12,12 +12,12 @@ This repo is for local development, live demos, and debugging on a known Android
 - Foreground service for active agent work.
 - AccessibilityService bridge for phone observation and actions.
 - Accessibility overlay for status, steering, stopping, and replying while Claune is working over other apps.
-- Persistent session history through the vendored `pi-agent-kotlin` session model.
+- Persistent session history through `pi-agent-kotlin`.
 - One active foreground run at a time. A user can keep a session and send later follow-up tasks into it.
-- Model execution backed by vendored `pi-agent-kotlin` and Anthropic.
+- Model execution backed by the published `pi-agent-kotlin` `0.1.0` artifacts, with Anthropic and Gemini model options.
 - `execute_script` as the only model-facing phone-control tool.
 - Run-outcome and user-decision tools for `finish_run` and `ask_user`.
-- Memory reflection after completed or blocked turns, with `read_memory` and `edit_memory` tools for durable updates.
+- Memory reflection after completed or blocked turns, with `read_memory` and `edit_memory` tools for saved notes.
 - Local run artifacts under app storage: prompts, snapshots, script calls, agent messages, events, and memory-reflection output.
 
 ## Boundaries
@@ -31,31 +31,30 @@ This repo is for local development, live demos, and debugging on a known Android
 ## Repository layout
 
 - `android/app`: the Android app, foreground service, accessibility service, overlay, runtime shell, UI, tests, and local storage.
-- `android/vendor/pi-agent-kotlin/pi-ai-core`: vendored AI model/provider primitives.
-- `android/vendor/pi-agent-kotlin/pi-agent-core`: vendored agent runtime primitives.
-- `android/vendor/pi-agent-kotlin/pi-coding-agent-core`: vendored session, compaction, and transcript model used by Claune sessions.
+- `android/gradle/libs.versions.toml`: dependency versions, including the published `pi-ai-core`, `pi-agent-core`, and `pi-coding-agent-core` artifacts.
 - `docs/`: architecture and stack notes for the current prototype direction.
 
 ## Requirements
 
-- macOS or Linux with Android platform tools.
+- macOS or Linux, with Android platform tools.
 - JDK 17.
 - Android Studio or the Android SDK installed locally.
-- A connected Android device or emulator. Current testing targets Android 12 / API 31 or newer.
-- An Anthropic API key.
+- A connected Android device or emulator. The current test device is Android 12 / API 31 or newer.
+- An API key for the model you want to run: Anthropic for Claude Haiku, or Gemini for `gemini-3.1-flash-lite-preview`.
 - Accessibility access enabled for Claune before phone control will work.
 - Microphone permission if you want voice input.
 
 ## Setup
 
-Create `android/local.properties` if it does not exist, then add your local Android SDK path and, optionally, a development API key:
+Create `android/local.properties` if it does not exist, then add your local Android SDK path. You can also add development API keys there:
 
 ```properties
 sdk.dir=/path/to/android/sdk
 claune.anthropicApiKey=sk-ant-...
+claune.geminiApiKey=...
 ```
 
-You can also add or replace the API key from the app's Settings screen. The build still reads `claune.anthropicApiKey` as a local development default.
+You can also add or replace API keys from the app's Settings screen. The build still reads the `claune.*ApiKey` values as local development defaults.
 
 Install a debug build:
 
@@ -67,7 +66,7 @@ cd android
 On the device:
 
 1. Open Claune.
-2. Add the API key in Settings if it was not provided through `local.properties`.
+2. Add the API key for your selected model in Settings if it was not provided through `local.properties`.
 3. Open Android Accessibility settings from the app and enable Claune.
 4. Grant microphone permission when prompted, if you use voice input.
 
@@ -111,7 +110,7 @@ Check whether Claune's accessibility service is enabled:
 adb shell settings get secure enabled_accessibility_services
 ```
 
-If Droidrun Portal is installed on the same device, its content provider is useful for reading the current phone state while debugging:
+If Droidrun Portal is installed on the same device, its content provider can show the current phone state while debugging:
 
 ```sh
 adb shell content query --uri content://com.droidrun.portal/phone_state
@@ -119,7 +118,7 @@ adb shell content query --uri content://com.droidrun.portal/phone_state
 
 ## Current agent contract
 
-The model should observe and act through `execute_script`. The JavaScript host exposes the `claune` API for phone observation, tapping, typing, scrolling, back/home, and waiting for UI state. The model should not invent raw Android objects or stale element ids.
+The model should observe and act through `execute_script`. The JavaScript host exposes the `claune` API for phone observation, tapping, typing, scrolling, back/home, and waiting for UI state. The model should not invent raw Android objects or reuse stale element ids.
 
 When a run ends, the model records one terminal outcome through a tool call:
 
@@ -131,9 +130,4 @@ Completed or blocked runs do not close the user-owned session by themselves. The
 
 ## Status
 
-This is a personal prototype repo with no public support process yet. There is no root license file at the moment; the vendored `pi-agent-kotlin` subtree keeps its own license and changelog.
-
-## Docs
-
-- [V1 architecture](./docs/v1-architecture.md)
-- [Recommended stack](./docs/recommended-stack.md)
+This is a personal prototype repo with no public support process yet. There is no root license file at the moment.
