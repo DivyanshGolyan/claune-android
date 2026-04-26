@@ -4,6 +4,14 @@ Claune Android is a prototype app for a phone-control agent. The user gives it a
 
 This repo is for local development, live demos, and debugging on a known Android 12+ device. It is not a distribution build.
 
+## Demo
+
+<a href="https://youtube.com/shorts/VFWJvzwVIco">
+  <img src="docs/assets/claune-ride-demo-thumbnail.jpg" alt="Watch Claune Android compare ride options and ask before booking" width="360" />
+</a>
+
+[Watch the demo on YouTube Shorts](https://youtube.com/shorts/VFWJvzwVIco)
+
 ## Current state
 
 - Jetpack Compose app with a soft-kraft UI, a session list, a session detail screen, and settings.
