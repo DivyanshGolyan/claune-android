@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -132,6 +133,13 @@ dependencies {
 
 tasks.named("check") {
     dependsOn("ktlintCheck", "lintDebug")
+}
+
+tasks.withType<Test>().configureEach {
+    System.getProperties()
+        .stringPropertyNames()
+        .filter { it.startsWith("claune.projection.") }
+        .forEach { name -> systemProperty(name, System.getProperty(name)) }
 }
 
 tasks.matching { it.name in setOf("assembleDebug", "installDebug") }.configureEach {

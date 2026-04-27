@@ -26,7 +26,7 @@ This repo is for local development, live demos, and debugging on a known Android
 - `execute_script` as the only model-facing phone-control tool.
 - Run-outcome and user-decision tools for `finish_run` and `ask_user`.
 - Memory reflection after completed or blocked turns, with `read_memory` and `edit_memory` tools for saved notes.
-- Local run artifacts under app storage: prompts, snapshots, script calls, agent messages, events, and memory-reflection output.
+- Local run artifacts under app storage: prompts, compact screen records, latest raw screen state, script calls, agent messages, events, and memory-reflection output.
 
 ## Boundaries
 
@@ -132,6 +132,18 @@ If Droidrun Portal is installed on the same device, its content provider can sho
 
 ```sh
 adb shell content query --uri content://com.droidrun.portal/phone_state
+```
+
+Benchmark the interaction projection against a real persisted phone snapshot:
+
+```sh
+scripts/run_projection_benchmark.sh --pull
+```
+
+The script pulls the latest `latest-screen-state.json` from the newest on-device run and replays it through `ScreenState.toInteractionObservationPayload()` in a local JVM test. It writes a JSON report to `android/build/reports/projection-benchmark.json`. Override the input or sample count with:
+
+```sh
+CLAUNE_PROJECTION_FIXTURE=/path/to/latest-screen-state.json CLAUNE_PROJECTION_ITERATIONS=50 scripts/run_projection_benchmark.sh
 ```
 
 ## Current agent contract
