@@ -16,11 +16,13 @@ import com.divyanshgolyan.claune.android.runtime.ActionResult
 import com.divyanshgolyan.claune.android.runtime.ElementRef
 import com.divyanshgolyan.claune.android.runtime.PhoneActuator
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
+import com.divyanshgolyan.claune.android.runtime.ScreenCaptureMetrics
 import com.divyanshgolyan.claune.android.runtime.ScreenNode
 import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.ScreenWindow
 import com.divyanshgolyan.claune.android.runtime.ScrollDirection
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
+import com.divyanshgolyan.claune.android.runtime.elapsedMs
 import java.time.Instant
 import java.util.Locale
 import kotlin.coroutines.resume
@@ -65,8 +67,12 @@ class AccessibilityBridge(
         KEYBOARD_PACKAGE_PREFIXES.none(packageName::startsWith)
 
     override suspend fun captureScreenState(): ScreenState {
+        val totalStarted = System.nanoTime()
         val activeService = service
-        val rootSelection = selectRoot(activeService)
+        val stats = CaptureStats()
+        val selectRootStarted = System.nanoTime()
+        val rootSelection = selectRoot(activeService, stats)
+        val selectRootMs = elapsedMs(selectRootStarted)
         val root = rootSelection?.root
         if (activeService == null || root == null) {
             return ScreenState(
@@ -76,6 +82,12 @@ class AccessibilityBridge(
                 root = null,
                 windows = rootSelection?.windows.orEmpty(),
                 selectedWindowReason = rootSelection?.reason,
+                metrics = stats.toScreenCaptureMetrics(
+                    totalMs = elapsedMs(totalStarted),
+                    selectRootMs = selectRootMs,
+                    buildRootNodeMs = 0,
+                    windowCount = rootSelection?.windows.orEmpty().size,
+                ),
             )
         }
 
@@ -84,14 +96,23 @@ class AccessibilityBridge(
                 ?.toString()
                 .orEmpty()
                 .ifBlank { "unknown" }
+        val buildRootStarted = System.nanoTime()
+        val rootNode = root.toScreenNode(packageName = packageName, path = emptyList(), stats = stats)
+        val buildRootMs = elapsedMs(buildRootStarted)
 
         return ScreenState(
             snapshotId = "snapshot-${System.currentTimeMillis()}",
             capturedAt = Instant.now().toString(),
             foregroundPackage = packageName,
-            root = root.toScreenNode(packageName = packageName, path = emptyList()),
+            root = rootNode,
             windows = rootSelection.windows,
             selectedWindowReason = rootSelection.reason,
+            metrics = stats.toScreenCaptureMetrics(
+                totalMs = elapsedMs(totalStarted),
+                selectRootMs = selectRootMs,
+                buildRootNodeMs = buildRootMs,
+                windowCount = rootSelection.windows.size,
+            ),
         )
     }
 
@@ -162,7 +183,7 @@ class AccessibilityBridge(
             packageName = root.packageName?.toString().orEmpty().ifBlank { "unknown" },
             node = node,
             path = findNodePath(root, node).orEmpty(),
-            label = deriveElementLabel(node),
+            label = deriveElementOwnLabel(node),
         )
         return typeIntoNode(node, elementId, text)
     }
@@ -230,34 +251,85 @@ class AccessibilityBridge(
     }
 
     fun captureDebugScreenState(): ScreenState? {
-        val rootSelection = selectRoot(service) ?: return null
+        val totalStarted = System.nanoTime()
+        val stats = CaptureStats(detailedTiming = true)
+        val selectRootStarted = System.nanoTime()
+        val rootSelection = selectRoot(service, stats) ?: return null
+        val selectRootMs = elapsedMs(selectRootStarted)
         val root = rootSelection.root
         val packageName = root.packageName?.toString().orEmpty().ifBlank { "unknown" }
+        val buildRootStarted = System.nanoTime()
+        val rootNode = root.toScreenNode(packageName = packageName, path = emptyList(), stats = stats)
+        val buildRootMs = elapsedMs(buildRootStarted)
         return ScreenState(
             snapshotId = "snapshot-${System.currentTimeMillis()}",
             capturedAt = Instant.now().toString(),
             foregroundPackage = packageName,
-            root = root.toScreenNode(packageName = packageName, path = emptyList()),
+            root = rootNode,
             windows = rootSelection.windows,
             selectedWindowReason = rootSelection.reason,
+            metrics = stats.toScreenCaptureMetrics(
+                totalMs = elapsedMs(totalStarted),
+                selectRootMs = selectRootMs,
+                buildRootNodeMs = buildRootMs,
+                windowCount = rootSelection.windows.size,
+            ),
         )
     }
 
-    private fun AccessibilityNodeInfo.toScreenNode(packageName: String, path: List<Int>): ScreenNode {
-        val bounds = visibleSnapshotBounds()
-        val ownText = text?.toString()?.trim().orEmpty().ifBlank { null }
-        val ownContentDescription = contentDescription?.toString()?.trim().orEmpty().ifBlank { null }
-        val label = deriveElementLabel(this).orEmpty()
-        val actions = actionNames()
-        val clickableParent = findClickableParent(this)
-        val clickableDescendant = findClickableDescendantWithPath(this)
+    private fun AccessibilityNodeInfo.toScreenNode(
+        packageName: String,
+        path: List<Int>,
+        stats: CaptureStats,
+        clickableAncestor: ClickableAncestor? = null,
+    ): ScreenNode {
+        stats.nodeCount += 1
+        stats.maxDepth = maxOf(stats.maxDepth, path.size)
+        val bounds = stats.measureBounds { visibleSnapshotBounds() }
+        if (bounds != null) {
+            stats.visibleNodeCount += 1
+        }
+        val properties = stats.measurePropertyRead { snapshotProperties() }
+        val ownText = properties.text
+        val ownContentDescription = properties.contentDescription
+        val actions = stats.measureActions { actionNames() }
+        val className = properties.className
+        val clickable = properties.clickable
+        val nextClickableAncestor =
+            if (clickable) {
+                ClickableAncestor(depth = 1, className = className)
+            } else {
+                clickableAncestor?.forChild()
+            }
         val children =
-            buildList {
-                for (index in 0 until childCount) {
-                    val child = getChild(index) ?: continue
-                    add(child.toScreenNode(packageName = packageName, path = path + index))
+            if (path.isNotEmpty() && bounds == null) {
+                emptyList()
+            } else {
+                buildList {
+                    val childCount = stats.measureChildAccess { childCount }
+                    for (index in 0 until childCount) {
+                        val child = stats.measureChildAccess { getChild(index) } ?: continue
+                        add(
+                            child.toScreenNode(
+                                packageName = packageName,
+                                path = path + index,
+                                stats = stats,
+                                clickableAncestor = nextClickableAncestor,
+                            ),
+                        )
+                    }
                 }
             }
+        val label = stats.measureLabel {
+            deriveSnapshotLabel(
+                ownText = ownText,
+                ownContentDescription = ownContentDescription,
+                resourceId = properties.resourceId,
+                className = className,
+                children = children,
+            )
+        }.orEmpty()
+        val clickableDescendant = stats.measureClickability { children.firstClickableDescendantSummary(path) }
         return ScreenNode(
             path = path,
             ref = buildElementRef(path),
@@ -266,27 +338,33 @@ class AccessibilityBridge(
             label = label,
             text = ownText,
             contentDescription = ownContentDescription,
-            resourceId = viewIdResourceName,
-            className = className?.toString(),
-            packageName = this.packageName?.toString(),
+            resourceId = properties.resourceId,
+            className = className,
+            packageName = properties.packageName,
             visibleToUser = bounds != null,
-            clickable = isClickable,
-            focusable = isFocusable,
-            editable = isEditable,
-            focused = isFocused,
-            enabled = isEnabled,
-            checked = isChecked,
-            selected = isSelected,
-            scrollable = isScrollable,
-            importantForAccessibility = isImportantForAccessibility,
-            bounds = bounds ?: boundsRect(),
+            clickable = clickable,
+            focusable = properties.focusable,
+            editable = properties.editable,
+            focused = properties.focused,
+            enabled = properties.enabled,
+            checked = properties.checked,
+            selected = properties.selected,
+            scrollable = properties.scrollable,
+            importantForAccessibility = properties.importantForAccessibility,
+            bounds = bounds ?: stats.measureBounds { boundsRect() },
             actions = actions,
-            tapFallbackEligible = isEnabled && bounds?.size == 4,
-            clickabilityReason = clickabilityReason(isClickable, isFocusable, isEditable, isScrollable, actions),
-            clickableParentDepth = clickableParent?.first,
-            clickableParentClassName = clickableParent?.second?.className?.toString(),
-            clickableDescendantPath = clickableDescendant?.first,
-            clickableDescendantClassName = clickableDescendant?.second?.className?.toString(),
+            tapFallbackEligible = properties.enabled && bounds?.size == 4,
+            clickabilityReason = clickabilityReason(
+                clickable = clickable,
+                focusable = properties.focusable,
+                editable = properties.editable,
+                scrollable = properties.scrollable,
+                actions = actions,
+            ),
+            clickableParentDepth = clickableAncestor?.depth,
+            clickableParentClassName = clickableAncestor?.className,
+            clickableDescendantPath = clickableDescendant?.path,
+            clickableDescendantClassName = clickableDescendant?.className,
             children = children,
         )
     }
@@ -299,25 +377,34 @@ class AccessibilityBridge(
 
     private fun currentRoot(activeService: ClauneAccessibilityService?): AccessibilityNodeInfo? = selectRoot(activeService)?.root
 
-    private fun selectRoot(activeService: ClauneAccessibilityService?): RootSelection? {
+    private fun selectRoot(activeService: ClauneAccessibilityService?, stats: CaptureStats? = null): RootSelection? {
         if (activeService == null) {
             return null
         }
 
-        val candidates =
-            activeService.windows.orEmpty()
-                .mapNotNull { window -> window.root?.let { root -> RootCandidate.from(window, root) } }
+        val windows = stats.measureRootWindowEnumerationIfPresent { activeService.windows.orEmpty() }
+        val windowCandidates = stats.measureRootCandidateBuildIfPresent {
+            windows
+                .mapNotNull { window ->
+                    val root = stats.measureRootCandidateWindowRootIfPresent { window.root } ?: return@mapNotNull null
+                    RootCandidate.from(window, root)
+                }
                 .distinctBy { candidate ->
                     listOf(
                         candidate.packageName,
                         candidate.className.orEmpty(),
                         candidate.root.windowId,
                     ).joinToString("|")
-                }.ifEmpty {
+                }
+        }
+        val candidates =
+            windowCandidates.ifEmpty {
+                stats.measureActiveRootFallbackIfPresent {
                     activeService.rootInActiveWindow?.let { root ->
                         listOf(RootCandidate.fromActiveRoot(root))
                     }.orEmpty()
                 }
+            }
 
         if (candidates.isEmpty()) {
             return null
@@ -327,14 +414,20 @@ class AccessibilityBridge(
             sessionCoordinator.uiState.value.foregroundServiceRunning &&
                 !sessionCoordinator.uiState.value.appInForeground
 
-        val selected =
+        val selectedCandidate = stats.measureRootCandidateScoringIfPresent {
             candidates
                 .maxWithOrNull(
                     compareBy<RootCandidate> { candidate ->
                         candidate.selectionScore(preferExternalWindow)
                     }.thenBy { candidate -> candidate.layer },
                 )
-                ?: return null
+        } ?: return null
+        val selected =
+            if (selectedCandidate.packageName == SYSTEM_UI_PACKAGE) {
+                stats.measureRootCandidateAnalysisIfPresent { selectedCandidate.withContentSummary() }
+            } else {
+                selectedCandidate
+            }
         val reason =
             when {
                 selected.isBareSystemNavigationRoot() ->
@@ -348,22 +441,28 @@ class AccessibilityBridge(
         return RootSelection(
             root = selected.root,
             reason = reason,
-            windows = candidates.map {
-                it.toScreenWindow(
-                    selected = it === selected,
-                    reason = if (it ===
-                        selected
-                    ) {
-                        reason
-                    } else {
-                        null
-                    },
-                )
+            windows = stats.measureRootWindowPayloadIfPresent {
+                candidates.map {
+                    val candidate = if (it === selectedCandidate) selected else it
+                    candidate.toScreenWindow(
+                        selected = it === selectedCandidate,
+                        reason = if (it ===
+                            selectedCandidate
+                        ) {
+                            reason
+                        } else {
+                            null
+                        },
+                    )
+                }
             },
         )
     }
 
     private fun findNodeByElementId(node: AccessibilityNodeInfo, elementId: String): AccessibilityNodeInfo? {
+        parseElementPath(elementId)?.let { path ->
+            findNodeByPath(node, path)?.let { return it }
+        }
         val packageName = node.packageName?.toString().orEmpty().ifBlank { "unknown" }
         return findNodeByElementId(
             node = node,
@@ -379,7 +478,7 @@ class AccessibilityBridge(
         elementId: String,
         path: List<Int>,
     ): AccessibilityNodeInfo? {
-        val label = deriveElementLabel(node)
+        val label = deriveElementOwnLabel(node)
         if (buildElementId(packageName, node, path, label) == elementId) {
             return node
         }
@@ -393,6 +492,14 @@ class AccessibilityBridge(
         }
 
         return null
+    }
+
+    private fun findNodeByPath(root: AccessibilityNodeInfo, path: List<Int>): AccessibilityNodeInfo? {
+        var current = root
+        path.forEach { index ->
+            current = current.getChild(index) ?: return null
+        }
+        return current
     }
 
     private fun findNodeByElementDescriptor(root: AccessibilityNodeInfo, elementId: String): AccessibilityNodeInfo? {
@@ -461,6 +568,11 @@ class AccessibilityBridge(
         collectVisibleText(node, candidates, limit = DESCENDANT_TEXT_LIMIT)
         return candidates.firstOrNull { it.isNotBlank() }
     }
+
+    private fun deriveElementOwnLabel(node: AccessibilityNodeInfo): String? =
+        listOf(node.text, node.contentDescription, node.viewIdResourceName, node.className)
+            .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotBlank) }
+            .firstOrNull()
 
     private fun collectVisibleText(node: AccessibilityNodeInfo, collector: MutableSet<String>, limit: Int) {
         if (collector.size >= limit) {
@@ -648,6 +760,151 @@ private fun boundsListCenterY(bounds: List<Int>): Int = (bounds[1] + bounds[3]) 
 
 private data class RootSelection(val root: AccessibilityNodeInfo, val reason: String, val windows: List<ScreenWindow>)
 
+private data class NodeProperties(
+    val text: String?,
+    val contentDescription: String?,
+    val resourceId: String?,
+    val className: String?,
+    val packageName: String?,
+    val clickable: Boolean,
+    val focusable: Boolean,
+    val editable: Boolean,
+    val focused: Boolean,
+    val enabled: Boolean,
+    val checked: Boolean,
+    val selected: Boolean,
+    val scrollable: Boolean,
+    val importantForAccessibility: Boolean,
+)
+
+private fun AccessibilityNodeInfo.snapshotProperties(): NodeProperties = NodeProperties(
+    text = text?.toString()?.trim().orEmpty().ifBlank { null },
+    contentDescription = contentDescription?.toString()?.trim().orEmpty().ifBlank { null },
+    resourceId = viewIdResourceName,
+    className = className?.toString(),
+    packageName = packageName?.toString(),
+    clickable = isClickable,
+    focusable = isFocusable,
+    editable = isEditable,
+    focused = isFocused,
+    enabled = isEnabled,
+    checked = isChecked,
+    selected = isSelected,
+    scrollable = isScrollable,
+    importantForAccessibility = isImportantForAccessibility,
+)
+
+private data class ClickableAncestor(val depth: Int, val className: String?) {
+    fun forChild(): ClickableAncestor = copy(depth = depth + 1)
+}
+
+private data class ClickableDescendantSummary(val path: String, val className: String?)
+
+private class CaptureStats(private val detailedTiming: Boolean = false) {
+    var nodeCount: Int = 0
+    var visibleNodeCount: Int = 0
+    var maxDepth: Int = 0
+    var nodeBoundsNs: Long = 0
+    var nodeLabelNs: Long = 0
+    var nodeActionsNs: Long = 0
+    var nodeClickabilityNs: Long = 0
+    var nodePropertyReadNs: Long = 0
+    var nodeChildAccessNs: Long = 0
+    var rootWindowEnumerationNs: Long = 0
+    var rootCandidateBuildNs: Long = 0
+    var rootCandidateWindowRootNs: Long = 0
+    var rootCandidateAnalysisNs: Long = 0
+    var rootCandidateScoringNs: Long = 0
+    var rootWindowPayloadNs: Long = 0
+    var activeRootFallbackNs: Long = 0
+
+    inline fun <T> measureBounds(block: () -> T): T = measureInto({ nodeBoundsNs += it }, block)
+
+    inline fun <T> measureLabel(block: () -> T): T = measureInto({ nodeLabelNs += it }, block)
+
+    inline fun <T> measureActions(block: () -> T): T = measureInto({ nodeActionsNs += it }, block)
+
+    inline fun <T> measureClickability(block: () -> T): T = measureInto({ nodeClickabilityNs += it }, block)
+
+    inline fun <T> measurePropertyRead(block: () -> T): T = measureInto({ nodePropertyReadNs += it }, block)
+
+    inline fun <T> measureChildAccess(block: () -> T): T = measureInto({ nodeChildAccessNs += it }, block)
+
+    inline fun <T> measureRootWindowEnumeration(block: () -> T): T = measureInto({ rootWindowEnumerationNs += it }, block)
+
+    inline fun <T> measureRootCandidateBuild(block: () -> T): T = measureInto({ rootCandidateBuildNs += it }, block)
+
+    inline fun <T> measureRootCandidateWindowRoot(block: () -> T): T = measureInto({ rootCandidateWindowRootNs += it }, block)
+
+    inline fun <T> measureRootCandidateAnalysis(block: () -> T): T = measureInto({ rootCandidateAnalysisNs += it }, block)
+
+    inline fun <T> measureRootCandidateScoring(block: () -> T): T = measureInto({ rootCandidateScoringNs += it }, block)
+
+    inline fun <T> measureRootWindowPayload(block: () -> T): T = measureInto({ rootWindowPayloadNs += it }, block)
+
+    inline fun <T> measureActiveRootFallback(block: () -> T): T = measureInto({ activeRootFallbackNs += it }, block)
+
+    private inline fun <T> measureInto(add: (Long) -> Unit, block: () -> T): T {
+        if (!detailedTiming) {
+            return block()
+        }
+        val started = System.nanoTime()
+        try {
+            return block()
+        } finally {
+            add(System.nanoTime() - started)
+        }
+    }
+}
+
+private fun CaptureStats.toScreenCaptureMetrics(
+    totalMs: Long,
+    selectRootMs: Long,
+    buildRootNodeMs: Long,
+    windowCount: Int,
+): ScreenCaptureMetrics = ScreenCaptureMetrics(
+    totalMs = totalMs,
+    selectRootMs = selectRootMs,
+    buildRootNodeMs = buildRootNodeMs,
+    windowCount = windowCount,
+    nodeCount = nodeCount,
+    visibleNodeCount = visibleNodeCount,
+    maxDepth = maxDepth,
+    nodeBoundsMs = nanosToMs(nodeBoundsNs),
+    nodeLabelMs = nanosToMs(nodeLabelNs),
+    nodeActionsMs = nanosToMs(nodeActionsNs),
+    nodeClickabilityMs = nanosToMs(nodeClickabilityNs),
+    nodePropertyReadMs = nanosToMs(nodePropertyReadNs),
+    nodeChildAccessMs = nanosToMs(nodeChildAccessNs),
+    rootWindowEnumerationMs = nanosToMs(rootWindowEnumerationNs),
+    rootCandidateBuildMs = nanosToMs(rootCandidateBuildNs),
+    rootCandidateWindowRootMs = nanosToMs(rootCandidateWindowRootNs),
+    rootCandidateAnalysisMs = nanosToMs(rootCandidateAnalysisNs),
+    rootCandidateScoringMs = nanosToMs(rootCandidateScoringNs),
+    rootWindowPayloadMs = nanosToMs(rootWindowPayloadNs),
+    activeRootFallbackMs = nanosToMs(activeRootFallbackNs),
+)
+
+private inline fun <T> CaptureStats?.measureRootWindowEnumerationIfPresent(block: () -> T): T =
+    this?.measureRootWindowEnumeration(block) ?: block()
+
+private inline fun <T> CaptureStats?.measureRootCandidateBuildIfPresent(block: () -> T): T =
+    this?.measureRootCandidateBuild(block) ?: block()
+
+private inline fun <T> CaptureStats?.measureRootCandidateWindowRootIfPresent(block: () -> T): T =
+    this?.measureRootCandidateWindowRoot(block) ?: block()
+
+private inline fun <T> CaptureStats?.measureRootCandidateAnalysisIfPresent(block: () -> T): T =
+    this?.measureRootCandidateAnalysis(block) ?: block()
+
+private inline fun <T> CaptureStats?.measureRootCandidateScoringIfPresent(block: () -> T): T =
+    this?.measureRootCandidateScoring(block) ?: block()
+
+private inline fun <T> CaptureStats?.measureRootWindowPayloadIfPresent(block: () -> T): T = this?.measureRootWindowPayload(block) ?: block()
+
+private inline fun <T> CaptureStats?.measureActiveRootFallbackIfPresent(block: () -> T): T =
+    this?.measureActiveRootFallback(block) ?: block()
+
 private data class RootCandidate(
     val root: AccessibilityNodeInfo,
     val packageName: String,
@@ -663,8 +920,6 @@ private data class RootCandidate(
 ) {
     fun selectionScore(preferExternalWindow: Boolean): Int {
         var score = boundsArea() / 100_000
-        score += actionableElementCount.coerceAtMost(40) * 3
-        score += visibleText.size.coerceAtMost(20) * 2
         if (active) score += 40
         if (focused) score += 50
         if (type == AccessibilityWindowInfo.TYPE_APPLICATION) score += 500
@@ -674,6 +929,14 @@ private data class RootCandidate(
         if (type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) score -= 9_000
         if (isBareSystemNavigationRoot()) score -= 10_000
         return score
+    }
+
+    fun withContentSummary(): RootCandidate {
+        val summary = analyzeWindowContent(root)
+        return copy(
+            visibleText = summary.visibleText,
+            actionableElementCount = summary.actionableElementCount,
+        )
     }
 
     fun isBareSystemNavigationRoot(): Boolean = packageName == SYSTEM_UI_PACKAGE &&
@@ -716,8 +979,8 @@ private data class RootCandidate(
                 active = window.isActive,
                 focused = window.isFocused,
                 bounds = windowBounds.toBoundsList().ifEmpty { root.boundsRect() },
-                visibleText = collectWindowText(root),
-                actionableElementCount = countActionableElements(root),
+                visibleText = emptyList(),
+                actionableElementCount = 0,
             )
         }
 
@@ -731,53 +994,96 @@ private data class RootCandidate(
             active = true,
             focused = root.isFocused,
             bounds = root.boundsRect(),
-            visibleText = collectWindowText(root),
-            actionableElementCount = countActionableElements(root),
+            visibleText = emptyList(),
+            actionableElementCount = 0,
         )
 
-        private fun collectWindowText(root: AccessibilityNodeInfo): List<String> {
-            val values = linkedSetOf<String>()
-            collectWindowText(root, values)
-            return values.toList()
+        private fun analyzeWindowContent(root: AccessibilityNodeInfo): WindowContentSummary {
+            val summary = MutableWindowContentSummary()
+            collectWindowContent(root, summary)
+            return WindowContentSummary(
+                visibleText = summary.visibleText.toList(),
+                actionableElementCount = summary.actionableElementCount,
+            )
         }
 
-        private fun collectWindowText(node: AccessibilityNodeInfo, collector: MutableSet<String>) {
-            if (collector.size >= WINDOW_TEXT_LIMIT) {
+        private fun collectWindowContent(node: AccessibilityNodeInfo, summary: MutableWindowContentSummary) {
+            if (summary.isComplete()) {
                 return
             }
 
-            if (node.visibleSnapshotBounds() != null) {
+            val bounds = node.visibleSnapshotBounds()
+            if (bounds != null) {
                 listOf(node.text, node.contentDescription)
                     .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotBlank) }
                     .forEach { value ->
-                        if (collector.size < WINDOW_TEXT_LIMIT) {
-                            collector += value
+                        if (summary.visibleText.size < WINDOW_TEXT_LIMIT) {
+                            summary.visibleText += value
                         }
                     }
+                if (summary.actionableElementCount < WINDOW_ACTIONABLE_COUNT_LIMIT &&
+                    (node.isClickable || node.isEditable || node.isScrollable)
+                ) {
+                    summary.actionableElementCount += 1
+                }
             }
             for (index in 0 until node.childCount) {
-                if (collector.size >= WINDOW_TEXT_LIMIT) {
+                if (summary.isComplete()) {
                     return
                 }
-                node.getChild(index)?.let { collectWindowText(it, collector) }
+                node.getChild(index)?.let { child -> collectWindowContent(child, summary) }
             }
-        }
-
-        private fun countActionableElements(node: AccessibilityNodeInfo): Int {
-            var count =
-                if (node.visibleSnapshotBounds() != null && (node.isClickable || node.isEditable || node.isScrollable)) {
-                    1
-                } else {
-                    0
-                }
-            for (index in 0 until node.childCount) {
-                node.getChild(index)?.let { child ->
-                    count += countActionableElements(child)
-                }
-            }
-            return count
         }
     }
+}
+
+private data class WindowContentSummary(val visibleText: List<String>, val actionableElementCount: Int)
+
+private class MutableWindowContentSummary {
+    val visibleText: MutableSet<String> = linkedSetOf()
+    var actionableElementCount: Int = 0
+
+    fun isComplete(): Boolean = visibleText.size >= WINDOW_TEXT_LIMIT && actionableElementCount >= WINDOW_ACTIONABLE_COUNT_LIMIT
+}
+
+private fun deriveSnapshotLabel(
+    ownText: String?,
+    ownContentDescription: String?,
+    resourceId: String?,
+    className: String?,
+    children: List<ScreenNode>,
+): String? = listOfNotNull(
+    ownText,
+    ownContentDescription,
+    children.firstDescendantVisibleText(),
+    resourceId,
+    className,
+).firstOrNull { it.isNotBlank() }
+
+private fun List<ScreenNode>.firstDescendantVisibleText(): String? {
+    forEach { child ->
+        if (child.visibleToUser) {
+            listOf(child.text, child.contentDescription, child.label)
+                .filterNotNull()
+                .firstOrNull { it.isNotBlank() }
+                ?.let { return it }
+        }
+        child.children.firstDescendantVisibleText()?.let { return it }
+    }
+    return null
+}
+
+private fun List<ScreenNode>.firstClickableDescendantSummary(parentPath: List<Int>): ClickableDescendantSummary? {
+    forEach { child ->
+        if (child.clickable) {
+            return ClickableDescendantSummary(
+                path = child.path.drop(parentPath.size).joinToString(separator = "_"),
+                className = child.className,
+            )
+        }
+        child.children.firstClickableDescendantSummary(parentPath)?.let { return it }
+    }
+    return null
 }
 
 private fun AccessibilityWindowInfo.typeLabel(): String = when (type) {
@@ -798,6 +1104,19 @@ private fun Rect.toBoundsList(): List<Int> = if (isEmpty()) {
 private fun Int.coerceIntoBounds(min: Int, maxExclusive: Int): Int {
     val upper = (maxExclusive - 1).coerceAtLeast(min)
     return coerceIn(min, upper)
+}
+
+private fun nanosToMs(nanos: Long): Long = nanos / 1_000_000
+
+private fun parseElementPath(elementId: String): List<Int>? {
+    val rawPath = elementId.substringAfterLast('|', missingDelimiterValue = "")
+    if (rawPath.isBlank()) {
+        return emptyList()
+    }
+    if (!rawPath.matches(Regex("\\d+(?:_\\d+)*"))) {
+        return null
+    }
+    return rawPath.split('_').mapNotNull { value -> value.toIntOrNull() }.takeIf { it.isNotEmpty() }
 }
 
 private fun accessibilityActionName(id: Int): String = when (id) {
@@ -824,6 +1143,7 @@ private fun accessibilityActionName(id: Int): String = when (id) {
 
 private const val MAX_PARENT_CLICK_SEARCH_DEPTH = 5
 private const val WINDOW_TEXT_LIMIT = 8
+private const val WINDOW_ACTIONABLE_COUNT_LIMIT = 41
 private const val RESOURCE_ID_MARKER = ":id/"
 private val KEYBOARD_PACKAGE_PREFIXES =
     listOf(
