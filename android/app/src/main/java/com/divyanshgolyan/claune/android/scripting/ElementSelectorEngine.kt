@@ -55,7 +55,7 @@ internal fun selectorFailure(selector: ElementSelectorPayload, screenState: Scre
                 ok = false,
                 message =
                 buildString {
-                    append("Selector matched multiple elements. Refine the selector or set first=true.")
+                    append("Selector matched multiple elements. Refine the selector or set first=true; for tapText, use { first: true }.")
                     val candidates = rankedMatches.take(3).joinToString(separator = "; ") { (element, _) ->
                         "ref=${element.ref}, label=${element.label.ifBlank { "<blank>" }}, id=${element.elementId}"
                     }

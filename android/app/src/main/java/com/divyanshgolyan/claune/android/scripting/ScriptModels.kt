@@ -47,18 +47,39 @@ data class HostCallRecord(
 @Serializable
 data class HostCallOutcome(val ok: Boolean, val message: String, val data: JsonElement? = null)
 
+const val SCREEN_MODE_INTERACTIONS = "interactions"
+const val SCREEN_MODE_FULL_SNAPSHOT = "full_snapshot"
+const val SCREEN_MODE_COMPACT_SNAPSHOT = "compact_snapshot"
+const val ACTION_KIND_CLICK = "click"
+const val ACTION_KIND_TYPE = "type"
+const val ACTION_KIND_SCROLL = "scroll"
+const val FALLBACK_METHOD_PERFORM_ACTION = "performAction"
+const val FALLBACK_METHOD_CLICKABLE_PARENT = "clickableParent"
+const val FALLBACK_METHOD_TYPE_FOCUSED = "typeFocused"
+const val FALLBACK_METHOD_SCROLL = "scroll"
+const val FALLBACK_METHOD_TAP_CENTER = "tapCenter"
+
 @Serializable
 data class ScreenObservationPayload(
     val mode: String,
     val reason: String,
     val baselineSnapshotId: String? = null,
     val currentSnapshotId: String,
+    val snapshotId: String = currentSnapshotId,
+    val capturedAt: String? = null,
     val foregroundPackage: String,
     val selectedWindowReason: String? = null,
     val baselineMissing: Boolean = false,
     val stats: ScreenDiffStatsPayload,
     val canonicalText: String? = null,
     val diff: String? = null,
+    val windows: List<ScreenWindowPayload> = emptyList(),
+    val selectedWindow: ScreenWindowPayload? = null,
+    val summaryText: String? = null,
+    val elements: List<VisibleElementPayload> = emptyList(),
+    val groups: List<VisibleGroupPayload> = emptyList(),
+    val actions: List<ActionAffordancePayload> = emptyList(),
+    val diagnostics: InteractionDiagnosticsPayload? = null,
 )
 
 @Serializable
@@ -72,7 +93,7 @@ data class ScreenDiffStatsPayload(
 )
 
 @Serializable
-data class ScreenObserveOptionsPayload(val mode: String = "compact", val includeDiff: Boolean = true)
+data class ScreenObserveOptionsPayload(val mode: String = SCREEN_MODE_INTERACTIONS, val includeDiff: Boolean = true)
 
 @Serializable
 data class ScreenDiffOptionsPayload(val baselineSnapshotId: String? = null)
@@ -164,6 +185,98 @@ data class ScreenNodePayload(
     val clickableParentClassName: String? = null,
     val clickableDescendantPath: String? = null,
     val clickableDescendantClassName: String? = null,
+)
+
+@Serializable
+data class VisibleElementPayload(
+    val id: String,
+    val ref: String,
+    val elementId: String,
+    val normalizedLabel: String,
+    val textFields: ElementTextFieldsPayload,
+    val role: String,
+    val className: String? = null,
+    val resourceId: String? = null,
+    val bounds: List<Int>,
+    val center: List<Int>,
+    val state: ElementStatePayload,
+    val visibility: VisibilityEvidencePayload,
+    val rawRefs: List<String>,
+    val groupIds: List<String> = emptyList(),
+)
+
+@Serializable
+data class ElementTextFieldsPayload(
+    val label: String? = null,
+    val text: String? = null,
+    val contentDescription: String? = null,
+    val resourceId: String? = null,
+    val className: String? = null,
+)
+
+@Serializable
+data class ElementStatePayload(
+    val enabled: Boolean = true,
+    val checked: Boolean = false,
+    val selected: Boolean = false,
+    val focused: Boolean = false,
+    val editable: Boolean = false,
+    val scrollable: Boolean = false,
+    val clickable: Boolean = false,
+    val focusable: Boolean = false,
+)
+
+@Serializable
+data class VisibilityEvidencePayload(
+    val a11yVisibleToUser: Boolean,
+    val hasNonEmptyBounds: Boolean,
+    val intersectsSelectedWindow: Boolean,
+    val visibleAreaRatio: Double,
+    val selectedWindow: Boolean,
+    val occlusion: String = "unknown",
+    val confidence: Double,
+)
+
+@Serializable
+data class VisibleGroupPayload(
+    val id: String,
+    val role: String,
+    val labelSummary: String,
+    val bounds: List<Int>,
+    val elementIds: List<String>,
+    val actionIds: List<String>,
+    val parentGroupId: String? = null,
+    val childGroupIds: List<String> = emptyList(),
+    val confidence: Double,
+    val evidence: List<String>,
+)
+
+@Serializable
+data class ActionAffordancePayload(
+    val id: String,
+    val label: String,
+    val kind: String,
+    val bounds: List<Int>,
+    val center: List<Int>,
+    val enabled: Boolean,
+    val targetRef: String,
+    val targetElementId: String,
+    val equivalentRefs: List<String>,
+    val fallbackMethod: String,
+    val scope: ActionScopePayload,
+    val confidence: Double,
+    val evidence: List<String>,
+)
+
+@Serializable
+data class ActionScopePayload(val groupId: String? = null, val elementId: String? = null)
+
+@Serializable
+data class InteractionDiagnosticsPayload(
+    val visibleElementCount: Int,
+    val actionCount: Int,
+    val groupCount: Int,
+    val rawVisibleNodeCount: Int,
 )
 
 @Serializable

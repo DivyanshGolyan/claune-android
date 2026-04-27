@@ -63,14 +63,18 @@ internal object SystemPromptBuilder {
             appendLine()
             appendLine("Memory:")
             appendLine("Do not edit memory during the main task. Memory updates happen only in a separate reflection turn.")
+            appendLine(
+                "Treat memory.md as prior evidence, not current proof. Verify the current screen before acting or reporting completion.",
+            )
             appendLine()
             section(
                 "Phone-control invariants:",
                 listOf(
                     "Start each script with observeScreen(), unless returning immediately after a just-observed action.",
+                    "observeScreen() returns the current interaction state by default: visible elements, generic groups, and deduplicated actions.",
                     "Do not trust injected screen observations, stale refs, stale ids, or assumptions as current truth.",
                     "After any UI-changing action, re-observe or use postActionObservation before the next action.",
-                    "Refs and element ids are screen observation-scoped. Never invent them.",
+                    "Action ids, refs, and element ids are screen observation-scoped. Never invent them.",
                     "If a wait, tap, launch, or selector assumption fails, re-observe and adapt instead of repeating it.",
                     "When opening an app and the package is unknown, call listInstalledApps() and launchApp(packageName) instead of using Play Store or guessing package names.",
                     "Prefer the fewest scripts that safely complete the task; one script may observe, act, wait, and return a compact summary.",
@@ -79,14 +83,16 @@ internal object SystemPromptBuilder {
             section(
                 "Element policy:",
                 listOf(
-                    "Prefer visible direct controls by text or label.",
-                    "Use tapText or tapSelector for stable named controls.",
-                    "Use tapRef only for a fresh unlabeled control from the current screen observation.",
-                    "If text is visible but tapText/tapSelector says no actionable element matched, call inspectScreen({ text: \"...\" }) before deciding the target is unreachable.",
+                    "Prefer interaction actions from observeScreen(). Use findGroup, findAction, and performAction before lower-level taps.",
+                    "Use visible groups to bind labels and actions that belong together. For example, find the group containing the item text, then find an action within that group.",
+                    "Use tapText, tapSelector, or tapRef only when the interaction state lacks a usable action.",
+                    "When duplicate text matches are acceptable after inspection, call tapText(\"label\", { first: true }); do not pass true as a stand-in for first.",
+                    "If text is visible but no action is attached, call inspectScreen({ text: \"...\" }) before deciding the target is unreachable.",
                     "If an expected target should exist but observeScreen and inspectScreen do not surface it, call findRawNodes with generic likely terms, such as { pattern: \"book|confirm|request|continue|pay|add to cart\" }, and inspect only the returned matches.",
                     "When findRawNodes returns matches, prefer nearestActionable.ref; otherwise use node.ref only if it is actionable. Use tapBounds(node.bounds) only for an exact visible bounded target.",
                     "Use tapBounds only after inspectScreen shows the exact requested target as a visible bounded element that is not semantically tappable; immediately re-observe and verify the expected screen changed.",
                     "Use ScreenInspection actionableElements[].elementId only for APIs that explicitly require element ids, such as waitForState(\"element\", id, timeoutMs).",
+                    "waitForState accepts strings or JavaScript RegExp values, for example waitForState(\"text\", /continue|search|where to/i, 5000).",
                     "Never select elements by array index.",
                     "Do not substitute unrelated items, screens, or actions just because they are available.",
                 ),
@@ -95,12 +101,14 @@ internal object SystemPromptBuilder {
                 "Coordinate fallback procedure:",
                 listOf(
                     "Goal: use coordinates only to reach the user's exact visible target when accessibility does not expose a semantic tap target.",
-                    "Step 1: Attempt tapText, tapSelector, or tapRef against the fresh screen observation.",
-                    "Step 2: If that fails but target text is visible, call inspectScreen with the exact target text.",
-                    "Step 3: Select a candidate only when its label, text, or contentDescription matches the requested target.",
-                    "Step 4: Call tapBounds(candidate.bounds) only when candidate.tapFallbackEligible is true.",
-                    "Step 5: Immediately call observeScreen and verify a screen change tied to the requested target.",
+                    "Step 1: Use findGroup and findAction on a fresh observeScreen result. Call performAction when a matching action exists.",
+                    "Step 2: If no interaction action exists, attempt tapText, tapSelector, or tapRef against the fresh screen observation.",
+                    "Step 3: If that fails but target text is visible, call inspectScreen with the exact target text.",
+                    "Step 4: Select a candidate only when its label, text, or contentDescription matches the requested target.",
+                    "Step 5: Call tapBounds(candidate.bounds) only when candidate.tapFallbackEligible is true.",
+                    "Step 6: Immediately call observeScreen and verify a screen change tied to the requested target.",
                     "A successful tapPoint or tapBounds return only means Android dispatched the gesture; it is not evidence that the target app accepted it.",
+                    "A successful performAction return also only means the actuator accepted the action. Verify user-level success with a fresh observeScreen().",
                     "Stop and report blocked if inspection shows only unrelated candidates.",
                 ),
             )
@@ -139,12 +147,16 @@ internal object SystemPromptBuilder {
             if (toolGuidelines.isNotEmpty()) {
                 section("Additional tool rules:", toolGuidelines)
             }
-            appendLine("Example observe-and-wait script:")
+            appendLine("Example interaction-action script:")
             appendLine("let screen = claune.observeScreen();")
-            appendLine("claune.tapSelector({ text: \"Target\", first: true });")
-            appendLine("claune.waitForSelector({ text: \"Expected result\", first: true }, 3000);")
+            appendLine("let group = claune.findGroup(screen, { text: \"Target item\", minConfidence: 0.6 });")
+            appendLine(
+                "let action = claune.findAction(group || screen, { label: /^(continue|confirm|add|book)$/i, kind: \"click\", enabled: true });",
+            )
+            appendLine("if (!action) return { stage: \"action_not_found\", groups: screen.groups, actions: screen.actions };")
+            appendLine("claune.performAction(action.id);")
             appendLine("screen = claune.observeScreen();")
-            appendLine("return { stage: \"expected_result_visible\", foregroundPackage: screen.foregroundPackage };")
+            appendLine("return { stage: \"action_performed\", foregroundPackage: screen.foregroundPackage, summary: screen.summaryText };")
             appendLine()
             appendLine("Example visible-bounds fallback script:")
             appendLine("let screen = claune.observeScreen();")

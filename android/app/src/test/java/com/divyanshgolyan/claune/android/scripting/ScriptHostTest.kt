@@ -44,8 +44,51 @@ class ScriptHostTest {
 
         assertEquals("com.android.settings", payload.foregroundPackage)
         assertEquals("snapshot", payload.currentSnapshotId)
-        assertTrue(payload.canonicalText.orEmpty().contains("Wi-Fi"))
+        assertEquals("interactions", payload.mode)
+        assertTrue(payload.summaryText.orEmpty().contains("Wi-Fi"))
+        assertEquals("Wi-Fi", payload.elements.single().normalizedLabel)
         assertEquals(1, logStore.recentScreenStates().size)
+    }
+
+    @Test
+    fun `interaction summary includes visible labels even when they are not actions`() = runTest {
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            packageName = "in.swiggy.android",
+                            elements =
+                            listOf(
+                                element(id = "food", label = "Food", clickable = true, bounds = listOf(22, 316, 259, 510)),
+                                element(
+                                    id = "instamart-label",
+                                    label = "Instamart",
+                                    role = "control",
+                                    clickable = false,
+                                    bounds = listOf(259, 447, 496, 494),
+                                ),
+                                element(
+                                    id = "search",
+                                    label = "Search for products",
+                                    clickable = true,
+                                    bounds = listOf(44, 557, 1036, 694),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val payload = host.observeScreen("{}")
+
+        assertTrue(payload.summaryText.orEmpty().contains("element instamart-label control \"Instamart\""))
+        assertTrue(payload.summaryText.orEmpty().contains("element search button \"Search for products\""))
     }
 
     @Test
@@ -72,8 +115,53 @@ class ScriptHostTest {
 
         val result = host.waitForState(type = "package", value = "com.two.app", timeoutMs = 600)
 
-        assertTrue(result.ok)
+        assertTrue(result.message, result.ok)
         assertEquals("Matched package condition for 'com.two.app'.", result.message)
+    }
+
+    @Test
+    fun `waitForState matches regex package literals`() = runTest {
+        var currentTime = Instant.parse("2026-04-16T00:00:00Z")
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(packageName = "com.mi.android.globallauncher"))),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+                now = { currentTime },
+                sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
+            )
+
+        val result = host.waitForState(type = "package", value = "/launcher|home|global/", timeoutMs = 300)
+
+        assertTrue(result.message, result.ok)
+    }
+
+    @Test
+    fun `waitForState treats simple alternation strings as text regexes`() = runTest {
+        var currentTime = Instant.parse("2026-04-16T00:00:00Z")
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(element(id = "auto", label = "Auto ride", text = "Auto ride")),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+                now = { currentTime },
+                sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
+            )
+
+        val result = host.waitForState(type = "text", value = "Rapido|Auto|Bike", timeoutMs = 300)
+
+        assertTrue(result.ok)
     }
 
     @Test
@@ -331,6 +419,35 @@ class ScriptHostTest {
     }
 
     @Test
+    fun `tapText can choose first duplicate text match explicitly`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped first duplicate."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "wrapper", ref = "e0", label = "Where are you going?", text = "Where are you going?"),
+                                element(id = "button", ref = "e1", label = "Where are you going?", text = "Where are you going?"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.tapText("Where are you going?", exact = true, first = true)
+
+        assertTrue(result.ok)
+        assertEquals("wrapper", actuator.lastTapped?.elementId)
+    }
+
+    @Test
     fun `tapText points to inspectScreen when only a visible non actionable match exists`() = runTest {
         val nonActionable =
             element(
@@ -409,6 +526,148 @@ class ScriptHostTest {
         assertEquals(listOf(540, 1280), inspection.visibleElements.single().center)
         assertEquals("visible_non_actionable", inspection.visibleElements.single().clickabilityReason)
         assertTrue(inspection.visibleElements.single().tapFallbackEligible)
+    }
+
+    @Test
+    fun `observeScreen returns visible interaction groups and deduplicated actions`() = runTest {
+        val label =
+            element(
+                id = "pear-label",
+                ref = "pear-label",
+                label = "Packham Pear - South Africa",
+                clickable = false,
+                bounds = listOf(40, 320, 640, 390),
+            ).copy(path = listOf(0, 0))
+        val addText =
+            element(
+                id = "pear-add-text",
+                ref = "pear-add-text",
+                label = "ADD",
+                clickable = true,
+                bounds = listOf(880, 330, 1020, 410),
+            ).copy(path = listOf(0, 1, 0))
+        val addContainer =
+            element(
+                id = "pear-add",
+                ref = "pear-add",
+                label = "ADD",
+                clickable = true,
+                bounds = listOf(870, 320, 1030, 420),
+                children = listOf(addText),
+            ).copy(path = listOf(0, 1))
+        val row =
+            element(
+                id = "pear-row",
+                ref = "pear-row",
+                label = "Packham Pear row",
+                clickable = false,
+                bounds = listOf(20, 300, 1060, 450),
+                children = listOf(label, addContainer),
+            )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(elements = emptyList(), visibleElements = listOf(row)))),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val payload = host.observeScreen("{}")
+
+        assertEquals("interactions", payload.mode)
+        assertTrue(payload.elements.any { it.normalizedLabel == "Packham Pear - South Africa" })
+        assertEquals(1, payload.actions.count { it.label == "ADD" })
+        val addAction = payload.actions.single { it.label == "ADD" }
+        assertTrue(addAction.equivalentRefs.contains("pear-add"))
+        assertTrue(addAction.equivalentRefs.contains("pear-add-text"))
+        val group = payload.groups.single()
+        assertTrue(group.labelSummary.contains("Packham Pear"))
+        assertTrue(group.actionIds.contains(addAction.id))
+    }
+
+    @Test
+    fun `observeScreen keeps repeated actions distinct with stable ids`() = runTest {
+        fun row(index: Int, name: String, top: Int): ScreenNode {
+            val label = element(
+                id = "item-$index-label",
+                ref = "item-$index-label",
+                label = name,
+                clickable = false,
+                bounds = listOf(40, top, 640, top + 70),
+            ).copy(path = listOf(index, 0))
+            val add = element(
+                id = "item-$index-add",
+                ref = "item-$index-add",
+                label = "ADD",
+                clickable = true,
+                bounds = listOf(880, top, 1020, top + 80),
+            ).copy(path = listOf(index, 1))
+            return element(
+                id = "item-$index-row",
+                ref = "item-$index-row",
+                label = "$name row",
+                clickable = false,
+                bounds = listOf(20, top - 20, 1060, top + 100),
+                children = listOf(label, add),
+            ).copy(path = listOf(index))
+        }
+
+        val screen = snapshot(
+            elements = emptyList(),
+            visibleElements = listOf(
+                row(index = 0, name = "Packham Pear", top = 320),
+                row(index = 1, name = "Banana", top = 520),
+            ),
+        )
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped repeated action."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(screen)),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val actions = host.observeScreen("{}").actions.filter { it.label == "ADD" }
+
+        assertEquals(2, actions.size)
+        assertEquals(2, actions.map { it.id }.distinct().size)
+        assertTrue(actions.all { it.id.startsWith("a_click_") })
+
+        val bananaAction = actions.single { it.targetElementId == "item-1-add" }
+        val result = host.performAction(bananaAction.id)
+
+        assertTrue(result.ok)
+        assertEquals("item-1-add", actuator.lastTapped?.elementId)
+    }
+
+    @Test
+    fun `performAction revalidates current interaction action and taps its target`() = runTest {
+        val add =
+            element(
+                id = "pear-add",
+                ref = "pear-add",
+                label = "ADD",
+                clickable = true,
+                bounds = listOf(870, 320, 1030, 420),
+            )
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped ADD."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(elements = listOf(add)))),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+        val actionId = snapshot(elements = listOf(add)).toInteractionObservationPayload().actions.single().id
+
+        val result = host.performAction(actionId)
+
+        assertTrue(result.ok)
+        assertEquals("pear-add", actuator.lastTapped?.elementId)
     }
 
     @Test

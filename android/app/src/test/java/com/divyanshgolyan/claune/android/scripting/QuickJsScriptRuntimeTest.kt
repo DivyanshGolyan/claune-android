@@ -82,14 +82,24 @@ class QuickJsScriptRuntimeTest {
         assertTrue(declarations.contains("focusable?: boolean;"))
         assertTrue(declarations.contains("type Bounds = [number, number, number, number];"))
         assertTrue(declarations.contains("interface ScreenInspection"))
+        assertTrue(declarations.contains("interface VisibleElement"))
+        assertTrue(declarations.contains("interface VisibleGroup"))
+        assertTrue(declarations.contains("interface ActionAffordance"))
+        assertTrue(declarations.contains("mode?: \"interactions\" | \"compact\" | \"full\";"))
         assertTrue(declarations.contains("interface RawNodeSearchResult"))
         assertTrue(declarations.contains("findRawNodes(options: RawNodeSearchOptions): RawNodeSearchResult;"))
+        assertTrue(declarations.contains("findGroup(screen: ScreenObservation, selector: InteractionSelector): VisibleGroup | null;"))
+        assertTrue(declarations.contains("performAction(actionId: string): HostSuccessOutcome;"))
         assertTrue(declarations.contains("center: [number, number];"))
         assertTrue(declarations.contains("clickabilityReason: string;"))
         assertTrue(declarations.contains("inspectScreen(options: ScreenInspectOptions): ScreenInspection;"))
         assertTrue(declarations.contains("listInstalledApps(): InstalledApp[];"))
         assertTrue(declarations.contains("launchApp(packageName: string): HostSuccessOutcome;"))
-        assertTrue(declarations.contains("tapText(text: string, exact: boolean): HostSuccessOutcome;"))
+        assertTrue(declarations.contains("interface TapTextOptions"))
+        assertTrue(declarations.contains("tapText(text: string, options?: boolean | TapTextOptions, first?: boolean): HostSuccessOutcome;"))
+        assertTrue(
+            declarations.contains("waitForState(type: WaitStateType, value: WaitStateValue, timeoutMs: number): HostSuccessOutcome;"),
+        )
         assertTrue(declarations.contains("tapPoint(x: number, y: number): HostSuccessOutcome;"))
         assertTrue(declarations.contains("tapBounds(bounds: Bounds): HostSuccessOutcome;"))
         assertTrue(declarations.contains("focusSelector(selector: ElementSelector, timeoutMs: number): HostSuccessOutcome;"))
@@ -102,9 +112,16 @@ class QuickJsScriptRuntimeTest {
         assertTrue(bootstrap.contains("return JSON.parse(__clauneFindRawNodesJson(JSON.stringify(options ?? {})));"))
         assertTrue(bootstrap.contains("return JSON.parse(__clauneListInstalledAppsJson());"))
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"launchApp\", __clauneLaunchAppJson(String(packageName)));"))
-        assertTrue(bootstrap.contains("__clauneRequireOutcome(\"tapText\", __clauneTapTextJson(String(text), Boolean(exact ?? true)));"))
+        assertTrue(
+            bootstrap.contains(
+                "__clauneRequireOutcome(\"tapText\", __clauneTapTextJson(String(text), __clauneTapTextExact(options), __clauneTapTextFirst(options, first)));",
+            ),
+        )
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"tapPoint\", __clauneTapPointJson(Number(x), Number(y)));"))
         assertTrue(bootstrap.contains("__clauneRequireOutcome(\"tapBounds\", __clauneTapBoundsJson(JSON.stringify(bounds ?? [])));"))
+        assertTrue(bootstrap.contains("__clauneRequireOutcome(\"performAction\", __claunePerformActionJson(String(actionId)));"))
+        assertTrue(bootstrap.contains("findGroup(screen, selector)"))
+        assertTrue(bootstrap.contains("__clauneLastScreen = screen;"))
         assertTrue(
             bootstrap.contains(
                 "__clauneRequireOutcome(\"focusSelector\", __clauneFocusSelectorJson(JSON.stringify(selector ?? {}), Number(timeoutMs ?? 0)));",

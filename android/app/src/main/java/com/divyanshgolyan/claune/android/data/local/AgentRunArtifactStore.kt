@@ -3,9 +3,15 @@ package com.divyanshgolyan.claune.android.data.local
 import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
+import com.divyanshgolyan.claune.android.runtime.actionableNodes
+import com.divyanshgolyan.claune.android.runtime.elapsedMs
+import com.divyanshgolyan.claune.android.runtime.toCanonicalScreenText
+import com.divyanshgolyan.claune.android.runtime.visibleNodes
 import com.divyanshgolyan.claune.android.scripting.HostCallRecord
+import com.divyanshgolyan.claune.android.scripting.ScreenWindowPayload
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRecord
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
+import com.divyanshgolyan.claune.android.scripting.toPayload
 import java.io.File
 import java.time.Instant
 import kotlinx.serialization.KSerializer
@@ -30,12 +36,16 @@ import pi.ai.core.ToolResultMessage
 import pi.ai.core.UserMessage
 import pi.ai.core.UserMessageContent
 
+private const val MAX_WINDOW_VISIBLE_TEXT_RECORDS = 12
+
 interface AgentRunArtifactStore {
     fun startRun(metadata: RunArtifactMetadata)
 
     fun recordState(state: SessionUiState)
 
     fun recordScreenState(runId: String, screenState: ScreenState)
+
+    fun recordPerfEvent(runId: String, event: PerfEventRecord)
 
     fun recordScriptExecution(runId: String, execution: ScriptExecutionRecord)
 
@@ -63,6 +73,7 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
         Json(ScriptJson.codec) {
             prettyPrint = true
         }
+    private val lineJson = ScriptJson.codec
 
     init {
         rootDir.mkdirs()
@@ -111,11 +122,29 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
 
     @Synchronized
     override fun recordScreenState(runId: String, screenState: ScreenState) {
+        writeJson(
+            runDirectory(runId).resolve(LATEST_SCREEN_STATE_FILE_NAME),
+            ScreenState.serializer(),
+            screenState,
+        )
         appendArray(
             runId = runId,
             fileName = SCREEN_STATES_FILE_NAME,
-            serializer = ScreenState.serializer(),
-            value = screenState,
+            serializer = ScreenStateArtifactRecord.serializer(),
+            value = screenState.toArtifactRecord(),
+            maxEntries = MAX_SCREEN_STATE_RECORDS,
+            resetIfLargerThanBytes = MAX_SCREEN_STATES_FILE_BYTES,
+        )
+    }
+
+    @Synchronized
+    override fun recordPerfEvent(runId: String, event: PerfEventRecord) {
+        appendJsonLine(
+            runId = runId,
+            fileName = PERF_EVENTS_FILE_NAME,
+            serializer = PerfEventRecord.serializer(),
+            value = event.copy(runId = event.runId ?: runId),
+            resetIfLargerThanBytes = MAX_PERF_EVENTS_FILE_BYTES,
         )
     }
 
@@ -213,17 +242,53 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
         writeJson(file, RunArtifactMetadata.serializer(), update(current))
     }
 
-    private fun <T> appendArray(runId: String, fileName: String, serializer: KSerializer<T>, value: T) {
+    private fun <T> appendArray(
+        runId: String,
+        fileName: String,
+        serializer: KSerializer<T>,
+        value: T,
+        maxEntries: Int? = null,
+        resetIfLargerThanBytes: Long? = null,
+    ) {
         val file = runDirectory(runId).resolve(fileName)
         val listSerializer = ListSerializer(serializer)
         val existing =
-            if (file.exists()) {
+            if (resetIfLargerThanBytes != null && file.length() > resetIfLargerThanBytes) {
+                rotateOversizedArtifact(file)
+                mutableListOf()
+            } else if (file.isFile) {
                 json.decodeFromString(listSerializer, file.readText()).toMutableList()
             } else {
                 mutableListOf()
             }
         existing += value
+        if (maxEntries != null) {
+            while (existing.size > maxEntries) {
+                existing.removeAt(0)
+            }
+        }
         writeJson(file, listSerializer, existing)
+    }
+
+    private fun rotateOversizedArtifact(file: File) {
+        val rotated = file.resolveSibling("${file.name}.legacy-${now().toEpochMilli()}")
+        file.renameTo(rotated)
+    }
+
+    private fun <T> appendJsonLine(
+        runId: String,
+        fileName: String,
+        serializer: KSerializer<T>,
+        value: T,
+        resetIfLargerThanBytes: Long? = null,
+    ) {
+        val file = runDirectory(runId).resolve(fileName)
+        file.parentFile?.mkdirs()
+        if (resetIfLargerThanBytes != null && file.length() > resetIfLargerThanBytes) {
+            rotateOversizedArtifact(file)
+        }
+        file.appendText(lineJson.encodeToString(serializer, value))
+        file.appendText("\n")
     }
 
     private fun <T> writeJson(file: File, serializer: KSerializer<T>, value: T) {
@@ -237,8 +302,10 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
         private const val METADATA_FILE_NAME = "metadata.json"
         private const val STATES_FILE_NAME = "states.json"
         private const val SCREEN_STATES_FILE_NAME = "screen-states.json"
+        private const val LATEST_SCREEN_STATE_FILE_NAME = "latest-screen-state.json"
         private const val SCRIPT_EXECUTIONS_FILE_NAME = "script-executions.json"
         private const val HOST_CALLS_FILE_NAME = "host-calls.json"
+        private const val PERF_EVENTS_FILE_NAME = "perf-events.jsonl"
         private const val SYSTEM_PROMPT_FILE_NAME = "system-prompt.txt"
         private const val MODEL_INPUT_FILE_NAME = "model-input.txt"
         private const val FINAL_OUTPUT_FILE_NAME = "final-output.txt"
@@ -246,6 +313,9 @@ class FileAgentRunArtifactStore(private val rootDir: File, private val now: () -
         private const val MEMORY_REFLECTION_OUTPUT_FILE_NAME = "memory-reflection-output.txt"
         private const val AGENT_MESSAGES_FILE_NAME = "agent-messages.json"
         private const val AGENT_EVENTS_FILE_NAME = "agent-events.json"
+        private const val MAX_SCREEN_STATE_RECORDS = 80
+        private const val MAX_SCREEN_STATES_FILE_BYTES = 1_000_000L
+        private const val MAX_PERF_EVENTS_FILE_BYTES = 1_000_000L
     }
 }
 
@@ -260,9 +330,31 @@ class ArtifactSessionLogStore(
     }
 
     override fun recordScreenState(screenState: ScreenState) {
+        val started = System.nanoTime()
         delegate.recordScreenState(screenState)
+        val delegateMs = elapsedMs(started)
         val runId = currentRunIdProvider() ?: return
-        runCatching { artifactStore.recordScreenState(runId, screenState) }
+        val artifactStarted = System.nanoTime()
+        val result = runCatching { artifactStore.recordScreenState(runId, screenState) }
+        val artifactMs = elapsedMs(artifactStarted)
+        if (result.isSuccess) {
+            runCatching {
+                artifactStore.recordPerfEvent(
+                    runId,
+                    screenState.toScreenStatePerfEvent(
+                        runId = runId,
+                        delegateMs = delegateMs,
+                        artifactMs = artifactMs,
+                    ),
+                )
+            }
+        }
+    }
+
+    override fun recordPerfEvent(event: PerfEventRecord) {
+        delegate.recordPerfEvent(event)
+        val runId = event.runId ?: currentRunIdProvider() ?: return
+        runCatching { artifactStore.recordPerfEvent(runId, event.copy(runId = runId)) }
     }
 
     override fun recordScriptExecution(execution: ScriptExecutionRecord) {
@@ -280,6 +372,63 @@ class ArtifactSessionLogStore(
     override fun recentScreenStates(): List<ScreenState> = delegate.recentScreenStates()
 
     override fun recentHostCalls(): List<HostCallRecord> = delegate.recentHostCalls()
+}
+
+private fun ScreenState.toScreenStatePerfEvent(runId: String, delegateMs: Long, artifactMs: Long): PerfEventRecord {
+    val captureMetrics = metrics
+    return PerfEventRecord(
+        recordedAt = Instant.now().toString(),
+        runId = runId,
+        scope = PerfTelemetry.SCOPE_SCREEN_STATE,
+        name = PerfTelemetry.RECORD_SCREEN_STATE,
+        durationMs = delegateMs + artifactMs,
+        attrs =
+        buildMap {
+            put("snapshotId", snapshotId)
+            put("foregroundPackage", foregroundPackage)
+            put("windowCount", windows.size.toString())
+            if (captureMetrics != null) {
+                put("captureTotalMs", captureMetrics.totalMs.toString())
+                put("captureSelectRootMs", captureMetrics.selectRootMs.toString())
+                put("captureBuildRootNodeMs", captureMetrics.buildRootNodeMs.toString())
+                put("captureNodeCount", captureMetrics.nodeCount.toString())
+                put("captureVisibleNodeCount", captureMetrics.visibleNodeCount.toString())
+                put("captureMaxDepth", captureMetrics.maxDepth.toString())
+                put("captureNodePropertyReadMs", captureMetrics.nodePropertyReadMs.toString())
+                put("captureNodeChildAccessMs", captureMetrics.nodeChildAccessMs.toString())
+                put("captureRootWindowEnumerationMs", captureMetrics.rootWindowEnumerationMs.toString())
+                put("captureRootCandidateBuildMs", captureMetrics.rootCandidateBuildMs.toString())
+                put("captureRootCandidateWindowRootMs", captureMetrics.rootCandidateWindowRootMs.toString())
+                put("captureRootCandidateAnalysisMs", captureMetrics.rootCandidateAnalysisMs.toString())
+                put("captureRootCandidateScoringMs", captureMetrics.rootCandidateScoringMs.toString())
+                put("captureRootWindowPayloadMs", captureMetrics.rootWindowPayloadMs.toString())
+                put("captureActiveRootFallbackMs", captureMetrics.activeRootFallbackMs.toString())
+            }
+        },
+        phases =
+        buildList {
+            add(PerfPhaseRecord("delegateRecord", delegateMs))
+            add(PerfPhaseRecord("artifactWrite", artifactMs))
+            if (captureMetrics != null) {
+                add(PerfPhaseRecord("capture.total", captureMetrics.totalMs))
+                add(PerfPhaseRecord("capture.selectRoot", captureMetrics.selectRootMs))
+                add(PerfPhaseRecord("capture.buildRootNode", captureMetrics.buildRootNodeMs))
+                add(PerfPhaseRecord("capture.nodeBounds", captureMetrics.nodeBoundsMs))
+                add(PerfPhaseRecord("capture.nodeLabel", captureMetrics.nodeLabelMs))
+                add(PerfPhaseRecord("capture.nodeActions", captureMetrics.nodeActionsMs))
+                add(PerfPhaseRecord("capture.nodeClickability", captureMetrics.nodeClickabilityMs))
+                add(PerfPhaseRecord("capture.nodePropertyRead", captureMetrics.nodePropertyReadMs))
+                add(PerfPhaseRecord("capture.nodeChildAccess", captureMetrics.nodeChildAccessMs))
+                add(PerfPhaseRecord("capture.rootWindowEnumeration", captureMetrics.rootWindowEnumerationMs))
+                add(PerfPhaseRecord("capture.rootCandidateBuild", captureMetrics.rootCandidateBuildMs))
+                add(PerfPhaseRecord("capture.rootCandidateWindowRoot", captureMetrics.rootCandidateWindowRootMs))
+                add(PerfPhaseRecord("capture.rootCandidateAnalysis", captureMetrics.rootCandidateAnalysisMs))
+                add(PerfPhaseRecord("capture.rootCandidateScoring", captureMetrics.rootCandidateScoringMs))
+                add(PerfPhaseRecord("capture.rootWindowPayload", captureMetrics.rootWindowPayloadMs))
+                add(PerfPhaseRecord("capture.activeRootFallback", captureMetrics.activeRootFallbackMs))
+            }
+        },
+    )
 }
 
 @Serializable
@@ -312,6 +461,34 @@ data class RunStateRecord(
     val foregroundServiceRunning: Boolean,
     val timeline: List<String>,
 )
+
+@Serializable
+data class ScreenStateArtifactRecord(
+    val snapshotId: String,
+    val capturedAt: String,
+    val foregroundPackage: String,
+    val selectedWindowReason: String? = null,
+    val visibleNodeCount: Int,
+    val actionableNodeCount: Int,
+    val windowCount: Int,
+    val selectedWindow: ScreenWindowPayload? = null,
+    val canonicalText: String,
+)
+
+private fun ScreenState.toArtifactRecord(): ScreenStateArtifactRecord {
+    val selectedWindow = windows.firstOrNull { it.selected }
+    return ScreenStateArtifactRecord(
+        snapshotId = snapshotId,
+        capturedAt = capturedAt,
+        foregroundPackage = foregroundPackage,
+        selectedWindowReason = selectedWindowReason,
+        visibleNodeCount = visibleNodes().size,
+        actionableNodeCount = actionableNodes().size,
+        windowCount = windows.size,
+        selectedWindow = selectedWindow?.toPayload()?.copy(visibleText = selectedWindow.visibleText.take(MAX_WINDOW_VISIBLE_TEXT_RECORDS)),
+        canonicalText = toCanonicalScreenText(),
+    )
+}
 
 @Serializable
 data class SerializedAgentMessage(val type: String, val payload: JsonObject)

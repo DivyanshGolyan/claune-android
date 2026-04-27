@@ -1,9 +1,11 @@
 package com.divyanshgolyan.claune.android.scripting
 
+import com.divyanshgolyan.claune.android.data.local.PerfTelemetry
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.runtime.PhoneActuator
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
+import com.divyanshgolyan.claune.android.runtime.elapsedMs
 import com.whl.quickjs.android.QuickJSLoader
 import com.whl.quickjs.wrapper.JSCallFunction
 import com.whl.quickjs.wrapper.QuickJSContext
@@ -135,10 +137,10 @@ class QuickJsScriptRuntime(
 
     private fun registerHostFunctions(context: QuickJSContext, host: ScriptHost) {
         context.registerJsonFunction("__clauneObserveScreenJson") { args ->
-            encodeScreenObservation(host.observeScreen(args.stringArg(0)))
+            encodeScreenObservation(host, PerfTelemetry.OBSERVE_SCREEN_ENCODE, host.observeScreen(args.stringArg(0)))
         }
         context.registerJsonFunction("__clauneDiffScreenJson") { args ->
-            encodeScreenObservation(host.diffScreen(args.stringArg(0)))
+            encodeScreenObservation(host, PerfTelemetry.DIFF_SCREEN_ENCODE, host.diffScreen(args.stringArg(0)))
         }
         context.registerJsonFunction("__clauneInspectScreenJson") { args ->
             encodeInspection(host.inspectScreen(args.stringArg(0)))
@@ -159,13 +161,16 @@ class QuickJsScriptRuntime(
             encodeOutcome(host.tapRef(args.stringArg(0)))
         }
         context.registerJsonFunction("__clauneTapTextJson") { args ->
-            encodeOutcome(host.tapText(args.stringArg(0), args.booleanArg(1)))
+            encodeOutcome(host.tapText(args.stringArg(0), args.booleanArg(1), args.booleanArg(2)))
         }
         context.registerJsonFunction("__clauneTapPointJson") { args ->
             encodeOutcome(host.tapPoint(args.intArg(0), args.intArg(1)))
         }
         context.registerJsonFunction("__clauneTapBoundsJson") { args ->
             encodeOutcome(host.tapBounds(args.stringArg(0)))
+        }
+        context.registerJsonFunction("__claunePerformActionJson") { args ->
+            encodeOutcome(host.performAction(args.stringArg(0)))
         }
         context.registerJsonFunction("__clauneScrollRefJson") { args ->
             encodeOutcome(host.scrollRef(args.stringArg(0), args.stringArg(1)))
@@ -216,8 +221,26 @@ class QuickJsScriptRuntime(
         )
     }
 
-    private suspend fun encodeScreenObservation(observation: ScreenObservationPayload): String =
-        ScriptJson.codec.encodeToString(ScreenObservationPayload.serializer(), observation)
+    private suspend fun encodeScreenObservation(host: ScriptHost, name: String, observation: ScreenObservationPayload): String {
+        val started = System.nanoTime()
+        val encoded = ScriptJson.codec.encodeToString(ScreenObservationPayload.serializer(), observation)
+        host.recordPerfEvent(
+            name = name,
+            scope = PerfTelemetry.SCOPE_QUICKJS_BRIDGE,
+            durationMs = elapsedMs(started),
+            attrs =
+            mapOf(
+                "snapshotId" to observation.currentSnapshotId,
+                "foregroundPackage" to observation.foregroundPackage,
+                "mode" to observation.mode,
+                "payloadBytes" to encoded.toByteArray().size.toString(),
+                "elementCount" to observation.elements.size.toString(),
+                "groupCount" to observation.groups.size.toString(),
+                "actionCount" to observation.actions.size.toString(),
+            ),
+        )
+        return encoded
+    }
 
     private suspend fun encodeInstalledApps(apps: List<InstalledAppPayload>): String =
         ScriptJson.codec.encodeToString(ListSerializer(InstalledAppPayload.serializer()), apps)

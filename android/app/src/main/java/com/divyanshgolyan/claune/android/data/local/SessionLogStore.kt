@@ -4,11 +4,41 @@ import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.SessionUiState
 import com.divyanshgolyan.claune.android.scripting.HostCallRecord
 import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRecord
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class PerfEventRecord(
+    val recordedAt: String,
+    val runId: String? = null,
+    val scriptExecutionId: String? = null,
+    val scope: String,
+    val name: String,
+    val durationMs: Long,
+    val attrs: Map<String, String> = emptyMap(),
+    val phases: List<PerfPhaseRecord> = emptyList(),
+)
+
+@Serializable
+data class PerfPhaseRecord(val name: String, val durationMs: Long)
+
+object PerfTelemetry {
+    const val SCOPE_SCREEN_STATE = "screen_state"
+    const val SCOPE_PROJECTION = "projection"
+    const val SCOPE_QUICKJS_BRIDGE = "quickjs_bridge"
+
+    const val RECORD_SCREEN_STATE = "recordScreenState"
+    const val OBSERVE_SCREEN_PROJECT = "observeScreen.project"
+    const val DIFF_SCREEN_PROJECT = "diffScreen.project"
+    const val OBSERVE_SCREEN_ENCODE = "observeScreen.encode"
+    const val DIFF_SCREEN_ENCODE = "diffScreen.encode"
+}
 
 interface SessionLogStore {
     fun record(state: SessionUiState)
 
     fun recordScreenState(screenState: ScreenState)
+
+    fun recordPerfEvent(event: PerfEventRecord)
 
     fun recordScriptExecution(execution: ScriptExecutionRecord)
 
@@ -29,6 +59,8 @@ class InMemorySessionLogStore : SessionLogStore {
         screenStates += screenState
         trim(screenStates)
     }
+
+    override fun recordPerfEvent(event: PerfEventRecord) = Unit
 
     override fun recordScriptExecution(execution: ScriptExecutionRecord) = Unit
 

@@ -54,6 +54,31 @@ data class ScreenState(
     val root: ScreenNode? = null,
     val windows: List<ScreenWindow> = emptyList(),
     val selectedWindowReason: String? = null,
+    val metrics: ScreenCaptureMetrics? = null,
+)
+
+@Serializable
+data class ScreenCaptureMetrics(
+    val totalMs: Long,
+    val selectRootMs: Long,
+    val buildRootNodeMs: Long,
+    val windowCount: Int,
+    val nodeCount: Int,
+    val visibleNodeCount: Int,
+    val maxDepth: Int,
+    val nodeBoundsMs: Long = 0,
+    val nodeLabelMs: Long = 0,
+    val nodeActionsMs: Long = 0,
+    val nodeClickabilityMs: Long = 0,
+    val nodePropertyReadMs: Long = 0,
+    val nodeChildAccessMs: Long = 0,
+    val rootWindowEnumerationMs: Long = 0,
+    val rootCandidateBuildMs: Long = 0,
+    val rootCandidateWindowRootMs: Long = 0,
+    val rootCandidateAnalysisMs: Long = 0,
+    val rootCandidateScoringMs: Long = 0,
+    val rootWindowPayloadMs: Long = 0,
+    val activeRootFallbackMs: Long = 0,
 )
 
 @Serializable

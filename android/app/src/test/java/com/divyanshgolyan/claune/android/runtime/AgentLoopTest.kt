@@ -3,6 +3,7 @@ package com.divyanshgolyan.claune.android.runtime
 import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
+import com.divyanshgolyan.claune.android.data.local.PerfEventRecord
 import com.divyanshgolyan.claune.android.data.local.RunArtifactMetadata
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.llm.ModelGateway
@@ -89,6 +90,8 @@ private object NoOpArtifactStore : AgentRunArtifactStore {
     override fun recordState(state: SessionUiState) = Unit
 
     override fun recordScreenState(runId: String, screenState: ScreenState) = Unit
+
+    override fun recordPerfEvent(runId: String, event: PerfEventRecord) = Unit
 
     override fun recordScriptExecution(runId: String, execution: ScriptExecutionRecord) = Unit
 

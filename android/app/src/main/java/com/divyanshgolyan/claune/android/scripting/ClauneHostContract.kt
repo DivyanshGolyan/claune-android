@@ -7,6 +7,7 @@ internal object ClauneHostContract {
     val typeDefinitions: String
         get() = buildString {
             appendLine("export type WaitStateType = \"package\" | \"element\" | \"text\";")
+            appendLine("export type WaitStateValue = string | RegExp;")
             appendLine("export type Bounds = [number, number, number, number];")
             appendLine()
             appendLine("export interface HostSuccessOutcome<TData = unknown> {")
@@ -43,6 +44,72 @@ internal object ClauneHostContract {
             appendLine("  clickableDescendantClassName?: string | null;")
             appendLine("}")
             appendLine()
+            appendLine("export interface ScreenWindow {")
+            appendLine("  packageName: string;")
+            appendLine("  className?: string | null;")
+            appendLine("  type: string;")
+            appendLine("  layer: number;")
+            appendLine("  active: boolean;")
+            appendLine("  focused: boolean;")
+            appendLine("  bounds: Bounds;")
+            appendLine("  visibleText: string[];")
+            appendLine("  actionableElementCount: number;")
+            appendLine("  selected: boolean;")
+            appendLine("  selectionReason?: string | null;")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface VisibleElement {")
+            appendLine("  id: string;")
+            appendLine("  ref: string;")
+            appendLine("  elementId: string;")
+            appendLine("  normalizedLabel: string;")
+            appendLine(
+                "  textFields: { label?: string | null; text?: string | null; contentDescription?: string | null; resourceId?: string | null; className?: string | null };",
+            )
+            appendLine("  role: string;")
+            appendLine("  className?: string | null;")
+            appendLine("  resourceId?: string | null;")
+            appendLine("  bounds: Bounds;")
+            appendLine("  center: [number, number];")
+            appendLine(
+                "  state: { enabled: boolean; checked: boolean; selected: boolean; focused: boolean; editable: boolean; scrollable: boolean; clickable: boolean; focusable: boolean };",
+            )
+            appendLine(
+                "  visibility: { a11yVisibleToUser: boolean; hasNonEmptyBounds: boolean; intersectsSelectedWindow: boolean; visibleAreaRatio: number; selectedWindow: boolean; occlusion: string; confidence: number };",
+            )
+            appendLine("  rawRefs: string[];")
+            appendLine("  groupIds: string[];")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface VisibleGroup {")
+            appendLine("  id: string;")
+            appendLine("  role: string;")
+            appendLine("  labelSummary: string;")
+            appendLine("  bounds: Bounds;")
+            appendLine("  elementIds: string[];")
+            appendLine("  actionIds: string[];")
+            appendLine("  parentGroupId?: string | null;")
+            appendLine("  childGroupIds: string[];")
+            appendLine("  confidence: number;")
+            appendLine("  evidence: string[];")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface ActionAffordance {")
+            appendLine("  id: string;")
+            appendLine("  label: string;")
+            appendLine("  kind: \"click\" | \"type\" | \"scroll\";")
+            appendLine("  bounds: Bounds;")
+            appendLine("  center: [number, number];")
+            appendLine("  enabled: boolean;")
+            appendLine("  targetRef: string;")
+            appendLine("  targetElementId: string;")
+            appendLine("  equivalentRefs: string[];")
+            appendLine("  fallbackMethod: \"performAction\" | \"clickableParent\" | \"typeFocused\" | \"scroll\" | \"tapCenter\";")
+            appendLine("  scope: { groupId?: string | null; elementId?: string | null };")
+            appendLine("  confidence: number;")
+            appendLine("  evidence: string[];")
+            appendLine("}")
+            appendLine()
             appendLine("export interface ScreenDiffStats {")
             appendLine("  additions: number;")
             appendLine("  removals: number;")
@@ -53,20 +120,31 @@ internal object ClauneHostContract {
             appendLine("}")
             appendLine()
             appendLine("export interface ScreenObservation {")
-            appendLine("  mode: \"diff\" | \"compact_snapshot\" | \"full_snapshot\";")
+            appendLine("  mode: \"interactions\" | \"diff\" | \"compact_snapshot\" | \"full_snapshot\";")
             appendLine("  reason: string;")
             appendLine("  baselineSnapshotId?: string | null;")
             appendLine("  currentSnapshotId: string;")
+            appendLine("  snapshotId: string;")
+            appendLine("  capturedAt?: string | null;")
             appendLine("  foregroundPackage: string;")
             appendLine("  selectedWindowReason?: string | null;")
             appendLine("  baselineMissing: boolean;")
             appendLine("  stats: ScreenDiffStats;")
             appendLine("  canonicalText?: string | null;")
             appendLine("  diff?: string | null;")
+            appendLine("  windows: ScreenWindow[];")
+            appendLine("  selectedWindow?: ScreenWindow | null;")
+            appendLine("  summaryText?: string | null;")
+            appendLine("  elements: VisibleElement[];")
+            appendLine("  groups: VisibleGroup[];")
+            appendLine("  actions: ActionAffordance[];")
+            appendLine(
+                "  diagnostics?: { visibleElementCount: number; actionCount: number; groupCount: number; rawVisibleNodeCount: number } | null;",
+            )
             appendLine("}")
             appendLine()
             appendLine("export interface ScreenObserveOptions {")
-            appendLine("  mode?: \"compact\" | \"full\";")
+            appendLine("  mode?: \"interactions\" | \"compact\" | \"full\";")
             appendLine("  includeDiff?: boolean;")
             appendLine("}")
             appendLine()
@@ -145,12 +223,39 @@ internal object ClauneHostContract {
             appendLine("  first?: boolean;")
             appendLine("}")
             appendLine()
+            appendLine("export interface TapTextOptions {")
+            appendLine("  exact?: boolean;")
+            appendLine("  first?: boolean;")
+            appendLine("}")
+            appendLine()
             appendLine("export interface ClauneHost {")
             hostFunctions.forEach { function ->
                 append("  ")
                 append(function.renderTypeSignature())
                 appendLine()
             }
+            appendLine(
+                "  /** Find the first visible interaction element matching text, id, ref, role, or state criteria. */ findElement(screen: ScreenObservation, selector: InteractionSelector): VisibleElement | null;",
+            )
+            appendLine(
+                "  /** Find the first visible group matching label text, id, role, or minimum confidence. */ findGroup(screen: ScreenObservation, selector: InteractionSelector): VisibleGroup | null;",
+            )
+            appendLine(
+                "  /** Find the first action matching label, id, kind, enabled state, or group scope. */ findAction(screenOrGroup: ScreenObservation | VisibleGroup, selector: InteractionSelector): ActionAffordance | null;",
+            )
+            appendLine("}")
+            appendLine()
+            appendLine("export interface InteractionSelector {")
+            appendLine("  id?: string;")
+            appendLine("  ref?: string;")
+            appendLine("  text?: string | RegExp;")
+            appendLine("  label?: string | RegExp;")
+            appendLine("  role?: string;")
+            appendLine("  kind?: string;")
+            appendLine("  enabled?: boolean;")
+            appendLine("  editable?: boolean;")
+            appendLine("  groupId?: string;")
+            appendLine("  minConfidence?: number;")
             appendLine("}")
             appendLine()
             appendLine("declare const claune: ClauneHost;")
@@ -167,7 +272,46 @@ internal object ClauneHostContract {
             appendLine("  return outcome;")
             appendLine("}")
             appendLine()
-            appendLine("globalThis.claune = Object.freeze({")
+            appendLine("function __clauneMatchesText(value, query) {")
+            appendLine("  if (query == null) return true;")
+            appendLine("  const text = String(value || \"\");")
+            appendLine("  return query instanceof RegExp ? query.test(text) : text.toLowerCase().includes(String(query).toLowerCase());")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneTapTextExact(options) {")
+            appendLine("  if (options && typeof options === \"object\") return Boolean(options.exact ?? true);")
+            appendLine("  return Boolean(options ?? true);")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneTapTextFirst(options, first) {")
+            appendLine("  if (first != null) return Boolean(first);")
+            appendLine("  if (options && typeof options === \"object\") return Boolean(options.first ?? false);")
+            appendLine("  return options === true;")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneMatchesInteraction(item, selector) {")
+            appendLine("  const s = selector || {};")
+            appendLine("  if (s.id != null && item.id !== s.id && item.elementId !== s.id) return false;")
+            appendLine("  if (s.ref != null && item.ref !== s.ref && item.targetRef !== s.ref) return false;")
+            appendLine("  if (s.role != null && item.role !== s.role) return false;")
+            appendLine("  if (s.kind != null && item.kind !== s.kind) return false;")
+            appendLine("  if (s.enabled != null && ((item.enabled ?? item.state?.enabled) !== s.enabled)) return false;")
+            appendLine("  if (s.editable != null && item.state?.editable !== s.editable) return false;")
+            appendLine(
+                "  if (s.groupId != null && item.scope?.groupId !== s.groupId && !(item.groupIds || []).includes(s.groupId)) return false;",
+            )
+            appendLine(
+                "  if (s.minConfidence != null && (item.confidence ?? item.visibility?.confidence ?? 0) < s.minConfidence) return false;",
+            )
+            appendLine("  const label = item.normalizedLabel || item.label || item.labelSummary || \"\";")
+            appendLine("  if (s.text != null && !__clauneMatchesText(label, s.text)) return false;")
+            appendLine("  if (s.label != null && !__clauneMatchesText(label, s.label)) return false;")
+            appendLine("  return true;")
+            appendLine("}")
+            appendLine()
+            appendLine("let __clauneLastScreen = null;")
+            appendLine()
+            appendLine("const __clauneNative = {")
             hostFunctions.forEachIndexed { index, function ->
                 append(function.renderBootstrapFunction())
                 if (index != hostFunctions.lastIndex) {
@@ -176,7 +320,31 @@ internal object ClauneHostContract {
                     appendLine()
                 }
             }
-            appendLine("});")
+            appendLine("};")
+            appendLine()
+            appendLine("globalThis.claune = Object.freeze(Object.assign({}, __clauneNative, {")
+            appendLine("  observeScreen(options) {")
+            appendLine("    const screen = __clauneNative.observeScreen(options);")
+            appendLine("    __clauneLastScreen = screen;")
+            appendLine("    return screen;")
+            appendLine("  },")
+            appendLine("  findElement(screen, selector) {")
+            appendLine("    return ((screen && screen.elements) || []).find((item) => __clauneMatchesInteraction(item, selector)) || null;")
+            appendLine("  },")
+            appendLine("  findGroup(screen, selector) {")
+            appendLine("    return ((screen && screen.groups) || []).find((item) => __clauneMatchesInteraction(item, selector)) || null;")
+            appendLine("  },")
+            appendLine("  findAction(screenOrGroup, selector) {")
+            appendLine("    const s = selector || {};")
+            appendLine("    const source = screenOrGroup || {};")
+            appendLine("    const actions = source.actions || [];")
+            appendLine("    const ids = source.actionIds;")
+            appendLine("    return actions.find((item) => __clauneMatchesInteraction(item, s)) ||")
+            appendLine(
+                "      ((__clauneLastScreen && ids) ? __clauneLastScreen.actions.find((item) => ids.includes(item.id) && __clauneMatchesInteraction(item, s)) : null) || null;",
+            )
+            appendLine("  }")
+            appendLine("}));")
         }.trim()
 
     val modelContractBlock: String
@@ -189,7 +357,7 @@ internal object ClauneHostContract {
 
     val scriptLabSummary: String =
         "Run JS directly against the embedded runtime using the generated Claune host contract. " +
-            "The `claune` global exposes installed-app discovery, app launch, screen observation/diff, raw-node search, selector, focused input, tap, typing, scroll, navigation, and wait helpers."
+            "The `claune` global exposes installed-app discovery, app launch, interaction-state observation, raw-node search, selector, action, focused input, tap, typing, scroll, navigation, and wait helpers."
 
     private val hostFunctions =
         listOf(
@@ -197,8 +365,7 @@ internal object ClauneHostContract {
                 name = "observeScreen",
                 nativeBinding = "__clauneObserveScreenJson",
                 returnType = "ScreenObservation",
-                documentation = "Capture the latest screen observation. Returns compact canonical text or diff, " +
-                    "depending on baseline availability.",
+                documentation = "Capture the latest screen interaction state. Use mode compact or full only for diagnostic summaries.",
                 parameters = listOf(HostParameter("options", "ScreenObserveOptions", "JSON.stringify(%s ?? {})")),
                 throwsOnFailure = false,
             ),
@@ -255,10 +422,23 @@ internal object ClauneHostContract {
                 name = "tapText",
                 nativeBinding = "__clauneTapTextJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Tap the best actionable element whose visible text or label matches the given text.",
+                documentation =
+                "Tap an actionable element whose visible text or label matches the given text. " +
+                    "Use { first: true } only after inspecting duplicate matches.",
                 parameters = listOf(
                     HostParameter("text", "string", "String(%s)"),
-                    HostParameter("exact", "boolean", "Boolean(%s ?? true)"),
+                    HostParameter(
+                        "options",
+                        "boolean | TapTextOptions",
+                        "__clauneTapTextExact(%s)",
+                        optional = true,
+                    ),
+                    HostParameter(
+                        "first",
+                        "boolean",
+                        "__clauneTapTextFirst(options, %s)",
+                        optional = true,
+                    ),
                 ),
             ),
             HostFunction(
@@ -281,6 +461,13 @@ internal object ClauneHostContract {
                 "Tap the center of inspected bounds. Use only for verified visible non-actionable targets, " +
                     "then immediately re-observe.",
                 parameters = listOf(HostParameter("bounds", "Bounds", "JSON.stringify(%s ?? [])")),
+            ),
+            HostFunction(
+                name = "performAction",
+                nativeBinding = "__claunePerformActionJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Perform a deduplicated interaction action id from the latest screen interaction state.",
+                parameters = listOf(HostParameter("actionId", "string", "String(%s)")),
             ),
             HostFunction(
                 name = "scrollRef",
@@ -392,18 +579,23 @@ internal object ClauneHostContract {
                 name = "waitForState",
                 nativeBinding = "__clauneWaitForStateJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Wait for a foreground package, element id, or visible text condition.",
+                documentation = "Wait for a foreground package, element id, or visible text condition. Value may be a string or RegExp.",
                 parameters = listOf(
                     HostParameter("type", "WaitStateType", "String(%s)"),
-                    HostParameter("value", "string", "String(%s)"),
+                    HostParameter("value", "WaitStateValue", "String(%s)"),
                     HostParameter("timeoutMs", "number", "Number(%s ?? 0)"),
                 ),
             ),
         )
 }
 
-private data class HostParameter(val name: String, val typeSignature: String, val bootstrapExpression: String) {
-    fun renderTypeSignature(): String = "$name: $typeSignature"
+private data class HostParameter(
+    val name: String,
+    val typeSignature: String,
+    val bootstrapExpression: String,
+    val optional: Boolean = false,
+) {
+    fun renderTypeSignature(): String = "$name${if (optional) "?" else ""}: $typeSignature"
 
     fun renderBootstrapArgument(): String = bootstrapExpression.replace("%s", name)
 }

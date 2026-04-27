@@ -353,7 +353,7 @@ private fun ScreenNode.isActionable(): Boolean = visibleToUser &&
 
 private fun ScreenNode.hasMeaningfulLabel(): Boolean = listOf(label, text, contentDescription, resourceId).any { !it.isNullOrBlank() }
 
-private fun ScreenNode.flatten(): List<ScreenNode> = buildList {
+fun ScreenNode.flatten(): List<ScreenNode> = buildList {
     fun visit(node: ScreenNode) {
         add(node)
         node.children.forEach(::visit)
@@ -372,13 +372,15 @@ private fun List<Int>.quantizedBounds(): String = joinToString(prefix = "[", pos
     ((value + BOUNDS_QUANTUM / 2) / BOUNDS_QUANTUM * BOUNDS_QUANTUM).toString()
 }
 
-private fun String.normalizedText(): String = replace(Regex("\\s+"), " ")
+fun String.normalizedScreenText(): String = replace(Regex("\\s+"), " ")
     .replace("\uFEFF", "")
     .replace("\u200B", "")
     .replace("\u200C", "")
     .replace("\u200D", "")
     .replace("\u2060", "")
     .trim()
+
+private fun String.normalizedText(): String = normalizedScreenText()
 
 private fun String.quoted(): String = buildString {
     append('"')

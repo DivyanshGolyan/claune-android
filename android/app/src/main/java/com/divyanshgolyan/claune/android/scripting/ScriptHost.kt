@@ -1,5 +1,8 @@
 package com.divyanshgolyan.claune.android.scripting
 
+import com.divyanshgolyan.claune.android.data.local.PerfEventRecord
+import com.divyanshgolyan.claune.android.data.local.PerfPhaseRecord
+import com.divyanshgolyan.claune.android.data.local.PerfTelemetry
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.runtime.ActionResult
 import com.divyanshgolyan.claune.android.runtime.ElementRef
@@ -12,6 +15,8 @@ import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.actionableNodes
 import com.divyanshgolyan.claune.android.runtime.boundsArea
 import com.divyanshgolyan.claune.android.runtime.buildScreenObservation
+import com.divyanshgolyan.claune.android.runtime.centerPoint
+import com.divyanshgolyan.claune.android.runtime.elapsedMs
 import com.divyanshgolyan.claune.android.runtime.focusedElementId
 import com.divyanshgolyan.claune.android.runtime.isSearchLike
 import com.divyanshgolyan.claune.android.runtime.visibleNodes
@@ -45,17 +50,48 @@ class ScriptHost(
 
     fun hostCalls(): List<HostCallRecord> = recordedCalls.toList()
 
+    fun recordPerfEvent(
+        name: String,
+        scope: String,
+        durationMs: Long,
+        attrs: Map<String, String> = emptyMap(),
+        phases: List<PerfPhaseRecord> = emptyList(),
+    ) {
+        logStore.recordPerfEvent(
+            PerfEventRecord(
+                recordedAt = now().toString(),
+                runId = runId,
+                scriptExecutionId = scriptExecutionId,
+                scope = scope,
+                name = name,
+                durationMs = durationMs,
+                attrs = attrs,
+                phases = phases,
+            ),
+        )
+    }
+
     suspend fun observeScreen(optionsJson: String): ScreenObservationPayload {
         val options = decodeScreenObserveOptions(optionsJson)
-        val mode = options.mode.toCanonicalScreenMode()
         val previous = logStore.recentScreenStates().lastOrNull()
         val screenState = phoneObserver.captureScreenState()
         recordScreenState(screenState)
-        return if (options.includeDiff && mode.name == "Compact") {
-            buildScreenObservation(previous, screenState).toPayload()
+        val projectionStarted = System.nanoTime()
+        var projectionProfiler: ProjectionProfiler? = null
+        val payload = if (options.mode.equals(SCREEN_MODE_INTERACTIONS, ignoreCase = true)) {
+            ProjectionProfiler().also { profiler ->
+                projectionProfiler = profiler
+            }.let { profiler -> screenState.toInteractionObservationPayload(profiler) }
         } else {
-            screenState.toObservationPayload(mode)
+            val mode = options.mode.toCanonicalScreenMode()
+            if (options.includeDiff && mode.name == "Compact") {
+                buildScreenObservation(previous, screenState).toPayload()
+            } else {
+                screenState.toObservationPayload(mode)
+            }
         }
+        recordObservationProjectionPerf(PerfTelemetry.OBSERVE_SCREEN_PROJECT, screenState, payload, projectionStarted, projectionProfiler)
+        return payload
     }
 
     suspend fun diffScreen(optionsJson: String): ScreenObservationPayload {
@@ -65,7 +101,10 @@ class ScriptHost(
             ?: logStore.recentScreenStates().lastOrNull()
         val screenState = phoneObserver.captureScreenState()
         recordScreenState(screenState)
-        return buildScreenObservation(previous, screenState).toPayload()
+        val projectionStarted = System.nanoTime()
+        val payload = buildScreenObservation(previous, screenState).toPayload()
+        recordObservationProjectionPerf(PerfTelemetry.DIFF_SCREEN_PROJECT, screenState, payload, projectionStarted)
+        return payload
     }
 
     suspend fun inspectScreen(optionsJson: String): ScreenInspectionPayload {
@@ -114,7 +153,7 @@ class ScriptHost(
         name = "tapElement",
         arguments = buildJsonObject { put("elementId", elementId) },
     ) {
-        phoneActuator.tap(ElementRef(elementId)).toOutcome()
+        phoneActuator.tap(ElementRef(elementId)).toHostCallOutcome()
     }
 
     suspend fun tapRef(ref: String): HostCallOutcome = recordCall(
@@ -128,7 +167,7 @@ class ScriptHost(
                 ok = false,
                 message = "Ref '$ref' was not found in the current snapshot.",
             )
-        phoneActuator.tap(ElementRef(element.elementId)).toOutcome(
+        phoneActuator.tap(ElementRef(element.elementId)).toHostCallOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
@@ -138,20 +177,21 @@ class ScriptHost(
         )
     }
 
-    suspend fun tapText(text: String, exact: Boolean): HostCallOutcome = recordCall(
+    suspend fun tapText(text: String, exact: Boolean, first: Boolean = false): HostCallOutcome = recordCall(
         name = "tapText",
         arguments =
         buildJsonObject {
             put("text", text)
             put("exact", exact)
+            put("first", first)
         },
     ) {
         val snapshot = phoneObserver.captureScreenState()
         recordScreenState(snapshot)
-        val selector = ElementSelectorPayload(text = text, textExact = exact)
+        val selector = ElementSelectorPayload(text = text, textExact = exact, first = first)
         val element = selectElement(snapshot, selector)
             ?: return@recordCall selectorFailure(selector, snapshot)
-        phoneActuator.tap(ElementRef(element.elementId)).toOutcome(
+        phoneActuator.tap(ElementRef(element.elementId)).toHostCallOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
@@ -169,7 +209,7 @@ class ScriptHost(
             put("y", y)
         },
     ) {
-        phoneActuator.tapPoint(x, y).toOutcome(
+        phoneActuator.tapPoint(x, y).toHostCallOutcome(
             data =
             buildJsonObject {
                 put("x", x)
@@ -187,14 +227,43 @@ class ScriptHost(
                 ok = false,
                 message = "Invalid bounds. Expected [left, top, right, bottom].",
             )
-        val centerX = (bounds[0] + bounds[2]) / 2
-        val centerY = (bounds[1] + bounds[3]) / 2
-        phoneActuator.tapPoint(centerX, centerY).toOutcome(
+        val center = bounds.centerPoint()
+        phoneActuator.tapPoint(center[0], center[1]).toHostCallOutcome(
             data =
             buildJsonObject {
                 put("bounds", boundsJson)
-                put("x", centerX)
-                put("y", centerY)
+                put("x", center[0])
+                put("y", center[1])
+            },
+        )
+    }
+
+    suspend fun performAction(actionId: String): HostCallOutcome = recordCall(
+        name = "performAction",
+        arguments = buildJsonObject { put("actionId", actionId) },
+    ) {
+        val snapshot = phoneObserver.captureScreenState()
+        recordScreenState(snapshot)
+        val action = snapshot.findInteractionAction(actionId)
+            ?: return@recordCall HostCallOutcome(
+                ok = false,
+                message = "Action '$actionId' was not found in the current interaction snapshot.",
+            )
+        if (action.kind != ACTION_KIND_CLICK) {
+            return@recordCall HostCallOutcome(
+                ok = false,
+                message = "Action '${action.label}' is '${action.kind}' and cannot be executed by performAction yet.",
+            )
+        }
+        phoneActuator.tap(ElementRef(action.targetElementId)).toHostCallOutcome(
+            data =
+            buildJsonObject {
+                put("matchedActionId", action.id)
+                put("matchedActionLabel", action.label)
+                put("matchedActionKind", action.kind)
+                put("matchedRef", action.targetRef)
+                put("matchedElementId", action.targetElementId)
+                action.scope.groupId?.let { put("matchedGroupId", it) }
             },
         )
     }
@@ -233,7 +302,7 @@ class ScriptHost(
                 },
             )
         }
-        phoneActuator.scroll(ElementRef(element.elementId), parsedDirection).toOutcome(
+        phoneActuator.scroll(ElementRef(element.elementId), parsedDirection).toHostCallOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
@@ -262,7 +331,7 @@ class ScriptHost(
                 ok = false,
                 message = "No scrollable element was found on the current screen.",
             )
-        phoneActuator.scroll(ElementRef(element.elementId), parsedDirection).toOutcome(
+        phoneActuator.scroll(ElementRef(element.elementId), parsedDirection).toHostCallOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
@@ -285,7 +354,7 @@ class ScriptHost(
         recordScreenState(snapshot)
         val element = selectElement(snapshot, selector)
             ?: return@recordCall selectorFailure(selector, snapshot)
-        phoneActuator.tap(ElementRef(element.elementId)).toOutcome(
+        phoneActuator.tap(ElementRef(element.elementId)).toHostCallOutcome(
             data =
             buildJsonObject {
                 put("matchedRef", element.ref)
@@ -303,7 +372,7 @@ class ScriptHost(
             put("text", text)
         },
     ) {
-        phoneActuator.type(ElementRef(elementId), text).toOutcome()
+        phoneActuator.type(ElementRef(elementId), text).toHostCallOutcome()
     }
 
     suspend fun typeIntoSelector(selectorJson: String, text: String): HostCallOutcome = recordCall(
@@ -329,7 +398,7 @@ class ScriptHost(
                 message = "No editable element became available for the selector.",
                 data = activation.data,
             )
-        phoneActuator.typeFocused(text).toOutcome(
+        phoneActuator.typeFocused(text).toHostCallOutcome(
             data = activation.data as? JsonObject,
         )
     }
@@ -364,7 +433,7 @@ class ScriptHost(
                 ok = false,
                 message = "No focused editable element was found on the current screen.",
             )
-        phoneActuator.typeFocused(text).toOutcome(
+        phoneActuator.typeFocused(text).toHostCallOutcome(
             data = buildMatchedData(element),
         )
     }
@@ -382,21 +451,21 @@ class ScriptHost(
                 ok = false,
                 message = "Unsupported scroll direction '$direction'.",
             )
-        phoneActuator.scroll(ElementRef(elementId), parsedDirection).toOutcome()
+        phoneActuator.scroll(ElementRef(elementId), parsedDirection).toHostCallOutcome()
     }
 
     suspend fun pressBack(): HostCallOutcome = recordCall(
         name = "pressBack",
         arguments = buildJsonObject {},
     ) {
-        phoneActuator.pressBack().toOutcome()
+        phoneActuator.pressBack().toHostCallOutcome()
     }
 
     suspend fun pressHome(): HostCallOutcome = recordCall(
         name = "pressHome",
         arguments = buildJsonObject {},
     ) {
-        phoneActuator.pressHome().toOutcome()
+        phoneActuator.pressHome().toHostCallOutcome()
     }
 
     suspend fun waitForState(type: String, value: String, timeoutMs: Long): HostCallOutcome = recordCall(
@@ -428,6 +497,13 @@ class ScriptHost(
     }
 
     private suspend fun waitForStateInternal(type: String, value: String, timeoutMs: Long): HostCallOutcome {
+        if (type !in SUPPORTED_WAIT_STATE_TYPES) {
+            return HostCallOutcome(
+                ok = false,
+                message = "Unsupported waitForState type '$type'.",
+            )
+        }
+        val matcher = WaitValueMatcher.from(value)
         val deadline = now().plusMillis(timeoutMs.coerceAtLeast(0L))
         while (true) {
             val snapshot = phoneObserver.captureScreenState()
@@ -435,15 +511,10 @@ class ScriptHost(
 
             val matched =
                 when (type) {
-                    "package" -> snapshot.foregroundPackage == value
-                    "element" -> snapshot.actionableNodes().any { it.elementId == value }
-                    "text" -> snapshot.visibleText().any { it.contains(value, ignoreCase = true) }
-                    else -> {
-                        return HostCallOutcome(
-                            ok = false,
-                            message = "Unsupported waitForState type '$type'.",
-                        )
-                    }
+                    "package" -> matcher.matchesPackage(snapshot.foregroundPackage)
+                    "element" -> snapshot.actionableNodes().any { matcher.matchesElementId(it.elementId) }
+                    "text" -> snapshot.visibleText().any(matcher::matchesText)
+                    else -> false
                 }
 
             if (matched) {
@@ -565,7 +636,7 @@ class ScriptHost(
 
         val tapResult = phoneActuator.tap(ElementRef(matchedElement.elementId))
         if (tapResult is ActionResult.Blocked) {
-            return tapResult.toOutcome(data = buildMatchedData(matchedElement))
+            return tapResult.toHostCallOutcome(data = buildMatchedData(matchedElement))
         }
 
         val deadline = now().plusMillis(timeoutMs.coerceAtLeast(0L))
@@ -685,6 +756,34 @@ class ScriptHost(
         logStore.recordScreenState(snapshot)
     }
 
+    private fun recordObservationProjectionPerf(
+        name: String,
+        snapshot: ScreenState,
+        payload: ScreenObservationPayload,
+        startedAtNanos: Long,
+        projectionProfiler: ProjectionProfiler? = null,
+    ) {
+        recordPerfEvent(
+            name = name,
+            scope = PerfTelemetry.SCOPE_PROJECTION,
+            durationMs = elapsedMs(startedAtNanos),
+            attrs =
+            mapOf(
+                "snapshotId" to snapshot.snapshotId,
+                "foregroundPackage" to snapshot.foregroundPackage,
+                "mode" to payload.mode,
+                "elementCount" to payload.elements.size.toString(),
+                "groupCount" to payload.groups.size.toString(),
+                "actionCount" to payload.actions.size.toString(),
+                "summaryTextLength" to payload.summaryText.orEmpty().length.toString(),
+            ),
+            phases = projectionProfiler
+                ?.phases()
+                .orEmpty()
+                .map { phase -> PerfPhaseRecord(name = phase.name, durationMs = phase.durationMs) },
+        )
+    }
+
     private fun decodeScreenInspectOptions(optionsJson: String): ScreenInspectOptionsPayload = runCatching {
         ScriptJson.codec.decodeFromString<ScreenInspectOptionsPayload>(optionsJson)
     }.getOrDefault(ScreenInspectOptionsPayload())
@@ -716,13 +815,69 @@ class ScriptHost(
     }
 
     private companion object {
+        private val SUPPORTED_WAIT_STATE_TYPES = setOf("package", "element", "text")
         private const val POLL_INTERVAL_MS = 250L
         private const val DEFAULT_FOCUS_TIMEOUT_MS = 1500L
         private const val LAUNCH_VERIFICATION_TIMEOUT_MS = 2500L
     }
 }
 
-private fun ActionResult.toOutcome(data: JsonObject? = null): HostCallOutcome = when (this) {
-    is ActionResult.Success -> HostCallOutcome(ok = true, message = message, data = data)
-    is ActionResult.Blocked -> HostCallOutcome(ok = false, message = reason, data = data)
+private class WaitValueMatcher private constructor(
+    private val rawValue: String,
+    private val regex: Regex?,
+    private val alternatives: List<String>,
+) {
+    fun matchesPackage(packageName: String): Boolean = regex?.containsMatchIn(packageName) == true ||
+        alternatives.any { packageName.contains(it, ignoreCase = true) } ||
+        (regex == null && alternatives.isEmpty() && packageName == rawValue)
+
+    fun matchesElementId(elementId: String): Boolean = regex?.containsMatchIn(elementId) == true ||
+        alternatives.any { elementId.contains(it, ignoreCase = true) } ||
+        (regex == null && alternatives.isEmpty() && elementId == rawValue)
+
+    fun matchesText(text: String): Boolean = regex?.containsMatchIn(text) == true ||
+        alternatives.any { text.contains(it, ignoreCase = true) } ||
+        (regex == null && alternatives.isEmpty() && text.contains(rawValue, ignoreCase = true))
+
+    companion object {
+        fun from(value: String): WaitValueMatcher {
+            val regexLiteral = regexLiteral(value)
+            val pattern = regexLiteral?.pattern ?: value
+            return WaitValueMatcher(
+                rawValue = value,
+                regex = regexLiteral?.regex ?: alternationRegex(value),
+                alternatives = alternationTerms(pattern),
+            )
+        }
+
+        private fun regexLiteral(value: String): RegexLiteral? {
+            val match = REGEX_LITERAL_MATCHER.matchEntire(value) ?: return null
+            val pattern = match.groupValues[1]
+            val flags = match.groupValues[2]
+            val regex = compileRegex(pattern, flags) ?: return null
+            return RegexLiteral(pattern = pattern, regex = regex)
+        }
+
+        private fun alternationRegex(value: String): Regex? =
+            value.takeIf { "|" in it && !it.startsWith("/") }?.let { compileRegex(it, flags = "i") }
+
+        private fun alternationTerms(pattern: String): List<String> = pattern.split('|')
+            .map { it.trim() }
+            .filter { term -> term.isNotEmpty() && SIMPLE_ALTERNATION_TERM.matches(term) }
+
+        private fun compileRegex(pattern: String, flags: String): Regex? = runCatching {
+            val options =
+                buildSet {
+                    if ('i' in flags) {
+                        add(RegexOption.IGNORE_CASE)
+                    }
+                }
+            Regex(pattern, options)
+        }.getOrNull()
+
+        private val REGEX_LITERAL_MATCHER = Regex("^/(.*)/([a-zA-Z]*)$")
+        private val SIMPLE_ALTERNATION_TERM = Regex("[\\w .:-]+")
+    }
+
+    private data class RegexLiteral(val pattern: String, val regex: Regex)
 }

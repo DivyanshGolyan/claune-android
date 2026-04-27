@@ -75,6 +75,16 @@ class AgentRunArtifactStoreTest {
                     ListSerializer(SerializedAgentEvent.serializer()),
                     root.resolve("run-1/agent-events.json").readText(),
                 )
+            val screenStates =
+                ScriptJson.codec.decodeFromString(
+                    ListSerializer(ScreenStateArtifactRecord.serializer()),
+                    root.resolve("run-1/screen-states.json").readText(),
+                )
+            val latestScreenState =
+                ScriptJson.codec.decodeFromString(
+                    ScreenState.serializer(),
+                    root.resolve("run-1/latest-screen-state.json").readText(),
+                )
 
             assertEquals(SessionStatus.Blocked.name, metadata.status)
             assertEquals("Timed out reaching Wi-Fi.", metadata.latestSummary)
@@ -85,8 +95,164 @@ class AgentRunArtifactStoreTest {
             assertEquals("agent_start", serializedEvents.first().type)
             assertEquals("run-1", metadata.runId)
             assertEquals("Open Wi-Fi settings", metadata.userMessage)
-            assertTrue(root.resolve("run-1/screen-states.json").exists())
+            assertEquals("snapshot-1", screenStates.single().snapshotId)
+            assertEquals("com.android.settings", screenStates.single().foregroundPackage)
+            assertEquals(1, screenStates.single().visibleNodeCount)
+            assertTrue(screenStates.single().canonicalText.contains("Wi-Fi"))
+            assertEquals("Settings", latestScreenState.root?.label)
             assertEquals("formatted prompt", root.resolve("run-1/model-input.txt").readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `file store caps compact screen history and overwrites latest raw screen state`() {
+        val root = Files.createTempDirectory("claune-artifacts").toFile()
+        try {
+            val store = FileAgentRunArtifactStore(root) { JavaInstant.parse("2026-04-17T10:00:00Z") }
+            store.startRun(
+                RunArtifactMetadata(
+                    runId = "run-1",
+                    userMessage = "Inspect screen",
+                    startedAt = "2026-04-17T09:59:00Z",
+                    model = "claude-haiku-4-5",
+                    maxIterations = 100,
+                    promptVersion = "pi-agent-anthropic-v1",
+                ),
+            )
+
+            repeat(85) { index ->
+                store.recordScreenState("run-1", snapshot("snapshot-$index", label = "Item $index"))
+            }
+
+            val screenStates =
+                ScriptJson.codec.decodeFromString(
+                    ListSerializer(ScreenStateArtifactRecord.serializer()),
+                    root.resolve("run-1/screen-states.json").readText(),
+                )
+            val latestScreenState =
+                ScriptJson.codec.decodeFromString(
+                    ScreenState.serializer(),
+                    root.resolve("run-1/latest-screen-state.json").readText(),
+                )
+
+            assertEquals(80, screenStates.size)
+            assertEquals("snapshot-5", screenStates.first().snapshotId)
+            assertEquals("snapshot-84", screenStates.last().snapshotId)
+            assertEquals("Item 84", latestScreenState.root?.label)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `file store rotates oversized legacy screen history before appending compact records`() {
+        val root = Files.createTempDirectory("claune-artifacts").toFile()
+        try {
+            val store = FileAgentRunArtifactStore(root) { JavaInstant.parse("2026-04-17T10:00:00Z") }
+            store.startRun(
+                RunArtifactMetadata(
+                    runId = "run-1",
+                    userMessage = "Inspect screen",
+                    startedAt = "2026-04-17T09:59:00Z",
+                    model = "claude-haiku-4-5",
+                    maxIterations = 100,
+                    promptVersion = "pi-agent-anthropic-v1",
+                ),
+            )
+            root.resolve("run-1/screen-states.json").writeText(" ".repeat(1_000_001))
+
+            store.recordScreenState("run-1", snapshot("snapshot-new"))
+
+            val screenStates =
+                ScriptJson.codec.decodeFromString(
+                    ListSerializer(ScreenStateArtifactRecord.serializer()),
+                    root.resolve("run-1/screen-states.json").readText(),
+                )
+
+            assertEquals("snapshot-new", screenStates.single().snapshotId)
+            assertTrue(root.resolve("run-1").listFiles().orEmpty().any { it.name.startsWith("screen-states.json.legacy-") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `file store appends perf events as json lines`() {
+        val root = Files.createTempDirectory("claune-artifacts").toFile()
+        try {
+            val store = FileAgentRunArtifactStore(root) { JavaInstant.parse("2026-04-17T10:00:00Z") }
+            store.startRun(
+                RunArtifactMetadata(
+                    runId = "run-1",
+                    userMessage = "Inspect screen",
+                    startedAt = "2026-04-17T09:59:00Z",
+                    model = "claude-haiku-4-5",
+                    maxIterations = 100,
+                    promptVersion = "pi-agent-anthropic-v1",
+                ),
+            )
+
+            repeat(1_005) { index ->
+                store.recordPerfEvent(
+                    "run-1",
+                    PerfEventRecord(
+                        recordedAt = "2026-04-17T10:00:00Z",
+                        scope = "projection",
+                        name = "observeScreen.project",
+                        durationMs = index.toLong(),
+                        attrs = mapOf("snapshotId" to "snapshot-$index"),
+                    ),
+                )
+            }
+
+            val perfEvents = root.resolve("run-1/perf-events.jsonl")
+                .readLines()
+                .map { line -> ScriptJson.codec.decodeFromString(PerfEventRecord.serializer(), line) }
+
+            assertEquals(1_005, perfEvents.size)
+            assertEquals("snapshot-0", perfEvents.first().attrs["snapshotId"])
+            assertEquals("snapshot-1004", perfEvents.last().attrs["snapshotId"])
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `file store rotates oversized perf events before appending`() {
+        val root = Files.createTempDirectory("claune-artifacts").toFile()
+        try {
+            val store = FileAgentRunArtifactStore(root) { JavaInstant.parse("2026-04-17T10:00:00Z") }
+            store.startRun(
+                RunArtifactMetadata(
+                    runId = "run-1",
+                    userMessage = "Inspect screen",
+                    startedAt = "2026-04-17T09:59:00Z",
+                    model = "claude-haiku-4-5",
+                    maxIterations = 100,
+                    promptVersion = "pi-agent-anthropic-v1",
+                ),
+            )
+            root.resolve("run-1/perf-events.jsonl").writeText(" ".repeat(1_000_001))
+
+            store.recordPerfEvent(
+                "run-1",
+                PerfEventRecord(
+                    recordedAt = "2026-04-17T10:00:00Z",
+                    scope = "projection",
+                    name = "observeScreen.project",
+                    durationMs = 12,
+                ),
+            )
+
+            val perfEvents = root.resolve("run-1/perf-events.jsonl")
+                .readLines()
+                .map { line -> ScriptJson.codec.decodeFromString(PerfEventRecord.serializer(), line) }
+
+            assertEquals(1, perfEvents.size)
+            assertEquals("run-1", perfEvents.single().runId)
+            assertTrue(root.resolve("run-1").listFiles().orEmpty().any { it.name.startsWith("perf-events.jsonl.legacy-") })
         } finally {
             root.deleteRecursively()
         }
@@ -138,7 +304,7 @@ class AgentRunArtifactStoreTest {
         }
     }
 
-    private fun snapshot(): ScreenState {
+    private fun snapshot(snapshotId: String = "snapshot-1", label: String = "Settings"): ScreenState {
         val wifi = ScreenNode(
             path = listOf(0),
             ref = "el-1",
@@ -152,7 +318,7 @@ class AgentRunArtifactStoreTest {
             bounds = listOf(0, 0, 100, 100),
         )
         return ScreenState(
-            snapshotId = "snapshot-1",
+            snapshotId = snapshotId,
             capturedAt = JavaInstant.parse("2026-04-17T10:00:00Z").toString(),
             foregroundPackage = "com.android.settings",
             root = ScreenNode(
@@ -160,7 +326,7 @@ class AgentRunArtifactStoreTest {
                 ref = "root",
                 elementId = "root",
                 role = "root",
-                label = "Settings",
+                label = label,
                 visibleToUser = true,
                 clickable = false,
                 editable = false,
