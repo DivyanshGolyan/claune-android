@@ -16,6 +16,7 @@ import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
 import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
+import com.divyanshgolyan.claune.android.llm.CodexAuthRepository
 import com.divyanshgolyan.claune.android.llm.PiAgentModelGateway
 import com.divyanshgolyan.claune.android.overlay.SessionOverlayController
 import com.divyanshgolyan.claune.android.runtime.AgentLoop
@@ -52,6 +53,7 @@ class ClauneContainer(application: Application) {
     val artifactStore = FileAgentRunArtifactStore(File(application.filesDir, "agent-runs"))
     val memoryStore: MemoryStore = FileMemoryStore(File(application.filesDir, "memory.md"))
     val codingSessionStore = CodingSessionStore(cwd = application.filesDir.absolutePath, agentDir = agentDir)
+    val codexAuthRepository = CodexAuthRepository(application, agentDir)
     val settingsStore: SettingsStore =
         DataStoreSettingsStore(
             context = application,
@@ -89,6 +91,7 @@ class ClauneContainer(application: Application) {
             artifactStore = artifactStore,
             codingSessionStore = codingSessionStore,
             agentDir = agentDir,
+            codexAuthRepository = codexAuthRepository,
         )
     val agentLoop =
         AgentLoop(

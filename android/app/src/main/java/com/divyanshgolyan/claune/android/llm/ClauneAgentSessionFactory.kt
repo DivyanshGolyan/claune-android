@@ -29,13 +29,14 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
         systemPrompt: String,
         model: Model<*>,
         tools: List<AgentTool<*>>,
-        apiKey: String,
+        authRequirement: ClauneAuthRequirement,
+        apiKey: String? = null,
         thinkingLevel: AgentThinkingLevel = AgentThinkingLevel.MEDIUM,
         thinkingBudgets: ThinkingBudgets? = null,
         beforeToolCall: (suspend (BeforeToolCallContext, AbortSignal?) -> BeforeToolCallResult?)? = null,
     ): AgentSession {
         val authStorage = AuthStorage.create(File(agentDir, "auth.json").absolutePath)
-        authStorage.setApiKey(model.provider, apiKey)
+        configureAuthStorageForModel(authStorage, model, authRequirement, apiKey)
         val modelRegistry = ModelRegistry.create(authStorage)
         val sessionManager = codingSessionStore.sessionManager(sessionPath)
         val settingsManager =
@@ -128,5 +129,16 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
             reserveTokens = 100_000,
             keepRecentTokens = 20_000,
         )
+    }
+}
+
+internal fun configureAuthStorageForModel(
+    authStorage: AuthStorage,
+    model: Model<*>,
+    authRequirement: ClauneAuthRequirement,
+    apiKey: String?,
+) {
+    if (authRequirement is ClauneAuthRequirement.ApiKey) {
+        authStorage.setApiKey(model.provider, apiKey.orEmpty())
     }
 }

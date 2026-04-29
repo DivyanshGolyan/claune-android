@@ -60,13 +60,14 @@ class PiAgentModelGateway(
     private val artifactStore: AgentRunArtifactStore,
     private val codingSessionStore: CodingSessionStore,
     private val agentDir: File,
+    private val codexAuthRepository: CodexAuthRepository,
 ) : ModelGateway {
     private val sessionFactory = ClauneAgentSessionFactory(codingSessionStore, agentDir)
     private val activeSessionLock = Mutex()
     private var activeAgentSession: AgentSession? = null
     private var activeSessionPath: String? = null
     private var activeSystemPrompt: String? = null
-    private var activeApiKey: String? = null
+    private var activeAuthMarker: String? = null
     private var activeModelProvider: String? = null
     private var activeModelId: String? = null
     private var activeThinkingConfig: ClauneThinkingConfig? = null
@@ -90,9 +91,28 @@ class PiAgentModelGateway(
         val settings = settingsStore.state.value
         val modelConfig = ClauneModelCatalog.resolve(settings)
         val thinkingConfig = settings.thinkingConfigFor(modelConfig.option.id)
-        val apiKey = modelConfig.apiKey
-        if (apiKey.isBlank()) {
-            return ModelTurnOutput.Blocked(modelConfig.missingKeyMessage)
+        var apiKeyForSession: String? = null
+        val authMarker =
+            when (val authRequirement = modelConfig.authRequirement) {
+                is ClauneAuthRequirement.ApiKey -> {
+                    val apiKey = settings.apiKeyFor(authRequirement.slot)
+                    if (apiKey.isBlank()) {
+                        return ModelTurnOutput.Blocked(modelConfig.missingAuthMessage)
+                    }
+                    apiKeyForSession = apiKey
+                    "api-key:${authRequirement.slot}:$apiKey"
+                }
+                is ClauneAuthRequirement.OAuth -> {
+                    if (!codexAuthRepository.hasUsableCredentials()) {
+                        codexAuthRepository.refresh()
+                        return ModelTurnOutput.Blocked(modelConfig.missingAuthMessage)
+                    }
+                    "oauth:${authRequirement.provider}:${codexAuthRepository.credentialMarker()}"
+                }
+            }
+
+        if (modelConfig.model.provider != modelConfig.option.provider) {
+            return ModelTurnOutput.Blocked("Selected model provider is inconsistent with the catalog.")
         }
 
         if (input.screenObservation.foregroundPackage == "unavailable") {
@@ -101,7 +121,17 @@ class PiAgentModelGateway(
             )
         }
 
-        val agentSession = ensureMainSession(input, systemPrompt, modelConfig.model, apiKey, thinkingConfig, mainTools)
+        val agentSession =
+            ensureMainSession(
+                input,
+                systemPrompt,
+                modelConfig.model,
+                modelConfig.authRequirement,
+                apiKeyForSession,
+                authMarker,
+                thinkingConfig,
+                mainTools,
+            )
         activeRunId = input.runId
         activeEventTrace = CopyOnWriteArrayList()
         sessionCoordinator.logEvent("Agent started.")
@@ -123,7 +153,14 @@ class PiAgentModelGateway(
                 }
                 runCatching { artifactStore.writeFinalOutput(input.runId, parsedResult.toArtifactText()) }
                 if (assistantError.isNullOrBlank() && terminalOutcome != null) {
-                    runMemoryReflection(input, parsedResult, modelConfig.model, apiKey, thinkingConfig)
+                    runMemoryReflection(
+                        input,
+                        parsedResult,
+                        modelConfig.model,
+                        modelConfig.authRequirement,
+                        apiKeyForSession,
+                        thinkingConfig,
+                    )
                 }
                 parsedResult
             } catch (cancelled: CancellationException) {
@@ -175,7 +212,8 @@ class PiAgentModelGateway(
         input: ModelTurnInput,
         systemPrompt: String,
         model: Model<*>,
-        apiKey: String,
+        authRequirement: ClauneAuthRequirement,
+        apiKey: String?,
         thinkingConfig: ClauneThinkingConfig,
         tools: List<ToolDefinition<*>>,
     ): AgentSession = sessionFactory.create(
@@ -183,6 +221,7 @@ class PiAgentModelGateway(
         systemPrompt = systemPrompt,
         model = model,
         tools = agentTools(tools),
+        authRequirement = authRequirement,
         apiKey = apiKey,
         thinkingLevel = thinkingConfig.level,
         thinkingBudgets = thinkingConfig.budgets,
@@ -193,7 +232,9 @@ class PiAgentModelGateway(
         input: ModelTurnInput,
         systemPrompt: String,
         model: Model<*>,
-        apiKey: String,
+        authRequirement: ClauneAuthRequirement,
+        apiKey: String?,
+        authMarker: String,
         thinkingConfig: ClauneThinkingConfig,
         tools: List<ToolDefinition<*>>,
     ): AgentSession = activeSessionLock.withLock {
@@ -201,7 +242,7 @@ class PiAgentModelGateway(
             activeAgentSession == null -> true
             activeSessionPath != input.persistentSessionPath -> true
             activeSystemPrompt != systemPrompt -> true
-            activeApiKey != apiKey -> true
+            activeAuthMarker != authMarker -> true
             activeModelProvider != model.provider -> true
             activeModelId != model.id -> true
             activeThinkingConfig != thinkingConfig -> true
@@ -210,10 +251,10 @@ class PiAgentModelGateway(
         if (needsReplacement) {
             activeSessionUnsubscribe?.invoke()
             activeAgentSession?.dispose()
-            val session = createMainSession(input, systemPrompt, model, apiKey, thinkingConfig, tools)
+            val session = createMainSession(input, systemPrompt, model, authRequirement, apiKey, thinkingConfig, tools)
             activeSessionPath = input.persistentSessionPath
             activeSystemPrompt = systemPrompt
-            activeApiKey = apiKey
+            activeAuthMarker = authMarker
             activeModelProvider = model.provider
             activeModelId = model.id
             activeThinkingConfig = thinkingConfig
@@ -281,7 +322,8 @@ class PiAgentModelGateway(
         input: ModelTurnInput,
         result: ModelTurnOutput,
         model: Model<*>,
-        apiKey: String,
+        authRequirement: ClauneAuthRequirement,
+        apiKey: String?,
         thinkingConfig: ClauneThinkingConfig,
     ) {
         if (result !is ModelTurnOutput.Completion && result !is ModelTurnOutput.Blocked) {
@@ -308,6 +350,7 @@ class PiAgentModelGateway(
                 systemPrompt = MemoryReflectionPromptBuilder.systemPrompt(memoryBeforeReflection),
                 model = model,
                 tools = agentTools(reflectionTools),
+                authRequirement = authRequirement,
                 apiKey = apiKey,
                 thinkingLevel = thinkingConfig.level,
                 thinkingBudgets = thinkingConfig.budgets,

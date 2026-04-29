@@ -18,6 +18,15 @@ import kotlinx.coroutines.launch
 enum class ClauneModel {
     Haiku,
     GeminiFlashLite,
+    ChatGpt51,
+    ChatGpt51CodexMax,
+    ChatGpt51CodexMini,
+    ChatGpt52,
+    ChatGpt52Codex,
+    ChatGpt53Codex,
+    ChatGpt53CodexSpark,
+    ChatGpt54,
+    ChatGpt54Mini,
     ;
 
     companion object {
