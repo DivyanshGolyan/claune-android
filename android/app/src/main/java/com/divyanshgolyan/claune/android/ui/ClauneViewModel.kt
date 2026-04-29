@@ -21,10 +21,12 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
         combine(
             container.sessionCoordinator.uiState,
             container.settingsStore.state,
-        ) { sessionState, settingsState ->
+            container.codexAuthRepository.state,
+        ) { sessionState, settingsState, codexAuthState ->
             ClauneUiState(
                 sessionState = sessionState,
                 settingsState = settingsState,
+                codexAuthState = codexAuthState,
                 historyEntries = sessionHistoryEntries(sessionState.recentSessions),
                 sessionDetail = loadSessionDetail(sessionState.selectedSessionPath),
             )
@@ -35,6 +37,7 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
             ClauneUiState(
                 sessionState = container.sessionCoordinator.uiState.value,
                 settingsState = container.settingsStore.state.value,
+                codexAuthState = container.codexAuthRepository.state.value,
                 historyEntries = sessionHistoryEntries(container.sessionCoordinator.uiState.value.recentSessions),
                 sessionDetail = loadSessionDetail(
                     container.sessionCoordinator.uiState.value.selectedSessionPath,
@@ -73,6 +76,9 @@ class ClauneViewModel(private val container: ClauneContainer) : ViewModel() {
             is ClauneUiEvent.UpdateThinkingLevel -> viewModelScope.launch { container.settingsStore.updateThinkingLevel(event.value) }
             is ClauneUiEvent.UpdateHaikuThinkingBudget ->
                 viewModelScope.launch { container.settingsStore.updateHaikuThinkingBudget(event.value) }
+            ClauneUiEvent.ConnectChatGpt -> viewModelScope.launch { container.codexAuthRepository.login() }
+            ClauneUiEvent.DisconnectChatGpt -> container.codexAuthRepository.logout()
+            is ClauneUiEvent.SubmitChatGptCode -> container.codexAuthRepository.submitManualCode(event.value)
             is ClauneUiEvent.SetDebugOverlayVisible -> container.overlayController.setDebugOverlayVisible(event.visible)
         }
     }
@@ -131,6 +137,12 @@ sealed interface ClauneUiEvent {
     data class UpdateThinkingLevel(val value: ClauneThinkingLevel) : ClauneUiEvent
 
     data class UpdateHaikuThinkingBudget(val value: Int) : ClauneUiEvent
+
+    data object ConnectChatGpt : ClauneUiEvent
+
+    data object DisconnectChatGpt : ClauneUiEvent
+
+    data class SubmitChatGptCode(val value: String) : ClauneUiEvent
 
     data class SetDebugOverlayVisible(val visible: Boolean) : ClauneUiEvent
 }
