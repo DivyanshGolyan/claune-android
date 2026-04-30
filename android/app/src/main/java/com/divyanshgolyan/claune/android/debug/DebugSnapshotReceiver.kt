@@ -3,6 +3,7 @@ package com.divyanshgolyan.claune.android.debug
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.ContextCompat
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.app.clauneContainer
 import com.divyanshgolyan.claune.android.runtime.ActionResult
@@ -15,6 +16,7 @@ import com.divyanshgolyan.claune.android.scripting.ProjectionProfiler
 import com.divyanshgolyan.claune.android.scripting.ScriptJson
 import com.divyanshgolyan.claune.android.scripting.toHostCallOutcome
 import com.divyanshgolyan.claune.android.scripting.toInteractionObservationPayload
+import com.divyanshgolyan.claune.android.service.ClauneAgentService
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +41,7 @@ class DebugSnapshotReceiver : BroadcastReceiver() {
                     ACTION_PRESS_BACK -> writeActionResult(context, context.clauneContainer().accessibilityBridge.pressBack())
                     ACTION_PRESS_HOME -> writeActionResult(context, context.clauneContainer().accessibilityBridge.pressHome())
                     ACTION_PROFILE_PROJECTION -> profileProjection(context)
+                    ACTION_RUN_PROMPT -> runPrompt(context, intent)
                 }
             }
             pendingResult.finish()
@@ -116,6 +119,16 @@ class DebugSnapshotReceiver : BroadcastReceiver() {
         )
     }
 
+    private fun runPrompt(context: Context, intent: Intent) {
+        val message = intent.getStringExtra(EXTRA_MESSAGE)?.trim().orEmpty()
+        if (message.isBlank()) {
+            writeActionResult(context, ActionResult.Blocked("Missing non-blank $EXTRA_MESSAGE extra."))
+            return
+        }
+        ContextCompat.startForegroundService(context, ClauneAgentService.startIntent(context, message))
+        writeActionResult(context, ActionResult.Success("Started debug run."))
+    }
+
     companion object {
         const val ACTION_DUMP_SNAPSHOT = "com.divyanshgolyan.claune.android.debug.DUMP_SNAPSHOT"
         const val ACTION_TAP_POINT = "com.divyanshgolyan.claune.android.debug.TAP_POINT"
@@ -123,6 +136,8 @@ class DebugSnapshotReceiver : BroadcastReceiver() {
         const val ACTION_PRESS_BACK = "com.divyanshgolyan.claune.android.debug.PRESS_BACK"
         const val ACTION_PRESS_HOME = "com.divyanshgolyan.claune.android.debug.PRESS_HOME"
         const val ACTION_PROFILE_PROJECTION = "com.divyanshgolyan.claune.android.debug.PROFILE_PROJECTION"
+        const val ACTION_RUN_PROMPT = "com.divyanshgolyan.claune.android.debug.RUN_PROMPT"
+        const val EXTRA_MESSAGE = "message"
         const val EXTRA_X = "x"
         const val EXTRA_Y = "y"
         const val EXTRA_LEFT = "left"
