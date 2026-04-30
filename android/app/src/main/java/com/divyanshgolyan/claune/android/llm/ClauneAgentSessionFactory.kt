@@ -2,6 +2,8 @@ package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import java.io.File
+import pi.agent.core.AfterToolCallContext
+import pi.agent.core.AfterToolCallResult
 import pi.agent.core.Agent
 import pi.agent.core.AgentOptions
 import pi.agent.core.AgentThinkingLevel
@@ -12,6 +14,7 @@ import pi.agent.core.InitialAgentState
 import pi.ai.core.AbortSignal
 import pi.ai.core.CacheRetention
 import pi.ai.core.Model
+import pi.ai.core.ProviderResponse
 import pi.ai.core.ThinkingBudgets
 import pi.coding.agent.core.AgentSession
 import pi.coding.agent.core.AgentSessionConfig
@@ -23,6 +26,17 @@ import pi.coding.agent.core.SettingsManager
 import pi.coding.agent.core.compaction.CompactionSettings
 import pi.coding.agent.core.convertToLlm
 
+data class AgentObservationHooks(
+    val beforeToolCall: (suspend (BeforeToolCallContext, AbortSignal?) -> BeforeToolCallResult?)? = null,
+    val afterToolCall: (suspend (AfterToolCallContext, AbortSignal?) -> AfterToolCallResult?)? = null,
+    val onPayload: (suspend (payload: Any, model: Model<*>) -> Any?)? = null,
+    val onResponse: (suspend (response: ProviderResponse, model: Model<*>) -> Unit)? = null,
+) {
+    companion object {
+        val None = AgentObservationHooks()
+    }
+}
+
 class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionStore, private val agentDir: File) {
     suspend fun create(
         sessionPath: String?,
@@ -33,7 +47,7 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
         apiKey: String? = null,
         thinkingLevel: AgentThinkingLevel = AgentThinkingLevel.MEDIUM,
         thinkingBudgets: ThinkingBudgets? = null,
-        beforeToolCall: (suspend (BeforeToolCallContext, AbortSignal?) -> BeforeToolCallResult?)? = null,
+        observationHooks: AgentObservationHooks = AgentObservationHooks.None,
     ): AgentSession {
         val authStorage = AuthStorage.create(File(agentDir, "auth.json").absolutePath)
         configureAuthStorageForModel(authStorage, model, authRequirement, apiKey)
@@ -81,12 +95,15 @@ class ClauneAgentSessionFactory(private val codingSessionStore: CodingSessionSto
                     cacheRetention = CacheRetention.SHORT,
                     sessionId = sessionManager.getSessionId(),
                     toolExecution = pi.agent.core.ToolExecutionMode.SEQUENTIAL,
-                    beforeToolCall = beforeToolCall,
+                    beforeToolCall = observationHooks.beforeToolCall,
                     steeringMode = settingsManager.getSteeringMode(),
                     followUpMode = settingsManager.getFollowUpMode(),
                     transport = settingsManager.getTransport(),
                     thinkingBudgets = settingsManager.getThinkingBudgets(),
                     maxRetryDelayMs = settingsManager.getRetrySettings().maxDelayMs,
+                    afterToolCall = observationHooks.afterToolCall,
+                    onPayload = observationHooks.onPayload,
+                    onResponse = observationHooks.onResponse,
                 ),
             )
 

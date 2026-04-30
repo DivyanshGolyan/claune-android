@@ -100,7 +100,7 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
             if (info.messageCount == 0) {
                 ""
             } else {
-                userFacingText(info.firstMessage)
+                userFacingPromptText(info.firstMessage)
             }
         val fallbackTitle = info.name?.trim().orEmpty().ifBlank { firstMessage }
         val title = sessionTitle(fallbackTitle)
@@ -199,7 +199,7 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
                 timestamp = Instant.parse(timestamp),
                 kind = PersistedSessionDetailKind.User,
                 title = "You",
-                body = userFacingText(message.content.asDisplayText()),
+                body = userFacingPromptText(message.content.asDisplayText()),
             )
         is AssistantMessage ->
             PersistedSessionDetailEntry(
@@ -253,27 +253,27 @@ class CodingSessionStore(private val cwd: String, private val agentDir: File) {
         is ImageContent -> "[image]"
     }
 
-    private fun sessionTitle(text: String): String = userFacingText(text)
-        .lineSequence()
-        .firstOrNull { it.isNotBlank() }
-        ?.trim()
-        ?.take(MAX_SESSION_TITLE_CHARS)
-        ?.ifBlank { null }
-        ?: "Untitled session"
-
-    private fun userFacingText(text: String): String {
-        val trimmed = text.trim()
-        if (!trimmed.startsWith("Current request:")) {
-            return trimmed
-        }
-        return trimmed
-            .removePrefix("Current request:")
-            .substringBefore("\n\nRecent session events:")
-            .substringBefore("\n\nLast known phone snapshot")
-            .trim()
-    }
-
-    private companion object {
-        const val MAX_SESSION_TITLE_CHARS = 96
-    }
+    private fun sessionTitle(text: String): String = sessionTitleFromPrompt(text)
 }
+
+internal fun sessionTitleFromPrompt(text: String): String = userFacingPromptText(text)
+    .lineSequence()
+    .firstOrNull { it.isNotBlank() }
+    ?.trim()
+    ?.take(MAX_SESSION_TITLE_CHARS)
+    ?.ifBlank { null }
+    ?: "Untitled session"
+
+internal fun userFacingPromptText(text: String): String {
+    val trimmed = text.trim()
+    if (!trimmed.startsWith("Current request:")) {
+        return trimmed
+    }
+    return trimmed
+        .removePrefix("Current request:")
+        .substringBefore("\n\nRecent session events:")
+        .substringBefore("\n\nLast known phone snapshot")
+        .trim()
+}
+
+private const val MAX_SESSION_TITLE_CHARS = 96

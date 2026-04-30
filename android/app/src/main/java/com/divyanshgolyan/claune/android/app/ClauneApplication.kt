@@ -24,6 +24,7 @@ import com.divyanshgolyan.claune.android.runtime.QuestionPromptCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.scripting.AndroidInstalledAppRegistry
 import com.divyanshgolyan.claune.android.scripting.QuickJsScriptRuntime
+import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetry
 import java.io.File
 
 class ClauneApplication : Application() {
@@ -54,6 +55,7 @@ class ClauneContainer(application: Application) {
     val memoryStore: MemoryStore = FileMemoryStore(File(application.filesDir, "memory.md"))
     val codingSessionStore = CodingSessionStore(cwd = application.filesDir.absolutePath, agentDir = agentDir)
     val codexAuthRepository = CodexAuthRepository(application, agentDir)
+    val telemetryRecorder = ClauneTelemetry.createRecorder()
     val settingsStore: SettingsStore =
         DataStoreSettingsStore(
             context = application,
@@ -92,6 +94,7 @@ class ClauneContainer(application: Application) {
             codingSessionStore = codingSessionStore,
             agentDir = agentDir,
             codexAuthRepository = codexAuthRepository,
+            telemetryRecorder = telemetryRecorder,
         )
     val agentLoop =
         AgentLoop(

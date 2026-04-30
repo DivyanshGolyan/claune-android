@@ -372,6 +372,8 @@ class ArtifactSessionLogStore(
     override fun recentScreenStates(): List<ScreenState> = delegate.recentScreenStates()
 
     override fun recentHostCalls(): List<HostCallRecord> = delegate.recentHostCalls()
+
+    override fun recentHostCallCount(): Int = delegate.recentHostCallCount()
 }
 
 private fun ScreenState.toScreenStatePerfEvent(runId: String, delegateMs: Long, artifactMs: Long): PerfEventRecord {
@@ -567,7 +569,7 @@ object AgentTranscriptSerializer {
                     put("toolCallId", JsonPrimitive(event.toolCallId))
                     put("toolName", JsonPrimitive(event.toolName))
                     put("arguments", event.args)
-                    put("partialResult", serializeAgentToolResult(event.partialResult))
+                    put("partialResult", serializeToolResult(event.partialResult))
                 },
             )
         is AgentEvent.ToolExecutionEnd ->
@@ -577,7 +579,7 @@ object AgentTranscriptSerializer {
                     put("toolCallId", JsonPrimitive(event.toolCallId))
                     put("toolName", JsonPrimitive(event.toolName))
                     put("isError", JsonPrimitive(event.isError))
-                    put("result", serializeAgentToolResult(event.result))
+                    put("result", serializeToolResult(event.result))
                 },
             )
     }
@@ -710,7 +712,7 @@ object AgentTranscriptSerializer {
         )
     }
 
-    private fun serializeAgentToolResult(result: pi.agent.core.AgentToolResult<*>): JsonObject = buildJsonObject {
+    fun serializeToolResult(result: pi.agent.core.AgentToolResult<*>): JsonObject = buildJsonObject {
         put(
             "content",
             buildJsonArray {
@@ -720,5 +722,6 @@ object AgentTranscriptSerializer {
             },
         )
         (result.details as? JsonElement)?.let { put("details", it) }
+        put("terminal", JsonPrimitive(result.terminal))
     }
 }

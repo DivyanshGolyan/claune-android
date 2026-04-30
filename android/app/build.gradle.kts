@@ -20,6 +20,8 @@ val localProperties =
 
 fun escapeBuildConfigString(value: String): String = value.replace("\\", "\\\\").replace("\"", "\\\"")
 
+fun localBooleanProperty(name: String): String = (localProperties.getProperty(name)?.toBooleanStrictOrNull() ?: false).toString()
+
 android {
     namespace = "com.divyanshgolyan.claune.android"
     compileSdk = 36
@@ -42,6 +44,31 @@ android {
             "String",
             "GEMINI_API_KEY",
             "\"${escapeBuildConfigString(localProperties.getProperty("claune.geminiApiKey", ""))}\"",
+        )
+        buildConfigField(
+            "Boolean",
+            "CLAUNE_TELEMETRY_ENABLED",
+            localBooleanProperty("claune.telemetry.enabled"),
+        )
+        buildConfigField(
+            "String",
+            "LANGSMITH_ENDPOINT",
+            "\"${escapeBuildConfigString(localProperties.getProperty("claune.langsmith.endpoint", ""))}\"",
+        )
+        buildConfigField(
+            "String",
+            "LANGSMITH_API_URL",
+            "\"${escapeBuildConfigString(localProperties.getProperty("claune.langsmith.apiUrl", ""))}\"",
+        )
+        buildConfigField(
+            "String",
+            "LANGSMITH_PROJECT",
+            "\"${escapeBuildConfigString(localProperties.getProperty("claune.langsmith.project", ""))}\"",
+        )
+        buildConfigField(
+            "String",
+            "LANGSMITH_API_KEY",
+            "\"${escapeBuildConfigString(localProperties.getProperty("claune.langsmith.apiKey", ""))}\"",
         )
     }
 

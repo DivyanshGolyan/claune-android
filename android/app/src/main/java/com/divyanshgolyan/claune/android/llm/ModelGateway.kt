@@ -25,19 +25,53 @@ import com.divyanshgolyan.claune.android.runtime.QuestionPromptCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.UserQuestionPrompter
+import com.divyanshgolyan.claune.android.runtime.toStatusMessageJsonString
 import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
+import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetryContext
+import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetryEventType
+import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetryPhase
+import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetryRecorder
+import com.divyanshgolyan.claune.android.telemetry.NoopClauneTelemetryRecorder
 import java.io.File
-import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import pi.agent.core.AfterToolCallContext
+import pi.agent.core.AfterToolCallResult
+import pi.agent.core.Agent
 import pi.agent.core.AgentEvent
+import pi.agent.core.BeforeToolCallContext
+import pi.agent.core.BeforeToolCallResult
+import pi.ai.core.AssistantMessage
 import pi.ai.core.Message
 import pi.ai.core.Model
+import pi.ai.core.ProviderResponse
 import pi.ai.core.TextContent
 import pi.coding.agent.core.AgentSession
+
+private class ActiveRunTrace(val input: ModelTurnInput) {
+    private val events = ConcurrentLinkedQueue<SerializedAgentEvent>()
+
+    fun add(event: SerializedAgentEvent) {
+        events += event
+    }
+
+    fun snapshot(): List<SerializedAgentEvent> = events.toList()
+}
+
+private fun Agent.applyObservationHooks(hooks: AgentObservationHooks) {
+    beforeToolCall = hooks.beforeToolCall
+    afterToolCall = hooks.afterToolCall
+    onPayload = hooks.onPayload
+    onResponse = hooks.onResponse
+}
 
 interface ModelGateway {
     fun currentModelName(): String
@@ -61,6 +95,7 @@ class PiAgentModelGateway(
     private val codingSessionStore: CodingSessionStore,
     private val agentDir: File,
     private val codexAuthRepository: CodexAuthRepository,
+    private val telemetryRecorder: ClauneTelemetryRecorder = NoopClauneTelemetryRecorder,
 ) : ModelGateway {
     private val sessionFactory = ClauneAgentSessionFactory(codingSessionStore, agentDir)
     private val activeSessionLock = Mutex()
@@ -72,8 +107,7 @@ class PiAgentModelGateway(
     private var activeModelId: String? = null
     private var activeThinkingConfig: ClauneThinkingConfig? = null
     private var activeSessionUnsubscribe: (() -> Unit)? = null
-    private var activeRunId: String? = null
-    private var activeEventTrace = CopyOnWriteArrayList<SerializedAgentEvent>()
+    private var activeRunTrace: ActiveRunTrace? = null
     private val terminalOutcomeRecorder = TerminalOutcomeRecorder()
 
     override fun currentModelName(): String = ClauneModelCatalog.selectedModelName(settingsStore.state.value)
@@ -115,30 +149,36 @@ class PiAgentModelGateway(
             return ModelTurnOutput.Blocked("Selected model provider is inconsistent with the catalog.")
         }
 
+        telemetryRecorder.startRun(input, modelConfig.model.provider, modelConfig.model.id, systemPrompt, prompt)
+
         if (input.screenObservation.foregroundPackage == "unavailable") {
-            return ModelTurnOutput.Blocked(
-                "No screen state was captured. Enable the accessibility service, reopen the target app, and retry.",
-            )
+            val blocked =
+                ModelTurnOutput.Blocked(
+                    "No screen state was captured. Enable the accessibility service, reopen the target app, and retry.",
+                )
+            telemetryRecorder.endRun(input.runId, blocked)
+            return blocked
         }
 
-        val agentSession =
-            ensureMainSession(
-                input,
-                systemPrompt,
-                modelConfig.model,
-                modelConfig.authRequirement,
-                apiKeyForSession,
-                authMarker,
-                thinkingConfig,
-                mainTools,
-            )
-        activeRunId = input.runId
-        activeEventTrace = CopyOnWriteArrayList()
+        activeRunTrace = ActiveRunTrace(input)
         sessionCoordinator.logEvent("Agent started.")
         sessionCoordinator.setStreaming(true)
 
+        var agentSession: AgentSession? = null
+        var finalOutput: ModelTurnOutput? = null
         val result =
             try {
+                agentSession =
+                    ensureMainSession(
+                        input,
+                        systemPrompt,
+                        modelConfig.model,
+                        modelConfig.authRequirement,
+                        apiKeyForSession,
+                        authMarker,
+                        thinkingConfig,
+                        mainTools,
+                    )
                 agentSession.prompt(prompt)
                 val assistantError = finalAssistantError(agentSession.messages)
                 val terminalOutcome = terminalOutcomeRecorder.outcome
@@ -151,7 +191,8 @@ class PiAgentModelGateway(
                         "The model ended without calling finish_run. Retry with a clearer request or inspect the run artifacts.",
                     )
                 }
-                runCatching { artifactStore.writeFinalOutput(input.runId, parsedResult.toArtifactText()) }
+                finalOutput = parsedResult
+                runCatching { artifactStore.writeFinalOutput(input.runId, parsedResult.toStatusMessageJsonString()) }
                 if (assistantError.isNullOrBlank() && terminalOutcome != null) {
                     runMemoryReflection(
                         input,
@@ -164,7 +205,7 @@ class PiAgentModelGateway(
                 }
                 parsedResult
             } catch (cancelled: CancellationException) {
-                agentSession.abort()
+                agentSession?.abort()
                 throw cancelled
             } catch (throwable: Throwable) {
                 sessionCoordinator.logEvent(
@@ -172,20 +213,21 @@ class PiAgentModelGateway(
                 )
                 ModelTurnOutput.Blocked(
                     "Model request failed. ${throwable.message ?: throwable::class.simpleName ?: "Unknown failure."}",
-                )
+                ).also { finalOutput = it }
             } finally {
                 sessionCoordinator.setStreaming(false)
                 withContext(NonCancellable) {
                     val messageSnapshot =
                         runCatching {
-                            agentSession.messages.toList().filterIsInstance<Message>()
+                            agentSession?.messages.orEmpty().toList().filterIsInstance<Message>()
                         }.getOrElse { emptyList() }
                     runCatching {
                         artifactStore.writeAgentMessages(input.runId, messageSnapshot)
                     }
-                    runCatching { artifactStore.writeAgentEvents(input.runId, activeEventTrace.toList()) }
+                    runCatching { artifactStore.writeAgentEvents(input.runId, activeRunTrace?.snapshot().orEmpty()) }
                 }
-                activeRunId = null
+                telemetryRecorder.endRun(input.runId, finalOutput)
+                activeRunTrace = null
             }
 
         return result
@@ -225,6 +267,7 @@ class PiAgentModelGateway(
         apiKey = apiKey,
         thinkingLevel = thinkingConfig.level,
         thinkingBudgets = thinkingConfig.budgets,
+        observationHooks = observationHooks(input, ClauneTelemetryPhase.MAIN),
     )
 
     @Suppress("ktlint:standard:function-signature")
@@ -264,9 +307,10 @@ class PiAgentModelGateway(
                     when (sessionEvent) {
                         is pi.coding.agent.core.AgentSessionEvent.Agent -> {
                             runCatching {
-                                activeRunId?.let { runId ->
-                                    activeEventTrace += AgentTranscriptSerializer.serializeEvent(sessionEvent.event)
-                                }
+                                activeRunTrace?.add(AgentTranscriptSerializer.serializeEvent(sessionEvent.event))
+                            }
+                            runCatching {
+                                observeProviderMessageEnd(sessionEvent.event)
                             }
                             runCatching {
                                 logAgentEvent(sessionEvent.event)
@@ -279,11 +323,53 @@ class PiAgentModelGateway(
                         }
 
                         is pi.coding.agent.core.AgentSessionEvent.CompactionStart -> {
+                            activeRunTrace?.input?.let { runInput ->
+                                val reason = sessionEvent.reason.name.lowercase()
+                                val payload =
+                                    buildJsonObject {
+                                        put("reason", reason)
+                                    }
+                                appendObservationEvent(
+                                    ClauneTelemetryEventType.COMPACTION_START,
+                                    input = runInput,
+                                    phase = ClauneTelemetryPhase.MAIN,
+                                    payload = payload,
+                                )
+                                telemetryRecorder.recordCompactionStart(
+                                    telemetryContext(runInput, ClauneTelemetryPhase.MAIN),
+                                    reason = reason,
+                                )
+                            }
                             sessionCoordinator.setCompacting(true)
                             sessionCoordinator.logEvent("Compacting session context…")
                         }
 
                         is pi.coding.agent.core.AgentSessionEvent.CompactionEnd -> {
+                            activeRunTrace?.input?.let { runInput ->
+                                val reason = sessionEvent.reason.name.lowercase()
+                                val payload =
+                                    buildJsonObject {
+                                        put("reason", reason)
+                                        put("aborted", sessionEvent.aborted)
+                                        put("willRetry", sessionEvent.willRetry)
+                                        put("hasResult", sessionEvent.result != null)
+                                        sessionEvent.errorMessage?.let { put("errorMessage", it) }
+                                    }
+                                appendObservationEvent(
+                                    ClauneTelemetryEventType.COMPACTION_END,
+                                    input = runInput,
+                                    phase = ClauneTelemetryPhase.MAIN,
+                                    payload = payload,
+                                )
+                                telemetryRecorder.recordCompactionEnd(
+                                    context = telemetryContext(runInput, ClauneTelemetryPhase.MAIN),
+                                    reason = reason,
+                                    aborted = sessionEvent.aborted,
+                                    willRetry = sessionEvent.willRetry,
+                                    hasResult = sessionEvent.result != null,
+                                    errorMessage = sessionEvent.errorMessage,
+                                )
+                            }
                             sessionCoordinator.setCompacting(false)
                             if (sessionEvent.aborted) {
                                 sessionCoordinator.logEvent("Compaction was aborted.")
@@ -296,7 +382,9 @@ class PiAgentModelGateway(
                     }
                 }
         }
-        activeAgentSession!!
+        activeAgentSession!!.also { session ->
+            session.agent.applyObservationHooks(observationHooks(input, ClauneTelemetryPhase.MAIN))
+        }
     }
 
     private fun mainToolDefinitions(): List<ToolDefinition<*>> = listOf(
@@ -315,6 +403,20 @@ class PiAgentModelGateway(
     private fun buildSystemPrompt(memoryContent: String, tools: List<ToolDefinition<*>>): String = SystemPromptBuilder.build(
         memoryContent = memoryContent,
         tools = tools,
+    )
+
+    private fun observationHooks(
+        input: ModelTurnInput,
+        phase: ClauneTelemetryPhase,
+        beforeToolCallDelegate: (suspend (BeforeToolCallContext, pi.ai.core.AbortSignal?) -> BeforeToolCallResult?)? = null,
+    ): AgentObservationHooks = AgentObservationHooks(
+        beforeToolCall = { context, signal ->
+            observeBeforeToolCall(input, phase, context, signal)
+            beforeToolCallDelegate?.invoke(context, signal)
+        },
+        afterToolCall = { context, signal -> observeAfterToolCall(input, phase, context, signal) },
+        onPayload = { payload, model -> observeProviderPayload(input, phase, payload, model) },
+        onResponse = { response, model -> observeProviderResponse(input, phase, response, model) },
     )
 
     @Suppress("ktlint:standard:function-signature")
@@ -354,11 +456,33 @@ class PiAgentModelGateway(
                 apiKey = apiKey,
                 thinkingLevel = thinkingConfig.level,
                 thinkingBudgets = thinkingConfig.budgets,
-                beforeToolCall = { context, _ -> reflectionBudget.beforeToolCall(context) },
+                observationHooks =
+                observationHooks(input, ClauneTelemetryPhase.MEMORY_REFLECTION) { context, _ ->
+                    reflectionBudget.beforeToolCall(context)
+                },
             )
 
+        val reflectionUnsubscribe =
+            reflectionSession.subscribe { sessionEvent ->
+                if (sessionEvent is pi.coding.agent.core.AgentSessionEvent.Agent) {
+                    runCatching {
+                        activeRunTrace?.add(AgentTranscriptSerializer.serializeEvent(sessionEvent.event))
+                    }
+                    runCatching {
+                        val message = (sessionEvent.event as? AgentEvent.MessageEnd)?.message as? AssistantMessage
+                        if (message != null) {
+                            appendProviderMessageObservation(input, ClauneTelemetryPhase.MEMORY_REFLECTION, message)
+                        }
+                    }
+                }
+            }
+
         runCatching {
-            reflectionSession.prompt(reflectionPrompt)
+            try {
+                reflectionSession.prompt(reflectionPrompt)
+            } finally {
+                reflectionUnsubscribe()
+            }
             val reflectionOutput = finalAssistantText(reflectionSession.messages)
             runCatching { artifactStore.writeMemoryReflectionOutput(input.runId, reflectionOutput) }
             val memoryChanged = memoryStore.read() != memoryBeforeReflection
@@ -405,6 +529,190 @@ class PiAgentModelGateway(
         }
     }
 
+    private suspend fun observeBeforeToolCall(
+        input: ModelTurnInput,
+        phase: ClauneTelemetryPhase,
+        context: BeforeToolCallContext,
+        @Suppress("UNUSED_PARAMETER") signal: pi.ai.core.AbortSignal?,
+    ): BeforeToolCallResult? {
+        val payload =
+            buildJsonObject {
+                put("toolCallId", context.toolCall.id)
+                put("toolName", context.toolCall.name)
+                put("arguments", context.toolCall.arguments)
+            }
+        appendObservationEvent(
+            ClauneTelemetryEventType.TOOL_CALL,
+            input = input,
+            phase = phase,
+            payload = payload,
+        )
+        telemetryRecorder.recordToolCall(
+            context = telemetryContext(input, phase),
+            toolCallId = context.toolCall.id,
+            toolName = context.toolCall.name,
+            arguments = context.toolCall.arguments,
+        )
+        return null
+    }
+
+    private suspend fun observeAfterToolCall(
+        input: ModelTurnInput,
+        phase: ClauneTelemetryPhase,
+        context: AfterToolCallContext,
+        @Suppress("UNUSED_PARAMETER") signal: pi.ai.core.AbortSignal?,
+    ): AfterToolCallResult? {
+        val result = AgentTranscriptSerializer.serializeToolResult(context.result)
+        val payload =
+            buildJsonObject {
+                put("toolCallId", context.toolCall.id)
+                put("toolName", context.toolCall.name)
+                put("isError", context.isError)
+                put("result", result)
+            }
+        appendObservationEvent(
+            ClauneTelemetryEventType.TOOL_RESULT,
+            input = input,
+            phase = phase,
+            payload = payload,
+        )
+        telemetryRecorder.recordToolResult(
+            context = telemetryContext(input, phase),
+            toolCallId = context.toolCall.id,
+            toolName = context.toolCall.name,
+            isError = context.isError,
+            result = result,
+        )
+        return null
+    }
+
+    @Suppress("ktlint:standard:function-signature")
+    private suspend fun observeProviderPayload(input: ModelTurnInput, phase: ClauneTelemetryPhase, payload: Any, model: Model<*>): Any {
+        val payloadKind = payload::class.simpleName ?: "unknown"
+        val request = if (telemetryRecorder.recordsRawProviderPayloads) providerPayloadToJson(payload) else null
+        appendObservationEvent(
+            ClauneTelemetryEventType.PROVIDER_PAYLOAD,
+            input = input,
+            phase = phase,
+            model = model,
+            payload =
+            buildJsonObject {
+                put("payloadKind", payloadKind)
+                if (request == null) {
+                    put("requestOmitted", true)
+                } else {
+                    put("request", request)
+                }
+            },
+        )
+        if (request != null) {
+            telemetryRecorder.recordProviderPayload(
+                context = telemetryContext(input, phase, model),
+                payloadKind = payloadKind,
+                request = request,
+            )
+        }
+        return payload
+    }
+
+    @Suppress("ktlint:standard:function-signature")
+    private suspend fun observeProviderResponse(
+        input: ModelTurnInput,
+        phase: ClauneTelemetryPhase,
+        response: ProviderResponse,
+        model: Model<*>,
+    ) {
+        val headers = response.headers.toSortedMap()
+        appendObservationEvent(
+            ClauneTelemetryEventType.PROVIDER_RESPONSE,
+            input = input,
+            phase = phase,
+            model = model,
+            payload =
+            buildJsonObject {
+                put("status", response.status)
+                put("headerNames", headers.keys.joinToString(","))
+                put(
+                    "headers",
+                    buildJsonObject {
+                        headers.forEach { (name, value) ->
+                            put(name, value)
+                        }
+                    },
+                )
+            },
+        )
+        telemetryRecorder.recordProviderResponse(
+            context = telemetryContext(input, phase, model),
+            status = response.status,
+            headers = headers,
+        )
+    }
+
+    private fun observeProviderMessageEnd(event: AgentEvent) {
+        val runInput = activeRunTrace?.input ?: return
+        val message = (event as? AgentEvent.MessageEnd)?.message as? AssistantMessage ?: return
+        appendProviderMessageObservation(runInput, ClauneTelemetryPhase.MAIN, message)
+    }
+
+    private fun appendProviderMessageObservation(input: ModelTurnInput, phase: ClauneTelemetryPhase, message: AssistantMessage) {
+        val messageJson = AgentTranscriptSerializer.serializeMessage(message).payload
+        appendObservationEvent(
+            ClauneTelemetryEventType.PROVIDER_MESSAGE,
+            input = input,
+            phase = phase,
+            payload =
+            buildJsonObject {
+                put("message", messageJson)
+            },
+        )
+        telemetryRecorder.recordProviderMessage(telemetryContext(input, phase), messageJson)
+    }
+
+    private fun appendObservationEvent(
+        type: ClauneTelemetryEventType,
+        input: ModelTurnInput,
+        phase: ClauneTelemetryPhase,
+        model: Model<*>? = null,
+        payload: JsonElement = buildJsonObject {},
+    ) {
+        val runTrace = activeRunTrace ?: return
+        if (runTrace.input.runId != input.runId) {
+            return
+        }
+        val event =
+            SerializedAgentEvent(
+                type.wireName,
+                buildJsonObject {
+                    put("runId", input.runId)
+                    input.persistentSessionId?.let { put("sessionId", it) }
+                    put("phase", phase.wireName)
+                    put("selectedProvider", model?.provider ?: activeModelProvider.orEmpty())
+                    put("selectedModel", model?.id ?: activeModelId.orEmpty())
+                    put("foregroundPackage", input.screenObservation.foregroundPackage)
+                    input.screenObservation.baselineSnapshotId?.let { put("baselineSnapshotId", it) }
+                    put("currentSnapshotId", input.screenObservation.currentSnapshotId)
+                    put("hostCallCount", logStore.recentHostCallCount())
+                    put("status", sessionCoordinator.uiState.value.status.name)
+                    put("payload", payload)
+                },
+            )
+        runTrace.add(event)
+    }
+
+    private fun telemetryContext(input: ModelTurnInput, phase: ClauneTelemetryPhase, model: Model<*>? = null): ClauneTelemetryContext =
+        ClauneTelemetryContext(
+            input = input,
+            phase = phase,
+            provider = model?.provider ?: activeModelProvider.orEmpty(),
+            model = model?.id ?: activeModelId.orEmpty(),
+        )
+
+    private fun providerPayloadToJson(payload: Any): JsonElement = when (payload) {
+        is JsonElement -> payload
+        else -> JsonPrimitive(payload.toString())
+    }
+
     private fun finalAssistantText(messages: List<Any>): String {
         val assistant = messages.filterIsInstance<pi.ai.core.AssistantMessage>().lastOrNull() ?: return ""
         return assistant.content.filterIsInstance<TextContent>().joinToString(separator = "\n") { it.text }
@@ -428,7 +736,7 @@ class PiAgentModelGateway(
     }
 
     companion object {
-        const val PROMPT_VERSION = "pi-agent-provider-settings-v8"
+        const val PROMPT_VERSION = CLAUNE_PROMPT_VERSION
 
         internal fun systemPromptForTests(memoryContent: String = "# Claune Memory\n\n"): String = SystemPromptBuilder.build(
             memoryContent = memoryContent,
@@ -441,27 +749,6 @@ class PiAgentModelGateway(
             ),
         )
     }
-}
-
-private fun ModelTurnOutput.toArtifactText(): String = when (this) {
-    is ModelTurnOutput.Blocked -> """{"status":"blocked","message":${reason.jsonStringLiteral()}}"""
-    is ModelTurnOutput.Completion -> """{"status":"completed","message":${summary.jsonStringLiteral()}}"""
-    is ModelTurnOutput.Message -> """{"status":"message","message":${messageToUser.jsonStringLiteral()}}"""
-}
-
-private fun String.jsonStringLiteral(): String = buildString {
-    append('"')
-    this@jsonStringLiteral.forEach { char ->
-        when (char) {
-            '\\' -> append("\\\\")
-            '"' -> append("\\\"")
-            '\n' -> append("\\n")
-            '\r' -> append("\\r")
-            '\t' -> append("\\t")
-            else -> append(char)
-        }
-    }
-    append('"')
 }
 
 private object FailingScriptRuntime : ScriptRuntime {

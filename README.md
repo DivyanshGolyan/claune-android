@@ -64,6 +64,19 @@ claune.geminiApiKey=...
 
 You can also add or replace API keys from the app's Settings screen. The build still reads the `claune.*ApiKey` values as local development defaults.
 
+Optional LangSmith tracing for debug builds can also be enabled from `android/local.properties`:
+
+```properties
+claune.telemetry.enabled=true
+claune.langsmith.apiUrl=https://api.smith.langchain.com
+claune.langsmith.project=claune
+claune.langsmith.apiKey=lsv2_pt_...
+```
+
+Keep the LangSmith key local and rotate it if it has been pasted into chat or logs. This debug path exports directly from the app through LangSmith's native Runs API; use a collector or proxy before treating it as production telemetry.
+
+LangSmith traces use a root `chain` run named from the user prompt, `agent.step` chain children for the incremental story, `llm` children for exact provider calls, and `tool` children for exact tool executions. LLM runs store the full provider context in `inputs.messages`, the step delta in `inputs.delta_messages`, structured assistant output in `outputs.messages`, and token/cost data in `outputs.usage_metadata`. Query conversations through `metadata.thread_id` and individual runs through `metadata.claune_run_id`.
+
 Install a debug build:
 
 ```sh

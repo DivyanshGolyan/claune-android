@@ -47,6 +47,8 @@ interface SessionLogStore {
     fun recentScreenStates(): List<ScreenState>
 
     fun recentHostCalls(): List<HostCallRecord>
+
+    fun recentHostCallCount(): Int = recentHostCalls().size
 }
 
 class InMemorySessionLogStore : SessionLogStore {
@@ -72,6 +74,8 @@ class InMemorySessionLogStore : SessionLogStore {
     override fun recentScreenStates(): List<ScreenState> = screenStates.toList()
 
     override fun recentHostCalls(): List<HostCallRecord> = hostCalls.toList()
+
+    override fun recentHostCallCount(): Int = hostCalls.size
 
     private fun <T> trim(deque: ArrayDeque<T>) {
         while (deque.size > 50) {
