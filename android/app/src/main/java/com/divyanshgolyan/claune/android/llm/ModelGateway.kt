@@ -42,6 +42,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import pi.agent.core.AfterToolCallContext
 import pi.agent.core.AfterToolCallResult
@@ -508,6 +511,12 @@ class PiAgentModelGateway(
                 sessionCoordinator.logEvent(
                     "Memory reflection updated /work/memory.${note.takeIf(String::isNotBlank)?.let { " $it" } ?: ""}",
                 )
+            } else if (reflectionOutput.contains("Durable learning found", ignoreCase = true) ||
+                reflectionOutput.contains("MEMORY_UPDATED", ignoreCase = true)
+            ) {
+                sessionCoordinator.logEvent(
+                    "Memory reflection identified a durable learning but did not update /work/memory. $note",
+                )
             } else {
                 sessionCoordinator.logEvent(
                     "Memory reflection made no durable update.${note.takeIf(String::isNotBlank)?.let { " $it" } ?: ""}",
@@ -580,11 +589,12 @@ class PiAgentModelGateway(
         @Suppress("UNUSED_PARAMETER") signal: pi.ai.core.AbortSignal?,
     ): AfterToolCallResult? {
         val result = AgentTranscriptSerializer.serializeToolResult(context.result)
+        val effectiveIsError = context.isError || isNonZeroBashResult(context, result)
         val payload =
             buildJsonObject {
                 put("toolCallId", context.toolCall.id)
                 put("toolName", context.toolCall.name)
-                put("isError", context.isError)
+                put("isError", effectiveIsError)
                 put("result", result)
             }
         appendObservationEvent(
@@ -597,10 +607,25 @@ class PiAgentModelGateway(
             context = telemetryContext(input, phase),
             toolCallId = context.toolCall.id,
             toolName = context.toolCall.name,
-            isError = context.isError,
+            isError = effectiveIsError,
             result = result,
         )
-        return null
+        return if (effectiveIsError != context.isError) {
+            AfterToolCallResult(isError = effectiveIsError)
+        } else {
+            null
+        }
+    }
+
+    private fun isNonZeroBashResult(context: AfterToolCallContext, result: kotlinx.serialization.json.JsonObject): Boolean {
+        if (context.toolCall.name != "bash") return false
+        val exitCode = result["details"]
+            ?.jsonObject
+            ?.get("exitCode")
+            ?.jsonPrimitive
+            ?.intOrNull
+            ?: return false
+        return exitCode != 0
     }
 
     @Suppress("ktlint:standard:function-signature")

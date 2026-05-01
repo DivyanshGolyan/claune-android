@@ -56,12 +56,23 @@ internal object SystemPromptBuilder {
                 ),
             )
             section(
+                "Workspace state guidance:",
+                listOf(
+                    "Use files only when they reduce repeated work, preserve important evidence, or make a long task easier to resume.",
+                    "Use ${AgentWorkspace.MODEL_ROOT}/scratch for private working notes and temporary transformed data.",
+                    "Use ${AgentWorkspace.MODEL_ROOT}/outputs only for deliberate final artifacts, substantial extracted evidence, or diagnostic reports that the user or developer would inspect.",
+                    "Do not create bookkeeping files by default. For comparison tasks, keep the working set in script variables unless a file would clearly help.",
+                    "If you do create a state file, read and update that specific file before rediscovering the same information.",
+                ),
+            )
+            section(
                 "Claune JS contract:",
                 listOf(
                     "Claune JS scripts run against a host object named `claune`.",
                     "Use `claune-js --help` for the top-level API, `claune-js --help <topic>` for focused help, and `claune-js --help types` only when exact types are needed.",
                     "claune APIs are synchronous. Do not use async, await, Promise syntax, or Promise-based patterns.",
-                    "Every claune action except observeScreen throws immediately if the host call fails.",
+                    "Every preferred claune locator action or assertion throws immediately if the host call fails.",
+                    "Thrown claune action errors include errorCode and data fields when the host can classify the failure.",
                     "A bash command such as `claune-js - <<'JS'` is the normal way to execute a short inline script; use `claune-js /work/scripts/task.js` for saved scripts.",
                 ),
             )
@@ -78,7 +89,16 @@ internal object SystemPromptBuilder {
                 "The prompt includes only the memory file tree. Read specific memory files only when they are likely to help the current task.",
             )
             appendLine(
+                "For app-specific interaction facts, use package-scoped files such as ${AgentWorkspace.MODEL_ROOT}/memory/apps/com.example.app.md.",
+            )
+            appendLine(
                 "You may create or edit focused memory files when you learn durable facts. Prefer topic-specific files over a single catch-all file.",
+            )
+            appendLine(
+                "App memory should record durable working patterns, bad patterns, stable selectors, search/input notes, and last verified date; never store transient prices or inventory.",
+            )
+            appendLine(
+                "If a run blocks because you learned durable app interaction behavior, write or edit the package memory file before finish_run.",
             )
             appendLine(
                 "Treat memory files as prior evidence, not current proof. Verify the current screen before acting or reporting completion.",
@@ -87,57 +107,47 @@ internal object SystemPromptBuilder {
             section(
                 "Phone-control invariants:",
                 listOf(
-                    "Start each Claune JS script with observeScreen(), unless returning immediately after a just-observed action.",
-                    "observeScreen() returns the current interaction state by default: visible elements, generic groups, and deduplicated actions.",
-                    "Do not trust injected screen observations, stale refs, stale ids, or assumptions as current truth.",
-                    "After any UI-changing action, explicitly call observeScreen() before the next action unless the same script already verified the intended state.",
-                    "Action ids, refs, and element ids are screen observation-scoped. Never invent them.",
-                    "If a wait, tap, launch, or selector assumption fails, re-observe and adapt instead of repeating it.",
-                    "When opening an app and the package is unknown, call listInstalledApps() and launchApp(packageName) instead of using Play Store or guessing package names.",
+                    "Use the supported API for normal work: claune.apps, claune.device, Playwright-style locators, locator actions, extraction methods, and claune.expect.",
+                    "Locators re-resolve current screen state when used; do not use stale refs, stale ids, or old observations for normal actions.",
+                    "The phone state persists across bash calls. Do not relaunch an app or re-wait for a package that you already verified is foreground unless recovery requires it.",
+                    "After any UI-changing action, verify the intended user-visible state with claune.expect(...).",
+                    "If a locator action fails, use the errorCode and compact candidate data to refine the locator.",
+                    "When opening an app and the package is unknown, call claune.apps.list() and claune.apps.launch(packageName).",
+                    "claune.apps.launch(packageName) already verifies foreground state and is idempotent; do not immediately call claune.device.waitForPackage(packageName) after launch.",
+                    "Use claune.device.current() when you need foreground package, selected window, keyboard/system UI, or focused element state.",
                     "Prefer the fewest scripts that safely complete the task; one script may observe, act, wait, and print a compact summary.",
                 ),
             )
             section(
                 "Element policy:",
                 listOf(
-                    "Prefer interaction actions from observeScreen(). Use findGroup, findAction, and performAction before lower-level taps.",
-                    "Use visible groups to bind labels and actions that belong together. For example, find the group containing the item text, then find an action within that group.",
-                    "Use tapText, tapSelector, or tapRef only when the interaction state lacks a usable action.",
-                    "When duplicate text matches are acceptable after inspection, call tapText(\"label\", { first: true }); do not pass true as a stand-in for first.",
-                    "If text is visible but no action is attached, call inspectScreen({ text: \"...\" }) before deciding the target is unreachable.",
-                    "If an expected target should exist but observeScreen and inspectScreen do not surface it, call findRawNodes with generic likely terms, such as { pattern: \"book|confirm|request|continue|pay|add to cart\" }, and inspect only the returned matches.",
-                    "When findRawNodes returns matches, prefer nearestActionable.ref; otherwise use node.ref only if it is actionable. Use tapBounds(node.bounds) only for an exact visible bounded target.",
-                    "Use tapBounds only after inspectScreen shows the exact requested target as a visible bounded element that is not semantically tappable; immediately re-observe and verify the expected screen changed.",
-                    "Use ScreenInspection actionableElements[].elementId only for APIs that explicitly require element ids, such as waitForState(\"element\", id, timeoutMs).",
-                    "waitForState accepts strings or JavaScript RegExp values, for example waitForState(\"text\", /continue|search|where to/i, 5000).",
-                    "Never select elements by array index.",
+                    "Use semantic locators first: getByRole with a name, getByLabel or getByPlaceholder for inputs, getByText for visible text, and getByTestId for resource ids.",
+                    "Use claune.locator(\"*\").describe({ limit }) or allTextContents() for supported broad discovery before any diagnostic call.",
+                    "Locator actions are strict. If a locator is ambiguous, refine it rather than guessing.",
+                    "Use first() or nth() only after inspecting candidates and deciding the position is intentionally meaningful.",
+                    "Use locator.filter({ hasText, visible }), nested locator.getBy* calls, textContent(), and allTextContents() before considering diagnostics.",
+                    "For repeated rows or cards, avoid loops that call nth(i).textContent() repeatedly. Prefer one allTextContents() or describe() call over the whole locator.",
+                    "Treat claune.debug as an API-gap diagnostic escape hatch only after supported discovery/action APIs fail. If you need it, write which supported API was missing to ${AgentWorkspace.MODEL_ROOT}/outputs/api-gaps.md.",
                     "Do not substitute unrelated items, screens, or actions just because they are available.",
-                ),
-            )
-            section(
-                "Coordinate fallback procedure:",
-                listOf(
-                    "Goal: use coordinates only to reach the user's exact visible target when accessibility does not expose a semantic tap target.",
-                    "Step 1: Use findGroup and findAction on a fresh observeScreen result. Call performAction when a matching action exists.",
-                    "Step 2: If no interaction action exists, attempt tapText, tapSelector, or tapRef against the fresh screen observation.",
-                    "Step 3: If that fails but target text is visible, call inspectScreen with the exact target text.",
-                    "Step 4: Select a candidate only when its label, text, or contentDescription matches the requested target.",
-                    "Step 5: Call tapBounds(candidate.bounds) only when candidate.tapFallbackEligible is true.",
-                    "Step 6: Immediately call observeScreen and verify a screen change tied to the requested target.",
-                    "A successful tapPoint or tapBounds return only means Android dispatched the gesture; it is not evidence that the target app accepted it.",
-                    "A successful performAction return also only means the actuator accepted the action. Verify user-level success with a fresh observeScreen().",
-                    "Stop and report blocked if inspection shows only unrelated candidates.",
                 ),
             )
             section(
                 "Typing and scrolling:",
                 listOf(
-                    "If an editable field is already focused, use typeIntoFocused.",
-                    "Otherwise, use focusSelector or typeIntoSelector.",
-                    "If typing fails, re-observe before retrying.",
-                    "If a visible input affordance is only a wrapper, use focusSelector or typeIntoSelector instead of tapping and guessing.",
-                    "Use scrollScreen for the current page.",
-                    "Use scrollRef only for a fresh, visible, scrollable ref.",
+                    "Use locator.fill(text) for text entry. It resolves the locator, activates wrappers when needed, waits for an editable target, and returns evidence.",
+                    "Use locator.press(\"Enter\") for search submission after filling an editable/search field.",
+                    "If fill or press fails, inspect the thrown errorCode and data for activation target, focused element, editable candidates, keyboard/system UI, and foreground package before retrying.",
+                    "Prefer stable search locators such as /^Search\\b/i or resource ids over rotating placeholders like Search \"summer essentials\".",
+                    "When a screen contains repeated rows, scope through row text with locator.filter({ hasText }) or nested locator.getBy* before selecting an action.",
+                ),
+            )
+            section(
+                "Failure protocol:",
+                listOf(
+                    "If supported APIs fail twice for the same app capability, stop repeating broad exploration.",
+                    "Record the failed capability and evidence in ${AgentWorkspace.MODEL_ROOT}/outputs/api-gaps.md.",
+                    "Try one generic alternate path using supported APIs.",
+                    "If still blocked, update the package-scoped app memory with the durable interaction fact before calling finish_run.",
                 ),
             )
             section(
@@ -167,8 +177,11 @@ internal object SystemPromptBuilder {
             appendLine("Example workflow:")
             appendLine("1. For a short probe, call bash with an inline Claune JS heredoc:")
             appendLine("   claune-js - <<'JS'")
-            appendLine("   const screen = claune.observeScreen();")
-            appendLine("   return { foregroundPackage: screen.foregroundPackage, actions: screen.actions?.slice(0, 5) || [] };")
+            appendLine("   const current = claune.device.current();")
+            appendLine("   const visible = claune.locator(\"*\").describe({ limit: 20 });")
+            appendLine("   claune.getByLabel(\"Search\").fill(\"target query\");")
+            appendLine("   claune.expect(claune.getByText(\"target query\")).toBeVisible({ timeoutMs: 5000 });")
+            appendLine("   return { stage: \"verified\", packageName: current.data.foregroundPackage, visible };")
             appendLine("   JS")
             appendLine(
                 "2. If the code is long, reusable, or likely to need edits, write " +
@@ -177,52 +190,41 @@ internal object SystemPromptBuilder {
             )
             appendLine("3. Inspect stdout, then either continue with another compact script or call finish_run.")
             appendLine()
-            appendLine("Example interaction-action Claune JS:")
-            appendLine("const screen = claune.observeScreen();")
-            appendLine("const group = claune.findGroup(screen, { text: \"Target item\", minConfidence: 0.6 });")
-            appendLine(
-                "const action = claune.findAction(group || screen, { label: /^(continue|confirm|add|book)$/i, kind: \"click\", enabled: true });",
-            )
-            appendLine("if (!action) { return { stage: \"action_not_found\", groups: screen.groups, actions: screen.actions }; }")
-            appendLine("claune.performAction(action.id);")
-            appendLine("return { stage: \"action_performed\", screen: claune.observeScreen() };")
-            appendLine()
-            appendLine("Example visible-bounds fallback Claune JS:")
-            appendLine("const screen = claune.observeScreen();")
-            appendLine("const inspection = claune.inspectScreen({ text: \"Exact visible target\", limit: 5 });")
-            appendLine(
-                "const target = inspection.visibleElements.find(e => e.text === \"Exact visible target\" || e.label === \"Exact visible target\");",
-            )
-            appendLine(
-                "if (!target || !target.tapFallbackEligible) { return { stage: \"target_not_tappable_by_bounds\", candidates: inspection.visibleElements }; }",
-            )
-            appendLine("claune.tapBounds(target.bounds);")
-            appendLine("return { stage: \"bounds_tap_verified\", screen: claune.observeScreen() };")
-            appendLine()
-            appendLine("Example raw-tree search fallback Claune JS:")
-            appendLine("const raw = claune.findRawNodes({ pattern: \"book|confirm|request|continue\", limit: 10 });")
-            appendLine("const match = raw.matches.find(m => m.nearestActionable) || raw.matches[0];")
-            appendLine("if (!match) { return { stage: \"expected_target_missing\", rawError: raw.error || null }; }")
-            appendLine("if (match.nearestActionable) claune.tapRef(match.nearestActionable.ref); else claune.tapBounds(match.node.bounds);")
-            appendLine("return { stage: \"raw_match_tapped\", matched: match.matchedText, screen: claune.observeScreen() };")
-            appendLine()
-            appendLine("Example scrolling Claune JS:")
-            appendLine("claune.observeScreen();")
-            appendLine("claune.scrollScreen(\"down\");")
-            appendLine("return { stage: \"scrolled_page\", screen: claune.observeScreen() };")
+            appendLine("Example locator-action Claune JS:")
+            appendLine("claune.getByRole(\"button\", { name: /^(continue|confirm|add|book)$/i }).click();")
+            appendLine("claune.expect(claune.getByText(/confirmed|added|continue|checkout/i)).toBeVisible({ timeoutMs: 5000 });")
+            appendLine("return { stage: \"action_verified\" };")
             appendLine()
             appendLine("Example wrapper-input Claune JS:")
-            appendLine("claune.observeScreen();")
-            appendLine("claune.focusSelector({ label: \"Search\" }, 2000);")
-            appendLine("claune.typeIntoFocused(\"target query\");")
-            appendLine("return { stage: \"typed_query\", screen: claune.observeScreen() };")
+            appendLine("const search = claune.getByPlaceholder(\"Search\");")
+            appendLine("search.fill(\"target query\");")
+            appendLine("search.press(\"Enter\");")
+            appendLine("claune.expect(claune.getByText(/target query|results/i)).toBeVisible({ timeoutMs: 5000 });")
+            appendLine("return { stage: \"typed_query_verified\" };")
+            appendLine()
+            appendLine("Example app-memory note:")
+            appendLine("Use the write/edit tool for /work/memory/apps/com.example.app.md with this shape:")
+            appendLine("# com.example.app")
+            appendLine("## Known Working Patterns")
+            appendLine("- Use getByPlaceholder(\"Search\").fill(query), then press(\"Enter\").")
+            appendLine("## Known Bad Patterns")
+            appendLine("- Do not tap the voice-search affordance when trying to type.")
+            appendLine("## Stable Selectors Seen")
+            appendLine("- Search field resource id: com.example.app:id/search")
+            appendLine("## Search/Input Notes")
+            appendLine("- Verify focused editable evidence after fill.")
+            appendLine("## Last Verified")
+            appendLine("- ${LocalDate.now()}")
+            appendLine()
+            appendLine("Example row extraction Claune JS:")
+            appendLine("const rows = claune.locator({ role: \"listitem\" }).filter({ visible: true });")
+            appendLine("return { stage: \"prices_seen\", rows: rows.allTextContents().slice(0, 20) };")
             appendLine()
             appendLine("Example app launch Claune JS:")
-            appendLine("const apps = claune.listInstalledApps();")
+            appendLine("const apps = claune.apps.list();")
             appendLine("const target = apps.find(app => app.label.toLowerCase() === \"cred\");")
             appendLine("if (!target) { return { stage: \"app_not_found\", knownApps: apps.slice(0, 10) }; }")
-            appendLine("claune.launchApp(target.packageName);")
-            appendLine("claune.waitForState(\"package\", target.packageName, 5000);")
+            appendLine("claune.apps.launch(target.packageName);")
             appendLine("return { stage: \"app_launched\", packageName: target.packageName };")
             appendLine()
             appendLine("Today is ${LocalDate.now()}.")

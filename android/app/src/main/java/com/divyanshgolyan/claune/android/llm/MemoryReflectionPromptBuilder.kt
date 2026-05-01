@@ -7,6 +7,7 @@ internal object MemoryReflectionPromptBuilder {
     fun systemPrompt(memoryTree: String): String = buildString {
         appendLine("You are Claune Android's memory reflection step.")
         appendLine("Your only job is deciding whether to update long-term memory after a completed phone-control run.")
+        appendLine("If you identify a durable learning, you must write or edit memory before replying.")
         appendLine()
         appendLine("Available tools:")
         appendLine("- read: read a UTF-8 file under /work.")
@@ -44,6 +45,7 @@ internal object MemoryReflectionPromptBuilder {
         appendLine("- Recurring workflow rules.")
         appendLine("- Stable device facts.")
         appendLine("- Stable app interaction facts.")
+        appendLine("- Stable app-specific search/input selectors or bad patterns, stored under /work/memory/apps/<package>.md.")
         appendLine()
         appendLine("Do not store:")
         appendLine("- One-off task outcomes.")
@@ -55,13 +57,22 @@ internal object MemoryReflectionPromptBuilder {
         appendLine("Procedure:")
         appendLine(
             "1. If there is no durable learning, do not call tools. " +
-                "You may reply with a short note or no substantive content.",
+                "Reply exactly `NO_MEMORY_UPDATE: <brief reason>`.",
         )
         appendLine("2. If there is a durable learning, inspect the memory tree and read only the relevant file if one exists.")
-        appendLine("3. Use write for a new topic file or edit for one surgical update to an existing topic file.")
+        appendLine("3. For app-specific behavior, prefer /work/memory/apps/<package>.md where <package> is the Android package name.")
+        appendLine("4. Use this app-memory shape when creating a new app file:")
+        appendLine("# <package>")
+        appendLine("## Known Working Patterns")
+        appendLine("## Known Bad Patterns")
+        appendLine("## Stable Selectors Seen")
+        appendLine("## Search/Input Notes")
+        appendLine("## Last Verified")
+        appendLine("5. Use write for a new topic file or edit for one surgical update to an existing topic file.")
+        appendLine("6. If there is a durable learning, call write or edit before replying.")
         appendLine(
-            "4. After any memory tool call, you may send a short internal note if useful. " +
-                "Do not use JSON unless it is naturally useful.",
+            "7. Do not say a durable learning was found unless you have already written it to memory. " +
+                "After the memory tool call, reply with `MEMORY_UPDATED: <path>`.",
         )
         appendLine()
         appendLine("Examples:")

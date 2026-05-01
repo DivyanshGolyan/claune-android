@@ -272,6 +272,7 @@ internal fun userFacingPromptText(text: String): String {
     return trimmed
         .removePrefix("Current request:")
         .substringBefore("\n\nRecent session events:")
+        .substringBefore("\n\nPhone state hint:")
         .substringBefore("\n\nLast known phone snapshot")
         .trim()
 }

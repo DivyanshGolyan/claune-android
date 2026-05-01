@@ -22,12 +22,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PiAgentModelGatewayTest {
     @Test
-    fun `prompt formatter includes current request events and actionable elements`() {
+    fun `prompt formatter includes request and compact phone hint`() {
         val prompt =
             PiAgentPromptFormatter.format(
                 ModelTurnInput(
@@ -43,11 +44,12 @@ class PiAgentModelGatewayTest {
         assertTrue(prompt.contains("Open Wi-Fi settings"))
         assertTrue(prompt.contains("Current request:"))
         assertTrue(prompt.contains("Run started"))
-        assertTrue(prompt.contains("Last known phone screen before your next action:"))
-        assertTrue(prompt.contains("This observation may already be stale. Observe the screen yourself before acting."))
-        assertTrue(prompt.contains("foregroundPackage: com.android.settings"))
-        assertTrue(prompt.contains("ref=el-1"))
-        assertTrue(prompt.contains("label=\"Wi-Fi\""))
+        assertTrue(prompt.contains("Phone state hint:"))
+        assertTrue(prompt.contains("lastForegroundPackage: com.android.settings"))
+        assertTrue(prompt.contains("observe the phone yourself with claune-js before acting"))
+        assertTrue(!prompt.contains("screenObservation:"))
+        assertTrue(!prompt.contains("ref=el-1"))
+        assertTrue(!prompt.contains("label=\"Wi-Fi\""))
     }
 
     @Test
@@ -64,11 +66,11 @@ class PiAgentModelGatewayTest {
                 ),
             )
 
-        assertTrue(prompt.contains("shellContext: The last known UI was Claune Android's own control shell."))
+        assertTrue(prompt.contains("shellContext: last known UI was Claune Android"))
     }
 
     @Test
-    fun `system prompt embeds stable contract and memory context`() {
+    fun `system prompt includes tools memory tree and no removed tools`() {
         val prompt =
             PiAgentModelGateway.systemPromptForTests(
                 """
@@ -78,18 +80,21 @@ class PiAgentModelGatewayTest {
                 """.trimIndent(),
             )
 
-        assertTrue(prompt.contains("Claune JS is available through bash:"))
-        assertTrue(prompt.contains("claune-js --help [topic]"))
-        assertTrue(prompt.contains("Top-level claune APIs:"))
-        assertTrue(prompt.contains("observeScreen"))
-        assertTrue(!prompt.contains("interface ClauneHost"))
-        assertTrue(!prompt.contains("TypeScript contract for the global `claune` object"))
         assertTrue(prompt.contains("- read:"))
         assertTrue(prompt.contains("- write:"))
         assertTrue(prompt.contains("- edit:"))
         assertTrue(prompt.contains("- bash:"))
         assertTrue(prompt.contains("- finish_run:"))
         assertTrue(prompt.contains("- ask_user:"))
+        assertTrue(prompt.contains("/work/memory/apps/settings.md (52 chars)"))
+        assertTrue(prompt.contains("claune.apps"))
+        assertTrue(prompt.contains("claune.device.current()"))
+        assertTrue(prompt.contains("claune.locator(\"*\").describe"))
+        assertTrue(prompt.contains("getByPlaceholder"))
+        assertTrue(prompt.contains("/work/memory/apps/com.example.app.md"))
+        assertFalse(prompt.contains("Example visible-bounds fallback Claune JS:"))
+        assertFalse(prompt.contains("Example raw-tree search fallback Claune JS:"))
+        assertFalse(prompt.contains("claune.debug.inspectScreen({ text: \"Exact visible target\", limit: 5 });"))
         assertTrue(!prompt.contains("- complete_task:"))
         assertTrue(!prompt.contains("- block_task:"))
         assertTrue(!prompt.contains("- question:"))
@@ -99,30 +104,10 @@ class PiAgentModelGatewayTest {
         assertTrue(!prompt.contains("- read_file:"))
         assertTrue(!prompt.contains("- write_file:"))
         assertTrue(!prompt.contains("- edit_file:"))
-        assertTrue(prompt.contains("Run outcome contract:"))
-        assertTrue(prompt.contains("User decision contract:"))
-        assertTrue(prompt.contains("The finish_run message is shown to the user and must be a final statement, not a question."))
-        assertTrue(prompt.contains("Use ask_user only when a user decision is needed before continuing the same run."))
-        assertTrue(prompt.contains("Workspace and bash contract:"))
-        assertTrue(prompt.contains("For short one-off phone probes, run inline Claune JS with bash using `claune-js - <<'JS'`"))
-        assertTrue(prompt.contains("A bash command such as `claune-js - <<'JS'` is the normal way to execute a short inline script"))
-        assertTrue(prompt.contains("Use `claune-js --help` for the top-level API"))
-        assertTrue(prompt.contains("Prefer interaction actions from observeScreen()."))
-        assertTrue(prompt.contains("Use scrollScreen for the current page."))
-        assertTrue(prompt.contains("For state-changing tasks"))
         assertTrue(!prompt.contains("For mutation requests"))
-        assertTrue(prompt.contains("Available tools:"))
-        assertTrue(prompt.contains("Memory directory tree:"))
-        assertTrue(prompt.contains("/work/memory/apps/settings.md (52 chars)"))
-        assertTrue(prompt.contains("The prompt includes only the memory file tree."))
-        assertTrue(prompt.contains("Treat memory files as prior evidence, not current proof."))
-        assertTrue(prompt.contains("Example wrapper-input Claune JS:"))
-        assertTrue(prompt.contains("Example scrolling Claune JS:"))
-        assertTrue(prompt.contains("Example interaction-action Claune JS:"))
-        assertTrue(prompt.contains("claune.performAction(action.id);"))
-        assertTrue(prompt.contains("claune.scrollScreen(\"down\");"))
-        assertTrue(prompt.contains("claune.focusSelector({ label: \"Search\" }, 2000);"))
-        assertTrue(prompt.contains("you are seeing Claune's control shell"))
+        assertTrue(!prompt.contains("execute_script"))
+        assertTrue(!prompt.contains("read_memory"))
+        assertTrue(!prompt.contains("edit_memory"))
     }
 
     @Test
@@ -140,9 +125,12 @@ class PiAgentModelGatewayTest {
                 ModelTurnOutput.Completion("Opened Settings."),
             )
 
-        assertTrue(prompt.contains("If there is no durable learning, do not call tools"))
+        assertTrue(prompt.contains("Reply exactly `NO_MEMORY_UPDATE: <brief reason>`"))
+        assertTrue(prompt.contains("/work/memory/apps/<package>.md"))
+        assertTrue(prompt.contains("Known Working Patterns"))
         assertTrue(prompt.contains("Use write for a new topic file or edit for one surgical update"))
-        assertTrue(prompt.contains("After any memory tool call, you may send a short internal note if useful"))
+        assertTrue(prompt.contains("call write or edit before replying"))
+        assertTrue(prompt.contains("MEMORY_UPDATED: <path>"))
         assertTrue(!prompt.contains("Return final JSON only"))
         assertTrue(!prompt.contains("Your entire final answer must be exactly the JSON object"))
     }

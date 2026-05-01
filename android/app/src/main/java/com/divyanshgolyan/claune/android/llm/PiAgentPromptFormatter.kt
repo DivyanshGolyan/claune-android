@@ -7,42 +7,27 @@ internal object PiAgentPromptFormatter {
     fun format(input: ModelTurnInput): String = buildString {
         appendLine("Current request:")
         appendLine(input.userMessage)
-        appendLine()
-        appendLine("Recent session events:")
-        if (input.recentEvents.isEmpty()) {
-            appendLine("- none")
-        } else {
-            input.recentEvents.takeLast(8).forEach { event ->
-                append("- ")
-                appendLine(event)
+        val recentEvents = input.recentEvents
+            .filterNot { event ->
+                event.startsWith("Run started:", ignoreCase = true) ||
+                    event.startsWith("Observed ", ignoreCase = true)
+            }
+            .takeLast(3)
+        if (recentEvents.isNotEmpty()) {
+            appendLine()
+            appendLine("Recent session events:")
+            recentEvents.forEach { event ->
+                append("- ").appendLine(event)
             }
         }
         appendLine()
-        appendLine("Last known phone screen before your next action:")
-        appendLine("This observation may already be stale. Observe the screen yourself before acting.")
-        appendLine("observationMode: ${input.screenObservation.mode}")
-        appendLine("observationReason: ${input.screenObservation.reason}")
-        appendLine("currentSnapshotId: ${input.screenObservation.currentSnapshotId}")
-        input.screenObservation.baselineSnapshotId?.let { appendLine("baselineSnapshotId: $it") }
-        appendLine("foregroundPackage: ${input.screenObservation.foregroundPackage}")
-        input.screenObservation.selectedWindowReason?.let { reason ->
-            appendLine("selectedWindowReason: $reason")
-        }
-        appendLine(
-            "diffStats: additions=${input.screenObservation.stats.additions}, " +
-                "removals=${input.screenObservation.stats.removals}, " +
-                "unchanged=${input.screenObservation.stats.unchanged}, " +
-                "changeRatio=${"%.2f".format(input.screenObservation.stats.changeRatio)}",
-        )
+        appendLine("Phone state hint:")
+        appendLine("- lastForegroundPackage: ${input.screenObservation.foregroundPackage}")
+        appendLine("- staleHint: observe the phone yourself with claune-js before acting.")
         if (input.screenObservation.foregroundPackage == BuildConfig.APPLICATION_ID) {
-            appendLine(
-                "shellContext: The last known UI was Claune Android's own control shell. Leave Claune before operating the destination app.",
-            )
+            appendLine("- shellContext: last known UI was Claune Android; leave it before operating another app.")
         }
-        appendLine("screenObservation:")
-        appendLine(input.screenObservation.canonicalText ?: input.screenObservation.diff ?: "<empty>")
         appendLine()
-        appendLine("When the current request is complete or blocked, call finish_run exactly once.")
-        appendLine("When you need a user decision before continuing, call ask_user.")
+        appendLine("Use finish_run exactly once when complete or blocked; use ask_user only when a user decision is needed.")
     }
 }
