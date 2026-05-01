@@ -61,6 +61,11 @@ internal fun stringProperty(description: String): JsonObject = buildJsonObject {
     put("description", JsonPrimitive(description))
 }
 
+internal fun integerProperty(description: String): JsonObject = buildJsonObject {
+    put("type", JsonPrimitive("integer"))
+    put("description", JsonPrimitive(description))
+}
+
 internal fun JsonObject.requiredString(name: String): String =
     this[name]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: error("Missing $name")
 
