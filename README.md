@@ -174,13 +174,9 @@ CLAUNE_PROJECTION_FIXTURE=/path/to/latest-screen-state.json CLAUNE_PROJECTION_IT
 
 ## Current agent contract
 
-The model works inside `/work` with `read`, `write`, `edit`, and `bash`. It should observe and act on the phone by running `claune-js` from bash, either inline with `claune-js - <<'JS'` for short probes or from `/work/scripts/*.js` for longer reusable scripts. The JavaScript host exposes the `claune` API for phone observation, targeted screen inspection, tapping, typing, scrolling, back/home, and waiting for UI state. The model should not invent raw Android objects or reuse stale element ids.
+The model works inside `/work` with `read`, `write`, `edit`, and `bash`. It should observe and act on the phone by running `claune-js` from bash, either inline with `claune-js - <<'JS'` for short probes or from `/work/scripts/*.js` for longer reusable scripts. The JavaScript host exposes a synchronous Playwright-style `claune` API: open apps with `claune.apps`, navigate with `claune.device`, locate with `getByText`, `getByLabel`, `getByPlaceholder`, `getByRole`, or `getByTestId`; act with locator methods such as `click`, `tap`, `fill`, and `press("Enter")`; extract with `textContent` or `allTextContents`; verify with `claune.expect(locator)`. The model should not invent raw Android objects or reuse stale element ids.
 
-The normal `observeScreen()` result stays compact. It returns either canonical screen text or a canonical diff from the previous screen state. If a target is visible but `tapText`, `tapSelector`, or `tapRef` cannot match an actionable element, the model should call `inspectScreen({ text: "target text" })`. That inspection returns bounded visible elements, including non-clickable text nodes, with center coordinates, exposed accessibility actions, clickability reasons, and `tapFallbackEligible`.
-
-If an expected target should exist but the compact screen summary and `inspectScreen()` do not surface it, use `findRawNodes({ pattern: "book|confirm|request|continue" })`. This searches the latest raw accessibility tree inside the host and returns only bounded matches with refs, bounds, context labels, and nearest actionable targets; it does not dump the whole tree back into the model context.
-
-Coordinate tapping is a fallback. The model should use `tapBounds(candidate.bounds)` only after `inspectScreen` shows the requested target as a visible bounded element. After any coordinate tap, it must call `observeScreen()` and verify an observable change tied to the requested target. `tapPoint(x, y)` exists for low-level debugging, but `tapBounds` is preferred because the host computes the center point.
+Android-specific escape hatches still exist under `claune.debug`, but they are diagnostics, not the normal agent path. A run that needs raw-node search, refs, bounds, or coordinates should be treated as evidence of a missing supported API capability and investigated from the trace.
 
 When a run ends, the model records one terminal outcome through a tool call:
 

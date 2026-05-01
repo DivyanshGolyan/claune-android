@@ -1,5 +1,7 @@
 # execute_script API Audit
 
+> Historical note: this audit documents the removed `execute_script` era. The current model-facing path is `bash` plus `claune-js`, and the current JavaScript API direction is documented in `docs/claune-js-api-design-audit.md`.
+
 ## Purpose
 
 This audit captures the current `execute_script` automation-library contract and the failure modes visible in the latest LangSmith trace. It is intentionally not a redesign proposal.
