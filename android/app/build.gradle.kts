@@ -22,6 +22,35 @@ fun escapeBuildConfigString(value: String): String = value.replace("\\", "\\\\")
 
 fun localBooleanProperty(name: String): String = (localProperties.getProperty(name)?.toBooleanStrictOrNull() ?: false).toString()
 
+val bashkitBridgeDir = rootProject.layout.projectDirectory.dir("bashkit-bridge")
+val bashkitBridgeOutputDir = layout.buildDirectory.dir("generated/jniLibs/bashkit")
+val bashkitBridgeCargoTargetDir = layout.buildDirectory.dir("cargo/bashkit-bridge")
+val bashkitBridgeTarget = "aarch64-linux-android"
+val bashkitBridgeAbi = "arm64-v8a"
+val bashkitBridgeMinApi = 31
+
+fun resolveBashkitBridgeNdkRoot(): File {
+    val sdkDir = localProperties.getProperty("sdk.dir")
+    return listOfNotNull(
+        System.getenv("ANDROID_NDK_HOME"),
+        System.getenv("ANDROID_NDK_ROOT"),
+        sdkDir?.let { "$it/ndk/27.3.13750724" },
+        System.getenv("ANDROID_HOME")?.let { "$it/ndk/27.3.13750724" },
+        "/opt/homebrew/share/android-commandlinetools/ndk/27.3.13750724",
+    ).map(::file).firstOrNull { it.exists() }
+        ?: error("Android NDK 27.3.13750724 not found. Set ANDROID_NDK_HOME or ANDROID_NDK_ROOT.")
+}
+
+fun bashkitBridgeNdkHostTag(): String {
+    val osName = System.getProperty("os.name").lowercase()
+    return when {
+        osName.contains("mac") -> "darwin-x86_64"
+        osName.contains("linux") -> "linux-x86_64"
+        osName.contains("windows") -> "windows-x86_64"
+        else -> error("Unsupported NDK host OS for Bashkit bridge: ${System.getProperty("os.name")}")
+    }
+}
+
 android {
     namespace = "com.divyanshgolyan.claune.android"
     compileSdk = 36
@@ -32,6 +61,9 @@ android {
         targetSdk = 31
         versionCode = 1
         versionName = "0.1.0"
+        ndk {
+            abiFilters += bashkitBridgeAbi
+        }
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -91,6 +123,12 @@ android {
         buildConfig = true
     }
 
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDir(bashkitBridgeOutputDir)
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -127,6 +165,46 @@ ktlint {
     android.set(true)
     ignoreFailures.set(false)
     outputToConsole.set(true)
+}
+
+val buildBashkitBridge by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Builds the Rust Bashkit JNI bridge for Android arm64-v8a without cargo-ndk."
+
+    val outputFile = bashkitBridgeOutputDir.map { it.file("$bashkitBridgeAbi/libbashkit_bridge.so") }
+    inputs.file(bashkitBridgeDir.file("Cargo.toml"))
+    inputs.file(bashkitBridgeDir.file("Cargo.lock"))
+    inputs.dir(bashkitBridgeDir.dir("src"))
+    outputs.file(outputFile)
+
+    workingDir = bashkitBridgeDir.asFile
+    executable = "cargo"
+    args("build", "--release", "--target", bashkitBridgeTarget)
+
+    doFirst {
+        val ndkRoot = resolveBashkitBridgeNdkRoot()
+        val toolchain = ndkRoot.resolve("toolchains/llvm/prebuilt/${bashkitBridgeNdkHostTag()}/bin")
+        val linker = toolchain.resolve("aarch64-linux-android" + bashkitBridgeMinApi + "-clang")
+        require(linker.exists()) {
+            "Android NDK clang not found at ${linker.absolutePath}. Install NDK 27.3.13750724 or set ANDROID_NDK_HOME."
+        }
+        environment("CARGO_TARGET_DIR", bashkitBridgeCargoTargetDir.get().asFile.absolutePath)
+        environment("CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER", linker.absolutePath)
+        environment("CC_aarch64_linux_android", linker.absolutePath)
+        environment("AR_aarch64_linux_android", toolchain.resolve("llvm-ar").absolutePath)
+    }
+    doLast {
+        copy {
+            from(bashkitBridgeCargoTargetDir.map { it.file("$bashkitBridgeTarget/release/libbashkit_bridge.so") })
+            into(bashkitBridgeOutputDir.map { it.dir(bashkitBridgeAbi) })
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preBuild" || name.startsWith("merge") && name.endsWith("JniLibFolders")) {
+        dependsOn(buildBashkitBridge)
+    }
 }
 
 dependencies {

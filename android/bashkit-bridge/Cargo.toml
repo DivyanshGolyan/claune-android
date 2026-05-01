@@ -1,0 +1,16 @@
+[package]
+name = "bashkit-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+async-trait = "0.1"
+bashkit = { version = "0.2.1", default-features = false, features = ["jq", "realfs"] }
+jni = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "time", "macros"] }
+
