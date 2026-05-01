@@ -15,6 +15,7 @@ import java.nio.file.Files
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -223,7 +224,12 @@ class ScriptHostTest {
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
-                phoneObserver = FakePhoneObserver(listOf(snapshot(packageName = "com.dreamplug.androidapp"))),
+                phoneObserver = FakePhoneObserver(
+                    listOf(
+                        snapshot(packageName = "com.mi.android.globallauncher"),
+                        snapshot(packageName = "com.dreamplug.androidapp"),
+                    ),
+                ),
                 phoneActuator = FakePhoneActuator(),
                 installedAppRegistry = registry,
                 sessionCoordinator = testSessionCoordinator(logStore),
@@ -235,6 +241,29 @@ class ScriptHostTest {
         assertTrue(result.ok)
         assertEquals("com.dreamplug.androidapp", registry.launchedPackage)
         assertEquals("launchApp", logStore.recentHostCalls().single().name)
+    }
+
+    @Test
+    fun `launchApp returns immediately when target package is already foreground`() = runTest {
+        val logStore = InMemorySessionLogStore()
+        val registry = FakeInstalledAppRegistry()
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(packageName = "com.dreamplug.androidapp"))),
+                phoneActuator = FakePhoneActuator(),
+                installedAppRegistry = registry,
+                sessionCoordinator = testSessionCoordinator(logStore),
+                logStore = logStore,
+            )
+
+        val result = host.launchApp("com.dreamplug.androidapp")
+
+        assertTrue(result.ok)
+        assertEquals("Package 'com.dreamplug.androidapp' is already foreground.", result.message)
+        assertEquals(null, registry.launchedPackage)
+        val tags = result.data!!.jsonObject["traceTags"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue(tags.contains("launch_already_foreground"))
     }
 
     @Test
@@ -312,29 +341,7 @@ class ScriptHostTest {
     }
 
     @Test
-    fun `tapElement delegates to actuator and records host call`() = runTest {
-        val logStore = InMemorySessionLogStore()
-        val coordinator = testSessionCoordinator(logStore)
-        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped element."))
-        val host =
-            ScriptHost(
-                scriptExecutionId = "script-1",
-                phoneObserver = FakePhoneObserver(listOf(snapshot())),
-                phoneActuator = actuator,
-                sessionCoordinator = coordinator,
-                logStore = logStore,
-            )
-
-        val result = host.tapElement("el-1")
-
-        assertTrue(result.ok)
-        assertEquals("el-1", actuator.lastTapped?.elementId)
-        assertEquals(1, logStore.recentHostCalls().size)
-    }
-
-    @Test
-    fun `tapSelector matches element by text and avoids positional guessing`() = runTest {
-        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped selector match."))
+    fun `locatorQuery returns strict candidate count and evidence`() = runTest {
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
@@ -344,131 +351,9 @@ class ScriptHostTest {
                         snapshot(
                             elements =
                             listOf(
-                                element(id = "about-phone", ref = "e0", label = "About phone", text = "About phone"),
-                                element(id = "wifi", ref = "e1", label = "Wi-Fi", text = "Wi-Fi"),
+                                element(id = "wifi-1", ref = "e1", label = "Wi-Fi", text = "Wi-Fi"),
+                                element(id = "wifi-2", ref = "e2", label = "Wi-Fi details", text = "Wi-Fi details"),
                             ),
-                        ),
-                    ),
-                ),
-                phoneActuator = actuator,
-                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
-                logStore = InMemorySessionLogStore(),
-            )
-
-        val result = host.tapSelector("""{"text":"Wi-Fi"}""")
-
-        assertTrue(result.ok)
-        assertEquals("wifi", actuator.lastTapped?.elementId)
-    }
-
-    @Test
-    fun `tapSelector accepts label selectors because labels are exposed in snapshots`() = runTest {
-        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped selector match."))
-        val host =
-            ScriptHost(
-                scriptExecutionId = "script-1",
-                phoneObserver =
-                FakePhoneObserver(
-                    listOf(
-                        snapshot(
-                            elements =
-                            listOf(
-                                element(id = "wifi", ref = "e1", label = "Wi-Fi", text = null),
-                            ),
-                        ),
-                    ),
-                ),
-                phoneActuator = actuator,
-                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
-                logStore = InMemorySessionLogStore(),
-            )
-
-        val result = host.tapSelector("""{"label":"Wi-Fi"}""")
-
-        assertTrue(result.ok)
-        assertEquals("wifi", actuator.lastTapped?.elementId)
-    }
-
-    @Test
-    fun `tapText prefers exact visible text without relying on refs`() = runTest {
-        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped visible text match."))
-        val host =
-            ScriptHost(
-                scriptExecutionId = "script-1",
-                phoneObserver =
-                FakePhoneObserver(
-                    listOf(
-                        snapshot(
-                            elements =
-                            listOf(
-                                element(id = "display", ref = "e0", label = "Display", text = "Display"),
-                                element(id = "wifi", ref = "e1", label = "Wi-Fi", text = "Wi-Fi"),
-                            ),
-                        ),
-                    ),
-                ),
-                phoneActuator = actuator,
-                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
-                logStore = InMemorySessionLogStore(),
-            )
-
-        val result = host.tapText("Wi-Fi", exact = true)
-
-        assertTrue(result.ok)
-        assertEquals("wifi", actuator.lastTapped?.elementId)
-    }
-
-    @Test
-    fun `tapText can choose first duplicate text match explicitly`() = runTest {
-        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped first duplicate."))
-        val host =
-            ScriptHost(
-                scriptExecutionId = "script-1",
-                phoneObserver =
-                FakePhoneObserver(
-                    listOf(
-                        snapshot(
-                            elements =
-                            listOf(
-                                element(id = "wrapper", ref = "e0", label = "Where are you going?", text = "Where are you going?"),
-                                element(id = "button", ref = "e1", label = "Where are you going?", text = "Where are you going?"),
-                            ),
-                        ),
-                    ),
-                ),
-                phoneActuator = actuator,
-                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
-                logStore = InMemorySessionLogStore(),
-            )
-
-        val result = host.tapText("Where are you going?", exact = true, first = true)
-
-        assertTrue(result.ok)
-        assertEquals("wrapper", actuator.lastTapped?.elementId)
-    }
-
-    @Test
-    fun `tapText points to inspectScreen when only a visible non actionable match exists`() = runTest {
-        val nonActionable =
-            element(
-                id = "rapido-auto-text",
-                ref = "e4",
-                label = "Auto ride. Estimated fare ₹242",
-                text = "Auto ride. Estimated fare ₹242",
-                clickable = false,
-                bounds = listOf(40, 1200, 1040, 1360),
-                clickabilityReason = "visible_non_actionable",
-                tapFallbackEligible = true,
-            )
-        val host =
-            ScriptHost(
-                scriptExecutionId = "script-1",
-                phoneObserver =
-                FakePhoneObserver(
-                    listOf(
-                        snapshot(
-                            elements = emptyList(),
-                            visibleElements = listOf(nonActionable),
                         ),
                     ),
                 ),
@@ -477,12 +362,370 @@ class ScriptHostTest {
                 logStore = InMemorySessionLogStore(),
             )
 
-        val result = host.tapText("Auto ride", exact = false)
+        val result = host.locatorQuery("""{"kind":"text","text":"Wi-Fi"}""")
+
+        assertTrue(result.ok)
+        assertEquals(2, result.data!!.jsonObject["count"]!!.jsonPrimitive.int)
+        assertEquals(
+            "wifi-1",
+            result.data
+                .jsonObject["candidates"]!!
+                .jsonArray
+                .first()
+                .jsonObject["elementId"]!!
+                .jsonPrimitive
+                .content,
+        )
+    }
+
+    @Test
+    fun `role locator regex name filters accessible names`() = runTest {
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "add", ref = "e1", label = "Add", role = "button", clickable = true),
+                                element(id = "remove", ref = "e2", label = "Remove", role = "button", clickable = true),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.locatorQuery("""{"kind":"role","role":"button","pattern":"^Add$","flags":""}""")
+
+        assertTrue(result.ok)
+        assertEquals(1, result.data!!.jsonObject["count"]!!.jsonPrimitive.int)
+        assertEquals(
+            "add",
+            result.data
+                .jsonObject["candidates"]!!
+                .jsonArray
+                .single()
+                .jsonObject["elementId"]!!
+                .jsonPrimitive
+                .content,
+        )
+    }
+
+    @Test
+    fun `locatorClick is strict and reports ambiguity`() = runTest {
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "add-1", ref = "e1", label = "Add", text = "Add"),
+                                element(id = "add-2", ref = "e2", label = "Add", text = "Add"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped.")),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.locatorClick("""{"kind":"text","text":"Add"}""", """{"timeoutMs":0}""")
 
         assertFalse(result.ok)
-        assertTrue(result.message.contains("inspectScreen"))
-        assertTrue(result.message.contains("Visible candidates"))
-        assertTrue(result.message.contains("visible_non_actionable"))
+        assertEquals("ambiguous_match", result.errorCode)
+    }
+
+    @Test
+    fun `locatorClick reports stable ambiguity without polling`() = runTest {
+        var currentTime = Instant.parse("2026-04-16T00:00:00Z")
+        val logStore = InMemorySessionLogStore()
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "add-1", ref = "e1", label = "Add", text = "Add"),
+                                element(id = "add-2", ref = "e2", label = "Add", text = "Add"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped.")),
+                sessionCoordinator = testSessionCoordinator(logStore),
+                logStore = logStore,
+                now = { currentTime },
+                sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
+            )
+
+        val result = host.locatorClick("""{"kind":"text","text":"Add"}""", "{}")
+
+        assertFalse(result.ok)
+        assertEquals("ambiguous_match", result.errorCode)
+        assertEquals(1, logStore.recentScreenStates().size)
+        assertEquals(Instant.parse("2026-04-16T00:00:00Z"), currentTime)
+    }
+
+    @Test
+    fun `locatorClick taps unique actionable target`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped."))
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "add", ref = "e1", label = "Add", text = "Add"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.locatorClick("""{"kind":"text","text":"Add"}""", "{}")
+
+        assertTrue(result.ok)
+        assertEquals("add", actuator.lastTapped?.elementId)
+    }
+
+    @Test
+    fun `locator resolver dedupes wrapper and text child to activation target`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped."))
+        val textChild = element(
+            id = "instamart-text",
+            ref = "e1_0",
+            label = "Instamart",
+            text = "Instamart",
+            clickable = false,
+            path = listOf(0, 0),
+        )
+        val wrapper = element(
+            id = "instamart-wrapper",
+            ref = "e1",
+            label = "Instamart",
+            text = null,
+            clickable = true,
+            children = listOf(textChild),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(elements = listOf(wrapper)))),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val query = host.locatorQuery("""{"kind":"text","text":"Instamart"}""")
+        val click = host.locatorClick("""{"kind":"text","text":"Instamart"}""", """{"timeoutMs":0}""")
+
+        assertTrue(query.ok)
+        assertEquals(1, query.data!!.jsonObject["count"]!!.jsonPrimitive.int)
+        assertTrue(click.ok)
+        assertEquals("instamart-wrapper", actuator.lastTapped?.elementId)
+    }
+
+    @Test
+    fun `locator click prefers matched actionable child before actionable ancestor`() = runTest {
+        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped."))
+        val searchChild = element(
+            id = "search-child",
+            ref = "e1_0",
+            label = "Search",
+            text = "Search",
+            clickable = true,
+            path = listOf(0, 0),
+        )
+        val wrapper = element(
+            id = "search-wrapper",
+            ref = "e1",
+            label = "Header wrapper",
+            clickable = true,
+            children = listOf(searchChild),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(elements = listOf(wrapper)))),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val click = host.locatorClick("""{"kind":"text","text":"Search"}""", """{"timeoutMs":0}""")
+
+        assertTrue(click.ok)
+        assertEquals("search-child", actuator.lastTapped?.elementId)
+    }
+
+    @Test
+    fun `wildcard locator describes visible candidates without debug inspection`() = runTest {
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(
+                                element(id = "search", ref = "e1", label = "Search", resourceId = "app:id/search"),
+                                element(id = "add", ref = "e2", label = "Add", text = "Add"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val count = host.locatorCount("""{"kind":"all"}""")
+        val describe = host.locatorDescribe("""{"kind":"all"}""", """{"limit":1}""")
+
+        assertTrue(count.ok)
+        assertEquals(2, count.data!!.jsonObject["count"]!!.jsonPrimitive.int)
+        assertTrue(describe.ok)
+        val describeData = describe.data!!.jsonObject
+        assertEquals(2, describeData["count"]!!.jsonPrimitive.int)
+        assertTrue(describeData["truncated"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("supported_discovery", describeData["traceTags"]!!.jsonArray.first().jsonPrimitive.content)
+    }
+
+    @Test
+    fun `locator visibility helpers return booleans without strict action assertions`() = runTest {
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(elements = listOf(element(id = "done", label = "Done"))))),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val visible = host.locatorIsVisible("""{"kind":"text","text":"Done"}""")
+        val hidden = host.locatorIsHidden("""{"kind":"text","text":"Missing"}""")
+
+        assertTrue(visible.ok)
+        assertTrue(visible.data!!.jsonObject["visible"]!!.jsonPrimitive.content.toBoolean())
+        assertTrue(hidden.ok)
+        assertTrue(hidden.data!!.jsonObject["hidden"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    @Test
+    fun `placeholder filter extraction and enter press use supported locator APIs`() = runTest {
+        val actuator = FakePhoneActuator(
+            tapResult = ActionResult.Success("Tapped."),
+            pressEnterResult = ActionResult.Success("Pressed Enter."),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(
+                                element(
+                                    id = "search",
+                                    ref = "e1",
+                                    label = "Search products",
+                                    text = "Search products",
+                                    role = "input",
+                                    editable = true,
+                                    focused = true,
+                                    clickable = true,
+                                ),
+                                element(
+                                    id = "row-1",
+                                    ref = "e2",
+                                    label = "Apple Royal Gala ₹180",
+                                    text = "Apple Royal Gala ₹180",
+                                    role = "listitem",
+                                    clickable = false,
+                                ),
+                                element(
+                                    id = "row-2",
+                                    ref = "e3",
+                                    label = "Banana ₹60",
+                                    text = "Banana ₹60",
+                                    role = "listitem",
+                                    clickable = false,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val placeholder = host.locatorQuery("""{"kind":"placeholder","text":"Search"}""")
+        val filteredText =
+            host.locatorTextContent(
+                """{"kind":"role","role":"listitem","filters":[{"hasText":"Apple"}]}""",
+                """{"timeoutMs":0}""",
+            )
+        val allTexts = host.locatorAllTextContents("""{"kind":"role","role":"listitem"}""")
+        val press = host.locatorPress("""{"kind":"placeholder","text":"Search"}""", "Enter", """{"timeoutMs":0}""")
+
+        assertEquals(1, placeholder.data!!.jsonObject["count"]!!.jsonPrimitive.int)
+        assertTrue(filteredText.ok)
+        assertEquals("Apple Royal Gala ₹180", filteredText.data!!.jsonObject["text"]!!.jsonPrimitive.content)
+        assertTrue(allTexts.data!!.jsonObject["texts"]!!.jsonArray.map { it.jsonPrimitive.content }.contains("Banana ₹60"))
+        assertTrue(press.ok)
+        assertEquals("search", actuator.lastPressedEnter?.elementId)
+    }
+
+    @Test
+    fun `locator text extraction includes descendant text`() = runTest {
+        val card = element(
+            id = "card",
+            ref = "e1",
+            label = "Product card",
+            role = "listitem",
+            clickable = true,
+            children = listOf(
+                element(id = "title", ref = "e1_0", label = "Daily Apple", text = "Daily Apple", role = "control"),
+                element(id = "price", ref = "e1_1", label = "₹101", text = "₹101", role = "control"),
+            ),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver = FakePhoneObserver(listOf(snapshot(elements = listOf(card)))),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val single = host.locatorTextContent("""{"kind":"role","role":"listitem"}""", """{"timeoutMs":0}""")
+        val all = host.locatorAllTextContents("""{"kind":"role","role":"listitem"}""")
+
+        assertTrue(single.ok)
+        assertEquals("Product card | Daily Apple | ₹101", single.data!!.jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals(
+            "Product card | Daily Apple | ₹101",
+            all.data!!.jsonObject["texts"]!!.jsonArray.single().jsonPrimitive.content,
+        )
     }
 
     @Test
@@ -635,39 +878,7 @@ class ScriptHostTest {
         assertEquals(2, actions.size)
         assertEquals(2, actions.map { it.id }.distinct().size)
         assertTrue(actions.all { it.id.startsWith("a_click_") })
-
-        val bananaAction = actions.single { it.targetElementId == "item-1-add" }
-        val result = host.performAction(bananaAction.id)
-
-        assertTrue(result.ok)
-        assertEquals("item-1-add", actuator.lastTapped?.elementId)
-    }
-
-    @Test
-    fun `performAction revalidates current interaction action and taps its target`() = runTest {
-        val add =
-            element(
-                id = "pear-add",
-                ref = "pear-add",
-                label = "ADD",
-                clickable = true,
-                bounds = listOf(870, 320, 1030, 420),
-            )
-        val actuator = FakePhoneActuator(tapResult = ActionResult.Success("Tapped ADD."))
-        val host =
-            ScriptHost(
-                scriptExecutionId = "script-1",
-                phoneObserver = FakePhoneObserver(listOf(snapshot(elements = listOf(add)))),
-                phoneActuator = actuator,
-                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
-                logStore = InMemorySessionLogStore(),
-            )
-        val actionId = snapshot(elements = listOf(add)).toInteractionObservationPayload().actions.single().id
-
-        val result = host.performAction(actionId)
-
-        assertTrue(result.ok)
-        assertEquals("pear-add", actuator.lastTapped?.elementId)
+        assertTrue(actions.any { it.targetElementId == "item-1-add" })
     }
 
     @Test
@@ -764,6 +975,39 @@ class ScriptHostTest {
     }
 
     @Test
+    fun `findRawNodes does not search resource ids unless requested`() = runTest {
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements = listOf(
+                                element(
+                                    id = "search",
+                                    ref = "e1",
+                                    label = "Search",
+                                    resourceId = "com.example:id/special_search_box",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val defaultResult = host.findRawNodes("""{"pattern":"special_search_box"}""")
+        val explicitResult = host.findRawNodes("""{"pattern":"special_search_box","fields":["resourceId"]}""")
+
+        assertTrue(defaultResult.matches.isEmpty())
+        assertEquals(1, explicitResult.matches.size)
+        assertEquals(listOf("resourceId"), explicitResult.matches.single().matchedFields)
+    }
+
+    @Test
     fun `findRawNodes returns bounded error for invalid regex`() = runTest {
         val host =
             ScriptHost(
@@ -821,8 +1065,11 @@ class ScriptHostTest {
     }
 
     @Test
-    fun `typeIntoFocused targets the focused editable element`() = runTest {
-        val actuator = FakePhoneActuator(typeResult = ActionResult.Success("Typed into focused field."))
+    fun `locatorFill reuses wrapper activation text entry`() = runTest {
+        val actuator = FakePhoneActuator(
+            tapResult = ActionResult.Success("Tapped wrapper."),
+            typeResult = ActionResult.Success("Set text."),
+        )
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
@@ -830,11 +1077,25 @@ class ScriptHostTest {
                 FakePhoneObserver(
                     listOf(
                         snapshot(
-                            focusedElementId = "search-box",
                             elements =
                             listOf(
-                                element(id = "search-box", ref = "e1", label = "Search", role = "input", editable = true, focused = true),
-                                element(id = "cta", ref = "e2", label = "Go"),
+                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
+                            ),
+                        ),
+                        snapshot(
+                            focusedElementId = "search-input",
+                            elements =
+                            listOf(
+                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
+                                element(
+                                    id = "search-input",
+                                    ref = "e1",
+                                    label = "Search input",
+                                    role = "input",
+                                    editable = true,
+                                    focused = true,
+                                    text = "apple",
+                                ),
                             ),
                         ),
                     ),
@@ -844,18 +1105,132 @@ class ScriptHostTest {
                 logStore = InMemorySessionLogStore(),
             )
 
-        val result = host.typeIntoFocused("apple")
+        val result = host.locatorFill("""{"kind":"label","text":"Search"}""", "apple", """{"timeoutMs":1000}""")
 
         assertTrue(result.ok)
+        assertEquals("search-wrapper", actuator.lastTapped?.elementId)
+        assertEquals("search-input" to "apple", actuator.lastTyped?.let { it.first.elementId to it.second })
+        val data = result.data!!.jsonObject
+        assertEquals("activate_then_set_text", data["method"]!!.jsonPrimitive.content)
+        assertTrue(data["textObservedAfter"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("fill_activation", data["traceTags"]!!.jsonArray.first().jsonPrimitive.content)
+        assertTrue(data["editableCandidates"]!!.jsonArray.isNotEmpty())
+    }
+
+    @Test
+    fun `locatorFill collapses nested search surface candidates`() = runTest {
+        val actuator = FakePhoneActuator(
+            tapResult = ActionResult.Success("Tapped search."),
+            typeResult = ActionResult.Success("Set text."),
+        )
+        val searchFrame = element(
+            id = "search-frame",
+            ref = "e0_0",
+            label = "Search for atta, dal, coke and more",
+            role = "control",
+            clickable = true,
+            bounds = listOf(0, 90, 1080, 290),
+        )
+        val broadWrapper = element(
+            id = "broad-wrapper",
+            ref = "e0",
+            label = "Search for atta, dal, coke and more",
+            role = "control",
+            clickable = false,
+            tapFallbackEligible = true,
+            bounds = listOf(0, 90, 1080, 2270),
+            children = listOf(searchFrame.copy(path = listOf(0, 0))),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(elements = listOf(broadWrapper)),
+                        snapshot(
+                            focusedElementId = "search-input",
+                            elements =
+                            listOf(
+                                element(
+                                    id = "search-input",
+                                    ref = "e1",
+                                    label = "Search",
+                                    role = "input",
+                                    editable = true,
+                                    focused = true,
+                                    text = "apple",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.locatorFill(
+            """{"kind":"label","pattern":"Search for atta, dal, coke and more","flags":"i"}""",
+            "apple",
+            """{"timeoutMs":1000}""",
+        )
+
+        assertTrue(result.message, result.ok)
+        assertEquals("search-frame", actuator.lastTapped?.elementId)
+        assertEquals("search-input" to "apple", actuator.lastTyped?.let { it.first.elementId to it.second })
+    }
+
+    @Test
+    fun `locatorFill tries focused typing for search surfaces without exposed editable node`() = runTest {
+        val actuator = FakePhoneActuator(
+            tapResult = ActionResult.Success("Tapped search."),
+            typeResult = ActionResult.Success("Typed focused."),
+        )
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control"),
+                            ),
+                        ),
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control"),
+                            ),
+                        ),
+                        snapshot(
+                            elements =
+                            listOf(
+                                element(id = "result", ref = "e1", label = "apple", text = "apple", role = "control"),
+                            ),
+                        ),
+                    ),
+                ),
+                phoneActuator = actuator,
+                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
+                logStore = InMemorySessionLogStore(),
+            )
+
+        val result = host.locatorFill("""{"kind":"label","text":"Search"}""", "apple", """{"timeoutMs":1000}""")
+
+        assertTrue(result.message, result.ok)
+        assertEquals("search-wrapper", actuator.lastTapped?.elementId)
         assertEquals("apple", actuator.lastTypedFocused)
+        val data = result.data!!.jsonObject
+        assertEquals("activate_then_type_focused", data["method"]!!.jsonPrimitive.content)
+        assertTrue(data["traceTags"]!!.jsonArray.any { it.jsonPrimitive.content == "focused_input_fallback" })
     }
 
     @Test
-    fun `typeIntoSelector activates a wrapper control and types into the resulting editable element`() = runTest {
-        val actuator = FakePhoneActuator(
-            tapResult = ActionResult.Success("Tapped wrapper."),
-            typeResult = ActionResult.Success("Typed into activated field."),
-        )
+    fun `locatorPress falls back to focused editable when original locator is stale`() = runTest {
+        val actuator = FakePhoneActuator(pressEnterResult = ActionResult.Success("Pressed Enter."))
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
@@ -863,16 +1238,8 @@ class ScriptHostTest {
                 FakePhoneObserver(
                     listOf(
                         snapshot(
-                            elements =
-                            listOf(
-                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
-                            ),
-                        ),
-                        snapshot(
                             focusedElementId = "search-input",
-                            elements =
-                            listOf(
-                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
+                            elements = listOf(
                                 element(
                                     id = "search-input",
                                     ref = "e1",
@@ -880,6 +1247,7 @@ class ScriptHostTest {
                                     role = "input",
                                     editable = true,
                                     focused = true,
+                                    text = "apple",
                                 ),
                             ),
                         ),
@@ -890,18 +1258,17 @@ class ScriptHostTest {
                 logStore = InMemorySessionLogStore(),
             )
 
-        val result = host.typeIntoSelector("""{"label":"Search"}""", "oranges")
+        val result = host.locatorPress("""{"kind":"testId","testId":"stale-search"}""", "Enter", """{"timeoutMs":0}""")
 
         assertTrue(result.ok)
-        assertEquals("search-wrapper", actuator.lastTapped?.elementId)
-        assertEquals("oranges", actuator.lastTypedFocused)
+        assertEquals("search-input", actuator.lastPressedEnter?.elementId)
+        val data = result.data!!.jsonObject
+        assertEquals("search-input", data["focusedEditableFallback"]!!.jsonObject["elementId"]!!.jsonPrimitive.content)
+        assertEquals("focused_editable_fallback", data["traceTags"]!!.jsonArray.first().jsonPrimitive.content)
     }
 
     @Test
-    fun `focusSelector returns the activated editable element`() = runTest {
-        val actuator = FakePhoneActuator(
-            tapResult = ActionResult.Success("Tapped wrapper."),
-        )
+    fun `deviceCurrent returns compact foreground window and focus state`() = runTest {
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
@@ -909,96 +1276,56 @@ class ScriptHostTest {
                 FakePhoneObserver(
                     listOf(
                         snapshot(
-                            elements = listOf(
-                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
-                            ),
-                        ),
-                        snapshot(
+                            packageName = "com.example.app",
                             focusedElementId = "search-input",
                             elements = listOf(
-                                element(id = "search-wrapper", ref = "e0", label = "Search", role = "control", editable = false),
-                                element(
-                                    id = "search-input",
-                                    ref = "e1",
-                                    label = "Search input",
-                                    role = "input",
-                                    editable = true,
+                                element(id = "search-input", label = "Search", editable = true, focused = true),
+                            ),
+                            windows = listOf(
+                                ScreenWindow(
+                                    packageName = "com.example.app",
+                                    className = "Main",
+                                    type = "APPLICATION",
+                                    layer = 0,
+                                    active = true,
                                     focused = true,
+                                    bounds = listOf(0, 0, 100, 100),
+                                    visibleText = listOf("Search"),
+                                    actionableElementCount = 1,
+                                    selected = true,
+                                ),
+                                ScreenWindow(
+                                    packageName = "com.android.systemui",
+                                    className = "InputMethod",
+                                    type = "INPUT_METHOD",
+                                    layer = 1,
+                                    active = false,
+                                    focused = false,
+                                    bounds = listOf(0, 80, 100, 100),
+                                    visibleText = emptyList(),
+                                    actionableElementCount = 0,
                                 ),
                             ),
                         ),
                     ),
                 ),
-                phoneActuator = actuator,
+                phoneActuator = FakePhoneActuator(),
                 sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
             )
 
-        val result = host.focusSelector("""{"label":"Search"}""", timeoutMs = 1000)
+        val result = host.deviceCurrent()
 
         assertTrue(result.ok)
-        assertEquals("search-wrapper", actuator.lastTapped?.elementId)
-        assertEquals("search-input", result.data!!.jsonObject["activatedElementId"]!!.jsonPrimitive.content)
+        val data = result.data!!.jsonObject
+        assertEquals("com.example.app", data["foregroundPackage"]!!.jsonPrimitive.content)
+        assertTrue(data["systemUiPresent"]!!.jsonPrimitive.content.toBoolean())
+        assertTrue(data["keyboardOrInputWindowPresent"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals("search-input", data["focusedElement"]!!.jsonObject["elementId"]!!.jsonPrimitive.content)
     }
 
     @Test
-    fun `focusSelector can activate a non clickable wrapper when the actuator succeeds`() = runTest {
-        val actuator = FakePhoneActuator(
-            tapResult = ActionResult.Success("Tapped wrapper via fallback."),
-        )
-        val host =
-            ScriptHost(
-                scriptExecutionId = "script-1",
-                phoneObserver =
-                FakePhoneObserver(
-                    listOf(
-                        snapshot(
-                            elements = listOf(
-                                element(
-                                    id = "search-wrapper",
-                                    ref = "e0",
-                                    label = "Type to search restaurants or dishes",
-                                    role = "control",
-                                    clickable = false,
-                                ),
-                            ),
-                        ),
-                        snapshot(
-                            focusedElementId = "search-input",
-                            elements = listOf(
-                                element(
-                                    id = "search-wrapper",
-                                    ref = "e0",
-                                    label = "Type to search restaurants or dishes",
-                                    role = "control",
-                                    clickable = false,
-                                ),
-                                element(
-                                    id = "search-input",
-                                    ref = "e1",
-                                    label = "Search input",
-                                    role = "input",
-                                    editable = true,
-                                    focused = true,
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-                phoneActuator = actuator,
-                sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
-                logStore = InMemorySessionLogStore(),
-            )
-
-        val result = host.focusSelector("""{"label":"Type to search restaurants or dishes"}""", timeoutMs = 1000)
-
-        assertTrue(result.ok)
-        assertEquals("search-wrapper", actuator.lastTapped?.elementId)
-        assertEquals("search-input", result.data!!.jsonObject["activatedElementId"]!!.jsonPrimitive.content)
-    }
-
-    @Test
-    fun `waitForSelector succeeds when later snapshot exposes matching ref`() = runTest {
+    fun `locatorAssert retries visible assertion`() = runTest {
         var currentTime = Instant.parse("2026-04-16T00:00:00Z")
         val host =
             ScriptHost(
@@ -1006,8 +1333,8 @@ class ScriptHostTest {
                 phoneObserver =
                 FakePhoneObserver(
                     listOf(
-                        snapshot(elements = listOf(element(id = "about-phone", ref = "e0", label = "About phone"))),
-                        snapshot(elements = listOf(element(id = "wifi", ref = "e1", label = "Wi-Fi", text = "Wi-Fi"))),
+                        snapshot(elements = listOf(element(id = "loading", ref = "e0", label = "Loading"))),
+                        snapshot(elements = listOf(element(id = "done", ref = "e1", label = "Done", text = "Done"))),
                     ),
                 ),
                 phoneActuator = FakePhoneActuator(),
@@ -1017,27 +1344,68 @@ class ScriptHostTest {
                 sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
             )
 
-        val result = host.waitForSelector("""{"text":"Wi-Fi"}""", timeoutMs = 600)
+        val result = host.locatorAssert("""{"kind":"text","text":"Done"}""", """{"matcher":"toBeVisible","timeoutMs":600}""")
 
         assertTrue(result.ok)
-        assertTrue(result.message.contains("Matched selector"))
     }
 
     @Test
-    fun `scrollContainer blocks unsupported horizontal direction`() = runTest {
+    fun `locatorAssert preserves regex flags for text assertions`() = runTest {
+        var currentTime = Instant.parse("2026-04-16T00:00:00Z")
         val host =
             ScriptHost(
                 scriptExecutionId = "script-1",
-                phoneObserver = FakePhoneObserver(listOf(snapshot())),
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(elements = listOf(element(id = "done", ref = "e1", label = "done", text = "done"))),
+                    ),
+                ),
                 phoneActuator = FakePhoneActuator(),
                 sessionCoordinator = testSessionCoordinator(InMemorySessionLogStore()),
                 logStore = InMemorySessionLogStore(),
+                now = { currentTime },
+                sleeper = { delayMs -> currentTime = currentTime.plusMillis(delayMs) },
             )
 
-        val result = host.scrollContainer("el-1", "sideways")
+        val caseSensitive =
+            host.locatorAssert(
+                """{"kind":"text","text":"done"}""",
+                """{"matcher":"toHaveText","expectedPattern":"^Done$","expectedFlags":"","timeoutMs":0}""",
+            )
+        val caseInsensitive =
+            host.locatorAssert(
+                """{"kind":"text","text":"done"}""",
+                """{"matcher":"toHaveText","expectedPattern":"^Done$","expectedFlags":"i","timeoutMs":0}""",
+            )
+
+        assertFalse(caseSensitive.ok)
+        assertEquals("timeout", caseSensitive.errorCode)
+        assertTrue(caseInsensitive.ok)
+    }
+
+    @Test
+    fun `locatorAssert rejects malformed assertion payloads before polling`() = runTest {
+        val logStore = InMemorySessionLogStore()
+        val host =
+            ScriptHost(
+                scriptExecutionId = "script-1",
+                phoneObserver =
+                FakePhoneObserver(
+                    listOf(
+                        snapshot(elements = listOf(element(id = "done", ref = "e1", label = "Done", text = "Done"))),
+                    ),
+                ),
+                phoneActuator = FakePhoneActuator(),
+                sessionCoordinator = testSessionCoordinator(logStore),
+                logStore = logStore,
+            )
+
+        val result = host.locatorAssert("""{"kind":"text","text":"Done"}""", """{"matcher":"toHaveText","timeoutMs":5000}""")
 
         assertFalse(result.ok)
-        assertEquals("Unsupported scroll direction 'sideways'.", result.message)
+        assertEquals("invalid_assertion", result.errorCode)
+        assertEquals(0, logStore.recentScreenStates().size)
     }
 
     @Test
@@ -1184,17 +1552,20 @@ class ScriptHostTest {
         scrollable: Boolean = false,
         bounds: List<Int> = listOf(0, 0, 100, 100),
         actions: List<String> = emptyList(),
+        resourceId: String? = null,
         tapFallbackEligible: Boolean = false,
         clickabilityReason: String = "",
         children: List<ScreenNode> = emptyList(),
         visibleToUser: Boolean = true,
+        path: List<Int> = emptyList(),
     ): ScreenNode = ScreenNode(
-        path = emptyList(),
+        path = path,
         ref = ref,
         elementId = id,
         role = role,
         label = label,
         text = text,
+        resourceId = resourceId,
         visibleToUser = visibleToUser,
         clickable = clickable,
         focusable = focusable,
@@ -1232,12 +1603,14 @@ private class FakePhoneActuator(
     private val tapResult: ActionResult = ActionResult.Blocked("No tap configured."),
     private val typeResult: ActionResult = ActionResult.Blocked("No typing configured."),
     private val scrollResult: ActionResult = ActionResult.Blocked("No scroll configured."),
+    private val pressEnterResult: ActionResult = ActionResult.Success("Pressed Enter."),
 ) : PhoneActuator {
     var lastTapped: ElementRef? = null
     var lastTappedPoint: Pair<Int, Int>? = null
     var lastTyped: Pair<ElementRef, String>? = null
     var lastTypedFocused: String? = null
     var lastScrolled: Pair<ElementRef, ScrollDirection>? = null
+    var lastPressedEnter: ElementRef? = null
 
     override suspend fun tap(target: ElementRef): ActionResult {
         lastTapped = target
@@ -1267,6 +1640,11 @@ private class FakePhoneActuator(
     override suspend fun pressBack(): ActionResult = ActionResult.Success("Pressed back.")
 
     override suspend fun pressHome(): ActionResult = ActionResult.Success("Pressed home.")
+
+    override suspend fun pressEnter(target: ElementRef): ActionResult {
+        lastPressedEnter = target
+        return pressEnterResult
+    }
 }
 
 private class FakeInstalledAppRegistry(private val apps: List<InstalledAppPayload> = emptyList()) : InstalledAppRegistry {

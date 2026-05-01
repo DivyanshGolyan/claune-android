@@ -208,4 +208,6 @@ interface PhoneActuator {
     suspend fun pressBack(): ActionResult
 
     suspend fun pressHome(): ActionResult
+
+    suspend fun pressEnter(target: ElementRef): ActionResult
 }

@@ -188,6 +188,24 @@ class AccessibilityBridge(
         return typeIntoNode(node, elementId, text)
     }
 
+    override suspend fun pressEnter(target: ElementRef): ActionResult {
+        val targetNode = findNodeByElementId(target.elementId)
+            ?: return ActionResult.Blocked("Could not find element '${target.elementId}' in the latest active window.")
+        val editableNode = if (targetNode.isEditable) {
+            targetNode
+        } else {
+            findEditableDescendant(targetNode)
+                ?: currentRoot(service)?.let(::findFocusedEditableNode)
+                ?: return ActionResult.Blocked("No editable element was available for Enter.")
+        }
+
+        return if (editableNode.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) {
+            ActionResult.Success("Pressed Enter.")
+        } else {
+            ActionResult.Blocked("Focused editable element did not accept Enter.")
+        }
+    }
+
     private fun typeIntoNode(node: AccessibilityNodeInfo, elementId: String, text: String): ActionResult {
         if (!node.isEditable) {
             return ActionResult.Blocked("Element '$elementId' is not editable.")
@@ -519,6 +537,12 @@ class AccessibilityBridge(
     private fun findFocusedEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val nodes = mutableListOf<AccessibilityNodeInfo>()
         collectNodes(root, nodes) { it.isEditable && it.isFocused }
+        return nodes.firstOrNull()
+    }
+
+    private fun findEditableDescendant(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val nodes = mutableListOf<AccessibilityNodeInfo>()
+        collectNodes(root, nodes) { it.isEditable }
         return nodes.firstOrNull()
     }
 

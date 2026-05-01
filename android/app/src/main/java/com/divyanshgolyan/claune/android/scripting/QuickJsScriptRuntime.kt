@@ -298,14 +298,8 @@ class QuickJsScriptRuntime(
         context.registerJsonFunction("__clauneLaunchAppJson") { args ->
             encodeOutcome(host.launchApp(args.stringArg(0)))
         }
-        context.registerJsonFunction("__clauneTapElementJson") { args ->
-            encodeOutcome(host.tapElement(args.stringArg(0)))
-        }
         context.registerJsonFunction("__clauneTapRefJson") { args ->
             encodeOutcome(host.tapRef(args.stringArg(0)))
-        }
-        context.registerJsonFunction("__clauneTapTextJson") { args ->
-            encodeOutcome(host.tapText(args.stringArg(0), args.booleanArg(1), args.booleanArg(2)))
         }
         context.registerJsonFunction("__clauneTapPointJson") { args ->
             encodeOutcome(host.tapPoint(args.intArg(0), args.intArg(1)))
@@ -313,32 +307,47 @@ class QuickJsScriptRuntime(
         context.registerJsonFunction("__clauneTapBoundsJson") { args ->
             encodeOutcome(host.tapBounds(args.stringArg(0)))
         }
-        context.registerJsonFunction("__claunePerformActionJson") { args ->
-            encodeOutcome(host.performAction(args.stringArg(0)))
-        }
         context.registerJsonFunction("__clauneScrollRefJson") { args ->
             encodeOutcome(host.scrollRef(args.stringArg(0), args.stringArg(1)))
         }
         context.registerJsonFunction("__clauneScrollScreenJson") { args ->
             encodeOutcome(host.scrollScreen(args.stringArg(0)))
         }
-        context.registerJsonFunction("__clauneFocusSelectorJson") { args ->
-            encodeOutcome(host.focusSelector(args.stringArg(0), args.longArg(1)))
+        context.registerJsonFunction("__clauneLocatorQueryJson") { args ->
+            encodeOutcome(host.locatorQuery(args.stringArg(0)))
         }
-        context.registerJsonFunction("__clauneTapSelectorJson") { args ->
-            encodeOutcome(host.tapSelector(args.stringArg(0)))
+        context.registerJsonFunction("__clauneLocatorCountJson") { args ->
+            encodeOutcome(host.locatorCount(args.stringArg(0)))
         }
-        context.registerJsonFunction("__clauneTypeIntoElementJson") { args ->
-            encodeOutcome(host.typeIntoElement(args.stringArg(0), args.stringArg(1)))
+        context.registerJsonFunction("__clauneLocatorDescribeJson") { args ->
+            encodeOutcome(host.locatorDescribe(args.stringArg(0), args.stringArg(1)))
         }
-        context.registerJsonFunction("__clauneTypeIntoSelectorJson") { args ->
-            encodeOutcome(host.typeIntoSelector(args.stringArg(0), args.stringArg(1)))
+        context.registerJsonFunction("__clauneLocatorIsVisibleJson") { args ->
+            encodeOutcome(host.locatorIsVisible(args.stringArg(0)))
         }
-        context.registerJsonFunction("__clauneTypeIntoFocusedJson") { args ->
-            encodeOutcome(host.typeIntoFocused(args.stringArg(0)))
+        context.registerJsonFunction("__clauneLocatorIsHiddenJson") { args ->
+            encodeOutcome(host.locatorIsHidden(args.stringArg(0)))
         }
-        context.registerJsonFunction("__clauneScrollContainerJson") { args ->
-            encodeOutcome(host.scrollContainer(args.stringArg(0), args.stringArg(1)))
+        context.registerJsonFunction("__clauneLocatorClickJson") { args ->
+            encodeOutcome(host.locatorClick(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__clauneLocatorFillJson") { args ->
+            encodeOutcome(host.locatorFill(args.stringArg(0), args.stringArg(1), args.stringArg(2)))
+        }
+        context.registerJsonFunction("__clauneLocatorWaitForJson") { args ->
+            encodeOutcome(host.locatorWaitFor(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__clauneLocatorAssertJson") { args ->
+            encodeOutcome(host.locatorAssert(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__clauneLocatorTextContentJson") { args ->
+            encodeOutcome(host.locatorTextContent(args.stringArg(0), args.stringArg(1)))
+        }
+        context.registerJsonFunction("__clauneLocatorAllTextContentsJson") { args ->
+            encodeOutcome(host.locatorAllTextContents(args.stringArg(0)))
+        }
+        context.registerJsonFunction("__clauneLocatorPressJson") { args ->
+            encodeOutcome(host.locatorPress(args.stringArg(0), args.stringArg(1), args.stringArg(2)))
         }
         context.registerJsonFunction("__claunePressBackJson") {
             encodeOutcome(host.pressBack())
@@ -349,8 +358,8 @@ class QuickJsScriptRuntime(
         context.registerJsonFunction("__clauneWaitForStateJson") { args ->
             encodeOutcome(host.waitForState(args.stringArg(0), args.stringArg(1), args.longArg(2)))
         }
-        context.registerJsonFunction("__clauneWaitForSelectorJson") { args ->
-            encodeOutcome(host.waitForSelector(args.stringArg(0), args.longArg(1)))
+        context.registerJsonFunction("__clauneDeviceCurrentJson") {
+            encodeOutcome(host.deviceCurrent())
         }
     }
 
@@ -403,8 +412,6 @@ class QuickJsScriptRuntime(
     private fun Array<out Any?>.intArg(index: Int): Int = getOrNull(index)?.toString()?.toDoubleOrNull()?.toInt() ?: 0
 
     private fun Array<out Any?>.longArg(index: Int): Long = getOrNull(index)?.toString()?.toLongOrNull() ?: 0L
-
-    private fun Array<out Any?>.booleanArg(index: Int): Boolean = getOrNull(index)?.toString()?.toBooleanStrictOrNull() ?: false
 
     private fun mapSyntaxError(script: String, throwable: Throwable): String {
         val message = throwable.message?.trim()?.lineSequence()?.firstOrNull()?.trim().orEmpty()

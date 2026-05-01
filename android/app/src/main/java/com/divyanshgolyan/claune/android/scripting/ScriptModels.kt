@@ -38,6 +38,7 @@ data class HostCallRecord(
     val scriptExecutionId: String,
     val runId: String? = null,
     val name: String,
+    val category: String = "supported",
     val argumentsJson: String,
     val resultJson: String,
     val startedAt: String,
@@ -45,7 +46,7 @@ data class HostCallRecord(
 )
 
 @Serializable
-data class HostCallOutcome(val ok: Boolean, val message: String, val data: JsonElement? = null)
+data class HostCallOutcome(val ok: Boolean, val message: String, val data: JsonElement? = null, val errorCode: String? = null)
 
 const val SCREEN_MODE_INTERACTIONS = "interactions"
 const val SCREEN_MODE_FULL_SNAPSHOT = "full_snapshot"
@@ -53,11 +54,24 @@ const val SCREEN_MODE_COMPACT_SNAPSHOT = "compact_snapshot"
 const val ACTION_KIND_CLICK = "click"
 const val ACTION_KIND_TYPE = "type"
 const val ACTION_KIND_SCROLL = "scroll"
-const val FALLBACK_METHOD_PERFORM_ACTION = "performAction"
+const val FALLBACK_METHOD_ACCESSIBILITY_ACTION = "accessibilityAction"
 const val FALLBACK_METHOD_CLICKABLE_PARENT = "clickableParent"
-const val FALLBACK_METHOD_TYPE_FOCUSED = "typeFocused"
+const val FALLBACK_METHOD_FOCUSED_INPUT = "focusedInput"
 const val FALLBACK_METHOD_SCROLL = "scroll"
 const val FALLBACK_METHOD_TAP_CENTER = "tapCenter"
+const val LOCATOR_KIND_TEXT = "text"
+const val LOCATOR_KIND_LABEL = "label"
+const val LOCATOR_KIND_ROLE = "role"
+const val LOCATOR_KIND_TEST_ID = "testId"
+const val LOCATOR_KIND_PLACEHOLDER = "placeholder"
+const val LOCATOR_KIND_ALL = "all"
+const val LOCATOR_STATE_VISIBLE = "visible"
+const val LOCATOR_STATE_HIDDEN = "hidden"
+const val LOCATOR_STATE_ACTIONABLE = "actionable"
+const val LOCATOR_ASSERTION_VISIBLE = "toBeVisible"
+const val LOCATOR_ASSERTION_HIDDEN = "toBeHidden"
+const val LOCATOR_ASSERTION_TEXT = "toHaveText"
+const val LOCATOR_ASSERTION_COUNT = "toHaveCount"
 
 @Serializable
 data class ScreenObservationPayload(
@@ -100,6 +114,45 @@ data class ScreenDiffOptionsPayload(val baselineSnapshotId: String? = null)
 
 @Serializable
 data class ScreenInspectOptionsPayload(val text: String? = null, val includeAll: Boolean = false, val limit: Int = 20)
+
+@Serializable
+data class LocatorSpecPayload(
+    val kind: String,
+    val text: String? = null,
+    val pattern: String? = null,
+    val flags: String = "i",
+    val exact: Boolean = false,
+    val role: String? = null,
+    val name: String? = null,
+    val testId: String? = null,
+    val index: Int? = null,
+    val scope: LocatorSpecPayload? = null,
+    val filters: List<LocatorFilterPayload> = emptyList(),
+)
+
+@Serializable
+data class LocatorFilterPayload(
+    val hasText: String? = null,
+    val hasPattern: String? = null,
+    val hasFlags: String = "i",
+    val visible: Boolean? = null,
+)
+
+@Serializable
+data class LocatorOptionsPayload(val timeoutMs: Long = 5_000, val force: Boolean = false, val state: String = "visible")
+
+@Serializable
+data class LocatorDescribeOptionsPayload(val limit: Int = 20)
+
+@Serializable
+data class LocatorAssertionPayload(
+    val matcher: String,
+    val expectedText: String? = null,
+    val expectedPattern: String? = null,
+    val expectedFlags: String = "i",
+    val expectedCount: Int? = null,
+    val timeoutMs: Long = 5_000,
+)
 
 @Serializable
 data class RawNodeSearchOptionsPayload(
@@ -277,24 +330,4 @@ data class InteractionDiagnosticsPayload(
     val actionCount: Int,
     val groupCount: Int,
     val rawVisibleNodeCount: Int,
-)
-
-@Serializable
-data class ElementSelectorPayload(
-    val ref: String? = null,
-    val label: String? = null,
-    val text: String? = null,
-    val textExact: Boolean = false,
-    val contentDescription: String? = null,
-    val resourceId: String? = null,
-    val role: String? = null,
-    val clickable: Boolean? = null,
-    val focusable: Boolean? = null,
-    val editable: Boolean? = null,
-    val focused: Boolean? = null,
-    val enabled: Boolean? = null,
-    val checked: Boolean? = null,
-    val selected: Boolean? = null,
-    val scrollable: Boolean? = null,
-    val first: Boolean = false,
 )

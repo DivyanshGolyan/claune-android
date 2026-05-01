@@ -472,9 +472,9 @@ private fun buildActions(elementNodes: List<ScreenNode>, groups: List<GroupDraft
             targetElementId = preferred.elementId,
             equivalentRefs = cluster.nodes.map { it.ref }.distinct(),
             fallbackMethod = when {
-                semanticAction -> FALLBACK_METHOD_PERFORM_ACTION
+                semanticAction -> FALLBACK_METHOD_ACCESSIBILITY_ACTION
                 preferred.clickableParentDepth != null -> FALLBACK_METHOD_CLICKABLE_PARENT
-                preferred.editable -> FALLBACK_METHOD_TYPE_FOCUSED
+                preferred.editable -> FALLBACK_METHOD_FOCUSED_INPUT
                 preferred.scrollable -> FALLBACK_METHOD_SCROLL
                 else -> FALLBACK_METHOD_TAP_CENTER
             },
@@ -766,7 +766,7 @@ private fun ScreenNode.rawSearchFieldValues(fields: List<String>): List<Pair<Str
 private fun List<String>.normalizedSearchFields(): List<String> {
     val allowed = setOf("label", "text", "contentDescription", "resourceId", "className", "role", "actions")
     val requested = mapNotNull { field -> field.takeIf { it in allowed } }.distinct()
-    return requested.ifEmpty { listOf("label", "text", "contentDescription", "resourceId") }
+    return requested.ifEmpty { listOf("label", "text", "contentDescription") }
 }
 
 private fun ScreenNode.nearestActivationCandidate(visibleByPath: Map<List<Int>, ScreenNode>): ScreenNode? {

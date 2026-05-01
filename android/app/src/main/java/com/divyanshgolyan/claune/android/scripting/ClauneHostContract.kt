@@ -14,6 +14,7 @@ internal object ClauneHostContract {
             appendLine("  ok: true;")
             appendLine("  message: string;")
             appendLine("  data?: TData;")
+            appendLine("  errorCode?: string | null;")
             appendLine("}")
             appendLine()
             appendLine("export interface ScreenNode {")
@@ -104,7 +105,7 @@ internal object ClauneHostContract {
             appendLine("  targetRef: string;")
             appendLine("  targetElementId: string;")
             appendLine("  equivalentRefs: string[];")
-            appendLine("  fallbackMethod: \"performAction\" | \"clickableParent\" | \"typeFocused\" | \"scroll\" | \"tapCenter\";")
+            appendLine("  fallbackMethod: \"accessibilityAction\" | \"clickableParent\" | \"focusedInput\" | \"scroll\" | \"tapCenter\";")
             appendLine("  scope: { groupId?: string | null; elementId?: string | null };")
             appendLine("  confidence: number;")
             appendLine("  evidence: string[];")
@@ -204,58 +205,95 @@ internal object ClauneHostContract {
             appendLine("  activityName?: string | null;")
             appendLine("}")
             appendLine()
-            appendLine("export interface ElementSelector {")
-            appendLine("  ref?: string;")
-            appendLine("  label?: string;")
-            appendLine("  text?: string;")
-            appendLine("  textExact?: boolean;")
-            appendLine("  contentDescription?: string;")
-            appendLine("  resourceId?: string;")
-            appendLine("  role?: string;")
-            appendLine("  clickable?: boolean;")
-            appendLine("  focusable?: boolean;")
-            appendLine("  editable?: boolean;")
-            appendLine("  focused?: boolean;")
-            appendLine("  enabled?: boolean;")
-            appendLine("  checked?: boolean;")
-            appendLine("  selected?: boolean;")
-            appendLine("  scrollable?: boolean;")
-            appendLine("  first?: boolean;")
+            appendLine("export type LocatorText = string | RegExp;")
+            appendLine("export type LocatorWaitState = \"visible\" | \"hidden\";")
+            appendLine("export interface LocatorOptions { timeoutMs?: number; force?: boolean; }")
+            appendLine("export interface LocatorWaitOptions { timeoutMs?: number; state?: LocatorWaitState; }")
+            appendLine("export interface LocatorFilterOptions { hasText?: LocatorText; visible?: boolean; }")
+            appendLine("export interface LocatorPressOptions { timeoutMs?: number; }")
+            appendLine("export interface LocatorDescribeOptions { limit?: number; }")
+            appendLine(
+                "export interface LocatorDescription { kind: string; count: number; truncated: boolean; " +
+                    "candidates: unknown[]; foregroundPackage?: string; selectedWindowReason?: string; }",
+            )
+            appendLine("export interface Locator {")
+            appendLine("  click(options?: LocatorOptions): HostSuccessOutcome;")
+            appendLine("  tap(options?: LocatorOptions): HostSuccessOutcome;")
+            appendLine("  fill(text: string, options?: LocatorOptions): HostSuccessOutcome;")
+            appendLine("  waitFor(options?: LocatorWaitOptions): HostSuccessOutcome;")
+            appendLine("  isVisible(): boolean;")
+            appendLine("  isHidden(): boolean;")
+            appendLine("  count(): number;")
+            appendLine("  describe(options?: LocatorDescribeOptions): LocatorDescription;")
+            appendLine("  first(): Locator;")
+            appendLine("  nth(index: number): Locator;")
+            appendLine("  filter(options: LocatorFilterOptions): Locator;")
+            appendLine("  textContent(options?: { timeoutMs?: number }): string;")
+            appendLine("  allTextContents(): string[];")
+            appendLine("  press(key: \"Enter\", options?: LocatorPressOptions): HostSuccessOutcome;")
+            appendLine("  getByText(text: LocatorText, options?: TextLocatorOptions): Locator;")
+            appendLine("  getByLabel(text: LocatorText, options?: TextLocatorOptions): Locator;")
+            appendLine("  getByRole(role: string, options?: RoleOptions): Locator;")
+            appendLine("  getByTestId(testId: string): Locator;")
+            appendLine("  getByPlaceholder(text: LocatorText, options?: TextLocatorOptions): Locator;")
             appendLine("}")
             appendLine()
-            appendLine("export interface TapTextOptions {")
-            appendLine("  exact?: boolean;")
-            appendLine("  first?: boolean;")
+            appendLine("export interface LocatorAssertions {")
+            appendLine("  toBeVisible(options?: { timeoutMs?: number }): HostSuccessOutcome;")
+            appendLine("  toBeHidden(options?: { timeoutMs?: number }): HostSuccessOutcome;")
+            appendLine("  toHaveText(text: LocatorText, options?: { timeoutMs?: number }): HostSuccessOutcome;")
+            appendLine("  toHaveCount(count: number, options?: { timeoutMs?: number }): HostSuccessOutcome;")
             appendLine("}")
             appendLine()
-            appendLine("export interface ClauneHost {")
-            hostFunctions.forEach { function ->
+            appendLine("export interface RoleOptions { name?: LocatorText; exact?: boolean; }")
+            appendLine("export interface TextLocatorOptions { exact?: boolean; }")
+            appendLine()
+            appendLine("export interface ClauneDebugHost {")
+            hostFunctions.filterNot { it.helpTopic == "locator" }.forEach { function ->
                 append("  ")
                 append(function.renderTypeSignature())
                 appendLine()
             }
+            appendLine("}")
+            appendLine()
+            appendLine("export interface ClauneAppsHost {")
+            appendLine("  /** List launchable installed apps with labels and package names. */ list(): InstalledApp[];")
+            appendLine("  /** Launch an app by package name. */ launch(packageName: string): HostSuccessOutcome;")
+            appendLine("}")
+            appendLine()
+            appendLine("export interface ClauneDeviceHost {")
+            appendLine("  /** Press Android Back. */ back(): HostSuccessOutcome;")
+            appendLine("  /** Press Android Home. */ home(): HostSuccessOutcome;")
             appendLine(
-                "  /** Find the first visible interaction element matching text, id, ref, role, or state criteria. */ findElement(screen: ScreenObservation, selector: InteractionSelector): VisibleElement | null;",
+                "  /** Return compact foreground package, selected window, keyboard/system UI, and focused element state. */ " +
+                    "current(): HostSuccessOutcome;",
             )
             appendLine(
-                "  /** Find the first visible group matching label text, id, role, or minimum confidence. */ findGroup(screen: ScreenObservation, selector: InteractionSelector): VisibleGroup | null;",
-            )
-            appendLine(
-                "  /** Find the first action matching label, id, kind, enabled state, or group scope. */ findAction(screenOrGroup: ScreenObservation | VisibleGroup, selector: InteractionSelector): ActionAffordance | null;",
+                "  /** Wait for foreground package when recovering from uncertainty; apps.launch already verifies foreground. */ waitForPackage(packageName: string, options?: { timeoutMs?: number }): HostSuccessOutcome;",
             )
             appendLine("}")
             appendLine()
-            appendLine("export interface InteractionSelector {")
-            appendLine("  id?: string;")
-            appendLine("  ref?: string;")
-            appendLine("  text?: string | RegExp;")
-            appendLine("  label?: string | RegExp;")
-            appendLine("  role?: string;")
-            appendLine("  kind?: string;")
-            appendLine("  enabled?: boolean;")
-            appendLine("  editable?: boolean;")
-            appendLine("  groupId?: string;")
-            appendLine("  minConfidence?: number;")
+            appendLine("export interface ClauneHost {")
+            appendLine(
+                "  /** Locate visible text using Playwright-style normalized text matching. */ getByText(text: LocatorText, options?: TextLocatorOptions): Locator;",
+            )
+            appendLine(
+                "  /** Locate controls by accessible label/content description. */ getByLabel(text: LocatorText, options?: TextLocatorOptions): Locator;",
+            )
+            appendLine(
+                "  /** Locate by Android role semantics, optionally narrowed by accessible name. */ getByRole(role: string, options?: RoleOptions): Locator;",
+            )
+            appendLine("  /** Locate by Android resource id as the Playwright test id analogue. */ getByTestId(testId: string): Locator;")
+            appendLine(
+                "  /** Locate inputs by placeholder-like accessible text. */ getByPlaceholder(text: LocatorText, options?: TextLocatorOptions): Locator;",
+            )
+            appendLine(
+                "  /** Construct a locator from a selector string or structured selector. Prefer getBy* helpers. */ locator(selector: string | object): Locator;",
+            )
+            appendLine("  /** Create retrying locator assertions. */ expect(locator: Locator): LocatorAssertions;")
+            appendLine("  /** Supported app-level phone APIs. */ apps: ClauneAppsHost;")
+            appendLine("  /** Supported device navigation APIs. */ device: ClauneDeviceHost;")
+            appendLine("  /** Diagnostic Android-specific APIs outside the preferred Playwright subset. */ debug: ClauneDebugHost;")
             appendLine("}")
             appendLine()
             appendLine("declare const claune: ClauneHost;")
@@ -264,52 +302,17 @@ internal object ClauneHostContract {
     val bootstrapJavascript: String
         get() = buildString {
             appendLine("function __clauneRequireOutcome(callName, outcomeJson) {")
-            appendLine("  const outcome = JSON.parse(outcomeJson);")
+            appendLine("  const outcome = typeof outcomeJson === \"string\" ? JSON.parse(outcomeJson) : outcomeJson;")
             appendLine("  if (!outcome || outcome.ok !== true) {")
             appendLine("    const message = outcome && outcome.message ? outcome.message : `${'$'}{callName} failed.`;")
-            appendLine("    throw new Error(`${'$'}{callName}: ${'$'}{message}`);")
+            appendLine("    const error = new Error(`${'$'}{callName}: ${'$'}{message}`);")
+            appendLine("    error.callName = callName;")
+            appendLine("    error.errorCode = outcome && outcome.errorCode ? outcome.errorCode : null;")
+            appendLine("    error.data = outcome && outcome.data ? outcome.data : null;")
+            appendLine("    throw error;")
             appendLine("  }")
             appendLine("  return outcome;")
             appendLine("}")
-            appendLine()
-            appendLine("function __clauneMatchesText(value, query) {")
-            appendLine("  if (query == null) return true;")
-            appendLine("  const text = String(value || \"\");")
-            appendLine("  return query instanceof RegExp ? query.test(text) : text.toLowerCase().includes(String(query).toLowerCase());")
-            appendLine("}")
-            appendLine()
-            appendLine("function __clauneTapTextExact(options) {")
-            appendLine("  if (options && typeof options === \"object\") return Boolean(options.exact ?? true);")
-            appendLine("  return Boolean(options ?? true);")
-            appendLine("}")
-            appendLine()
-            appendLine("function __clauneTapTextFirst(options, first) {")
-            appendLine("  if (first != null) return Boolean(first);")
-            appendLine("  if (options && typeof options === \"object\") return Boolean(options.first ?? false);")
-            appendLine("  return options === true;")
-            appendLine("}")
-            appendLine()
-            appendLine("function __clauneMatchesInteraction(item, selector) {")
-            appendLine("  const s = selector || {};")
-            appendLine("  if (s.id != null && item.id !== s.id && item.elementId !== s.id) return false;")
-            appendLine("  if (s.ref != null && item.ref !== s.ref && item.targetRef !== s.ref) return false;")
-            appendLine("  if (s.role != null && item.role !== s.role) return false;")
-            appendLine("  if (s.kind != null && item.kind !== s.kind) return false;")
-            appendLine("  if (s.enabled != null && ((item.enabled ?? item.state?.enabled) !== s.enabled)) return false;")
-            appendLine("  if (s.editable != null && item.state?.editable !== s.editable) return false;")
-            appendLine(
-                "  if (s.groupId != null && item.scope?.groupId !== s.groupId && !(item.groupIds || []).includes(s.groupId)) return false;",
-            )
-            appendLine(
-                "  if (s.minConfidence != null && (item.confidence ?? item.visibility?.confidence ?? 0) < s.minConfidence) return false;",
-            )
-            appendLine("  const label = item.normalizedLabel || item.label || item.labelSummary || \"\";")
-            appendLine("  if (s.text != null && !__clauneMatchesText(label, s.text)) return false;")
-            appendLine("  if (s.label != null && !__clauneMatchesText(label, s.label)) return false;")
-            appendLine("  return true;")
-            appendLine("}")
-            appendLine()
-            appendLine("let __clauneLastScreen = null;")
             appendLine()
             appendLine("const __clauneNative = {")
             hostFunctions.forEachIndexed { index, function ->
@@ -322,29 +325,180 @@ internal object ClauneHostContract {
             }
             appendLine("};")
             appendLine()
-            appendLine("globalThis.claune = Object.freeze(Object.assign({}, __clauneNative, {")
+            appendLine("function __clauneLocatorTextSpec(kind, value, options) {")
+            appendLine("  const spec = { kind };")
+            appendLine("  if (value instanceof RegExp) { spec.pattern = value.source; spec.flags = value.flags || \"\"; }")
+            appendLine("  else spec.text = String(value);")
+            appendLine("  if (options && typeof options === \"object\") spec.exact = Boolean(options.exact ?? false);")
+            appendLine("  return spec;")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneFilterSpec(options) {")
+            appendLine("  const filter = {};")
+            appendLine("  const source = options || {};")
+            appendLine(
+                "  if (source.hasText instanceof RegExp) { filter.hasPattern = source.hasText.source; filter.hasFlags = source.hasText.flags || \"\"; }",
+            )
+            appendLine("  else if (source.hasText != null) filter.hasText = String(source.hasText);")
+            appendLine("  if (source.visible != null) filter.visible = Boolean(source.visible);")
+            appendLine("  return filter;")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneScopedSpec(scope, child) {")
+            appendLine("  return Object.assign({}, child, { scope });")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneRoleSpec(role, options) {")
+            appendLine("  const spec = { kind: \"role\", role: String(role) };")
+            appendLine("  const name = options && options.name;")
+            appendLine("  if (name instanceof RegExp) { spec.pattern = name.source; spec.flags = name.flags || \"\"; }")
+            appendLine("  else if (name != null) spec.name = String(name);")
+            appendLine("  if (options && typeof options === \"object\") spec.exact = Boolean(options.exact ?? false);")
+            appendLine("  return spec;")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneGenericLocatorSpec(selector) {")
+            appendLine("  if (selector === \"*\") return { kind: \"all\" };")
+            appendLine("  if (typeof selector === \"string\") return { kind: \"text\", text: selector };")
+            appendLine("  if (!selector || typeof selector !== \"object\") return { kind: \"text\", text: String(selector ?? \"\") };")
+            appendLine("  if (selector.kind) return Object.assign({}, selector);")
+            appendLine("  if (selector.text != null) return __clauneLocatorTextSpec(\"text\", selector.text, selector);")
+            appendLine("  if (selector.label != null) return __clauneLocatorTextSpec(\"label\", selector.label, selector);")
+            appendLine(
+                "  if (selector.placeholder != null) return __clauneLocatorTextSpec(\"placeholder\", selector.placeholder, selector);",
+            )
+            appendLine("  if (selector.role != null) return __clauneRoleSpec(selector.role, selector);")
+            appendLine(
+                "  if (selector.testId != null || selector.resourceId != null) return { kind: \"testId\", testId: String(selector.testId ?? selector.resourceId) };",
+            )
+            appendLine("  return { kind: \"text\", text: \"\" };")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneLocator(spec) {")
+            appendLine("  const frozenSpec = Object.freeze(Object.assign({}, spec));")
+            appendLine("  const locator = {")
+            appendLine("    __clauneLocator: true,")
+            appendLine("    __spec: frozenSpec,")
+            appendLine(
+                "    click(options) { return __clauneRequireOutcome(\"locator.click\", __clauneNative.locatorClick(frozenSpec, options || {})); },",
+            )
+            appendLine("    tap(options) { return this.click(options); },")
+            appendLine(
+                "    fill(text, options) { return __clauneRequireOutcome(\"locator.fill\", __clauneNative.locatorFill(frozenSpec, String(text), options || {})); },",
+            )
+            appendLine(
+                "    waitFor(options) { return __clauneRequireOutcome(\"locator.waitFor\", __clauneNative.locatorWaitFor(frozenSpec, options || {})); },",
+            )
+            appendLine(
+                "    count() { return Number((__clauneRequireOutcome(\"locator.count\", __clauneNative.locatorCount(frozenSpec)).data || {}).count || 0); },",
+            )
+            appendLine(
+                "    describe(options) { return (__clauneRequireOutcome(\"locator.describe\", __clauneNative.locatorDescribe(frozenSpec, options || {})).data || {}); },",
+            )
+            appendLine(
+                "    isVisible() { return Boolean((__clauneRequireOutcome(\"locator.isVisible\", __clauneNative.locatorIsVisible(frozenSpec)).data || {}).visible); },",
+            )
+            appendLine(
+                "    isHidden() { return Boolean((__clauneRequireOutcome(\"locator.isHidden\", __clauneNative.locatorIsHidden(frozenSpec)).data || {}).hidden); },",
+            )
+            appendLine("    first() { return __clauneLocator(Object.assign({}, frozenSpec, { index: 0 })); },")
+            appendLine("    nth(index) { return __clauneLocator(Object.assign({}, frozenSpec, { index: Number(index) })); },")
+            appendLine(
+                "    filter(options) { return __clauneLocator(Object.assign({}, frozenSpec, { filters: (frozenSpec.filters || []).concat([__clauneFilterSpec(options)]) })); },",
+            )
+            appendLine(
+                "    textContent(options) { return String((__clauneRequireOutcome(\"locator.textContent\", __clauneNative.locatorTextContent(frozenSpec, options || {})).data || {}).text ?? \"\"); },",
+            )
+            appendLine(
+                "    allTextContents() { return (__clauneRequireOutcome(\"locator.allTextContents\", __clauneNative.locatorAllTextContents(frozenSpec)).data || {}).texts || []; },",
+            )
+            appendLine(
+                "    press(key, options) { return __clauneRequireOutcome(\"locator.press\", __clauneNative.locatorPress(frozenSpec, String(key), options || {})); },",
+            )
+            appendLine(
+                "    getByText(text, options) { return __clauneLocator(__clauneScopedSpec(frozenSpec, __clauneLocatorTextSpec(\"text\", text, options))); },",
+            )
+            appendLine(
+                "    getByLabel(text, options) { return __clauneLocator(__clauneScopedSpec(frozenSpec, __clauneLocatorTextSpec(\"label\", text, options))); },",
+            )
+            appendLine(
+                "    getByRole(role, options) { return __clauneLocator(__clauneScopedSpec(frozenSpec, __clauneRoleSpec(role, options))); },",
+            )
+            appendLine(
+                "    getByTestId(testId) { return __clauneLocator(__clauneScopedSpec(frozenSpec, { kind: \"testId\", testId: String(testId) })); },",
+            )
+            appendLine(
+                "    getByPlaceholder(text, options) { return __clauneLocator(__clauneScopedSpec(frozenSpec, __clauneLocatorTextSpec(\"placeholder\", text, options))); }",
+            )
+            appendLine("  };")
+            appendLine("  return Object.freeze(locator);")
+            appendLine("}")
+            appendLine()
+            appendLine("function __clauneAssert(locator, matcher, payload) {")
+            appendLine("  if (!locator || locator.__clauneLocator !== true) throw new Error(\"claune.expect() requires a Locator.\");")
+            appendLine(
+                "  return __clauneRequireOutcome(`expect.${'$'}{matcher}`, __clauneNative.locatorAssert(locator.__spec, Object.assign({ matcher }, payload || {})));",
+            )
+            appendLine("}")
+            appendLine()
+            appendLine("const __clauneDebug = {")
             appendLine("  observeScreen(options) {")
             appendLine("    const screen = __clauneNative.observeScreen(options);")
-            appendLine("    __clauneLastScreen = screen;")
             appendLine("    return screen;")
-            appendLine("  },")
-            appendLine("  findElement(screen, selector) {")
-            appendLine("    return ((screen && screen.elements) || []).find((item) => __clauneMatchesInteraction(item, selector)) || null;")
-            appendLine("  },")
-            appendLine("  findGroup(screen, selector) {")
-            appendLine("    return ((screen && screen.groups) || []).find((item) => __clauneMatchesInteraction(item, selector)) || null;")
-            appendLine("  },")
-            appendLine("  findAction(screenOrGroup, selector) {")
-            appendLine("    const s = selector || {};")
-            appendLine("    const source = screenOrGroup || {};")
-            appendLine("    const actions = source.actions || [];")
-            appendLine("    const ids = source.actionIds;")
-            appendLine("    return actions.find((item) => __clauneMatchesInteraction(item, s)) ||")
+            appendLine("  }${if (debugFunctions.isNotEmpty()) "," else ""}")
+            debugFunctions.forEachIndexed { index, function ->
+                append("  ${function.name}: __clauneNative.${function.name}")
+                if (index != debugFunctions.lastIndex) {
+                    appendLine(",")
+                } else {
+                    appendLine()
+                }
+            }
+            appendLine("};")
+            appendLine()
+            appendLine("globalThis.claune = Object.freeze({")
+            appendLine("  getByText(text, options) { return __clauneLocator(__clauneLocatorTextSpec(\"text\", text, options)); },")
+            appendLine("  getByLabel(text, options) { return __clauneLocator(__clauneLocatorTextSpec(\"label\", text, options)); },")
+            appendLine("  getByRole(role, options) { return __clauneLocator(__clauneRoleSpec(role, options)); },")
+            appendLine("  getByTestId(testId) { return __clauneLocator({ kind: \"testId\", testId: String(testId) }); },")
             appendLine(
-                "      ((__clauneLastScreen && ids) ? __clauneLastScreen.actions.find((item) => ids.includes(item.id) && __clauneMatchesInteraction(item, s)) : null) || null;",
+                "  getByPlaceholder(text, options) { return __clauneLocator(__clauneLocatorTextSpec(\"placeholder\", text, options)); },",
             )
-            appendLine("  }")
-            appendLine("}));")
+            appendLine("  locator(selector) { return __clauneLocator(__clauneGenericLocatorSpec(selector)); },")
+            appendLine("  expect(locator) {")
+            appendLine("    return Object.freeze({")
+            appendLine(
+                "      toBeVisible(options) { return __clauneAssert(locator, \"toBeVisible\", { timeoutMs: Number((options || {}).timeoutMs ?? 5000) }); },",
+            )
+            appendLine(
+                "      toBeHidden(options) { return __clauneAssert(locator, \"toBeHidden\", { timeoutMs: Number((options || {}).timeoutMs ?? 5000) }); },",
+            )
+            appendLine("      toHaveText(text, options) {")
+            appendLine("        const payload = { timeoutMs: Number((options || {}).timeoutMs ?? 5000) };")
+            appendLine(
+                "        if (text instanceof RegExp) { payload.expectedPattern = text.source; payload.expectedFlags = text.flags || \"\"; } else payload.expectedText = String(text);",
+            )
+            appendLine("        return __clauneAssert(locator, \"toHaveText\", payload);")
+            appendLine("      },")
+            appendLine(
+                "      toHaveCount(count, options) { return __clauneAssert(locator, \"toHaveCount\", { expectedCount: Number(count), timeoutMs: Number((options || {}).timeoutMs ?? 5000) }); }",
+            )
+            appendLine("    });")
+            appendLine("  },")
+            appendLine("  apps: Object.freeze({")
+            appendLine("    list() { return __clauneNative.listInstalledApps(); },")
+            appendLine("    launch(packageName) { return __clauneNative.launchApp(String(packageName)); }")
+            appendLine("  }),")
+            appendLine("  device: Object.freeze({")
+            appendLine("    back() { return __clauneNative.pressBack(); },")
+            appendLine("    home() { return __clauneNative.pressHome(); },")
+            appendLine("    current() { return __clauneNative.deviceCurrent(); },")
+            appendLine(
+                "    waitForPackage(packageName, options) { return __clauneNative.waitForState(\"package\", String(packageName), Number((options || {}).timeoutMs ?? 5000)); }",
+            )
+            appendLine("  }),")
+            appendLine("  debug: Object.freeze(__clauneDebug)")
+            appendLine("});")
         }.trim()
 
     val modelContractBlock: String
@@ -357,7 +511,7 @@ internal object ClauneHostContract {
 
     val scriptLabSummary: String =
         "Run JS directly against the embedded runtime using the generated Claune host contract. " +
-            "The `claune` global exposes installed-app discovery, app launch, interaction-state observation, raw-node search, selector, action, focused input, tap, typing, scroll, navigation, and wait helpers."
+            "The `claune` global exposes a synchronous Playwright-style locator/assertion subset plus Android diagnostics under `claune.debug`."
 
     val promptSummary: String
         get() = buildString {
@@ -366,25 +520,26 @@ internal object ClauneHostContract {
             appendLine("  claune-js /work/scripts/task.js [args...]")
             appendLine("  claune-js --help [topic]")
             appendLine()
-            appendLine("Top-level claune APIs:")
-            hostFunctions.chunked(4).forEach { chunk ->
-                append("  ")
-                appendLine(chunk.joinToString(", ") { it.name })
-            }
+            appendLine("Preferred top-level claune APIs:")
+            appendLine("  ${preferredApiNames.joinToString(", ")}")
+            appendLine("Supported phone namespaces:")
+            appendLine("  apps.list, apps.launch, device.current, device.back, device.home, device.waitForPackage")
+            appendLine("  apps.launch is idempotent and verifies foreground state; do not immediately pair it with waitForPackage.")
+            appendLine("Diagnostics exist only for API-gap debugging: claune.debug.*")
             appendLine()
-            appendLine("Help topics: observe, actions, typing, navigation, raw, selectors, types, all, or any API name.")
+            appendLine("Help topics: locators, diagnostics, types, all.")
         }.trim()
 
     fun cliHelp(topic: String? = null): String {
         val normalizedTopic = topic?.trim().orEmpty()
         if (normalizedTopic.isBlank()) return topLevelHelp()
 
-        hostFunctions.firstOrNull { it.name.equals(normalizedTopic, ignoreCase = true) }?.let { function ->
+        debugFunctions.firstOrNull { it.name.equals(normalizedTopic, ignoreCase = true) }?.let { function ->
             return buildString {
-                appendLine("claune.${function.name}")
+                appendLine("claune.debug.${function.name}")
                 appendLine(function.documentation)
                 appendLine()
-                appendLine(function.renderPlainSignature())
+                appendLine(function.renderPlainSignature(receiver = "claune.debug"))
                 appendLine("Returns: ${function.returnType}")
             }.trim()
         }
@@ -392,12 +547,9 @@ internal object ClauneHostContract {
         return when (normalizedTopic.lowercase()) {
             "all" -> modelContractBlock
             "types" -> typeDefinitions
-            "observe", "observation" -> topicHelp("observe", "Screen observation and inspection APIs.")
-            "actions", "action", "tap" -> topicHelp("actions", "Tap, action, wait, and selector-driven interaction APIs.")
-            "typing", "input" -> topicHelp("typing", "Focused-input and selector-driven typing APIs.")
-            "navigation", "nav" -> topicHelp("navigation", "App launch, Back/Home, scrolling, and state-wait APIs.")
-            "raw" -> topicHelp("raw", "Raw accessibility-tree fallback APIs.")
-            "selectors", "selector" -> selectorHelp()
+            "locators", "locator", "actions", "typing", "assertions", "expect" -> locatorHelp()
+            "diagnostics", "debug", "observe", "observation", "navigation", "raw" -> diagnosticsHelp()
+            "selectors", "selector" -> locatorHelp()
             "functions", "apis" -> functionListHelp()
             else -> buildString {
                 appendLine("Unknown claune-js help topic: $topic")
@@ -467,29 +619,6 @@ internal object ClauneHostContract {
                 parameters = listOf(HostParameter("ref", "string", "String(%s)")),
             ),
             HostFunction(
-                name = "tapText",
-                nativeBinding = "__clauneTapTextJson",
-                returnType = "HostSuccessOutcome",
-                documentation =
-                "Tap an actionable element whose visible text or label matches the given text. " +
-                    "Use { first: true } only after inspecting duplicate matches.",
-                parameters = listOf(
-                    HostParameter("text", "string", "String(%s)"),
-                    HostParameter(
-                        "options",
-                        "boolean | TapTextOptions",
-                        "__clauneTapTextExact(%s)",
-                        optional = true,
-                    ),
-                    HostParameter(
-                        "first",
-                        "boolean",
-                        "__clauneTapTextFirst(options, %s)",
-                        optional = true,
-                    ),
-                ),
-            ),
-            HostFunction(
                 name = "tapPoint",
                 nativeBinding = "__clauneTapPointJson",
                 returnType = "HostSuccessOutcome",
@@ -511,13 +640,6 @@ internal object ClauneHostContract {
                 parameters = listOf(HostParameter("bounds", "Bounds", "JSON.stringify(%s ?? [])")),
             ),
             HostFunction(
-                name = "performAction",
-                nativeBinding = "__claunePerformActionJson",
-                returnType = "HostSuccessOutcome",
-                documentation = "Perform a deduplicated interaction action id from the latest screen interaction state.",
-                parameters = listOf(HostParameter("actionId", "string", "String(%s)")),
-            ),
-            HostFunction(
                 name = "scrollRef",
                 nativeBinding = "__clauneScrollRefJson",
                 returnType = "HostSuccessOutcome",
@@ -537,77 +659,123 @@ internal object ClauneHostContract {
                 ),
             ),
             HostFunction(
-                name = "focusSelector",
-                nativeBinding = "__clauneFocusSelectorJson",
+                name = "locatorQuery",
+                nativeBinding = "__clauneLocatorQueryJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Activate a selector-matched control and wait for an editable field to become available for typing.",
+                documentation = "Internal locator query implementation for Playwright-subset locator objects.",
+                parameters = listOf(HostParameter("spec", "object", "JSON.stringify(%s ?? {})")),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "locatorCount",
+                nativeBinding = "__clauneLocatorCountJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Internal locator count implementation without candidate serialization.",
+                parameters = listOf(HostParameter("spec", "object", "JSON.stringify(%s ?? {})")),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "locatorDescribe",
+                nativeBinding = "__clauneLocatorDescribeJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Internal supported locator discovery implementation with compact candidate descriptions.",
                 parameters = listOf(
-                    HostParameter("selector", "ElementSelector", "JSON.stringify(%s ?? {})"),
-                    HostParameter("timeoutMs", "number", "Number(%s ?? 0)"),
+                    HostParameter("spec", "object", "JSON.stringify(%s ?? {})"),
+                    HostParameter("options", "LocatorDescribeOptions", "JSON.stringify(%s ?? {})"),
                 ),
+                throwsOnFailure = false,
             ),
             HostFunction(
-                name = "tapSelector",
-                nativeBinding = "__clauneTapSelectorJson",
+                name = "locatorIsVisible",
+                nativeBinding = "__clauneLocatorIsVisibleJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Tap the best actionable element matching a selector.",
-                parameters = listOf(HostParameter("selector", "ElementSelector", "JSON.stringify(%s ?? {})")),
+                documentation = "Internal locator visibility boolean implementation.",
+                parameters = listOf(HostParameter("spec", "object", "JSON.stringify(%s ?? {})")),
+                throwsOnFailure = false,
             ),
             HostFunction(
-                name = "tapElement",
-                nativeBinding = "__clauneTapElementJson",
+                name = "locatorIsHidden",
+                nativeBinding = "__clauneLocatorIsHiddenJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Tap an actionable element by element id from the latest snapshot.",
-                parameters = listOf(HostParameter("elementId", "string", "String(%s)")),
+                documentation = "Internal locator hidden-state boolean implementation.",
+                parameters = listOf(HostParameter("spec", "object", "JSON.stringify(%s ?? {})")),
+                throwsOnFailure = false,
             ),
             HostFunction(
-                name = "typeIntoSelector",
-                nativeBinding = "__clauneTypeIntoSelectorJson",
+                name = "locatorClick",
+                nativeBinding = "__clauneLocatorClickJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Type text into an editable element matched by selector, activating a wrapper control first when needed.",
+                documentation = "Internal locator click/tap implementation with strictness and actionability checks.",
                 parameters = listOf(
-                    HostParameter("selector", "ElementSelector", "JSON.stringify(%s ?? {})"),
+                    HostParameter("spec", "object", "JSON.stringify(%s ?? {})"),
+                    HostParameter("options", "LocatorOptions", "JSON.stringify(%s ?? {})"),
+                ),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "locatorFill",
+                nativeBinding = "__clauneLocatorFillJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Internal locator fill implementation with editable-target activation.",
+                parameters = listOf(
+                    HostParameter("spec", "object", "JSON.stringify(%s ?? {})"),
                     HostParameter("text", "string", "String(%s)"),
+                    HostParameter("options", "LocatorOptions", "JSON.stringify(%s ?? {})"),
                 ),
+                throwsOnFailure = false,
             ),
             HostFunction(
-                name = "typeIntoFocused",
-                nativeBinding = "__clauneTypeIntoFocusedJson",
+                name = "locatorWaitFor",
+                nativeBinding = "__clauneLocatorWaitForJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Type text into the currently focused editable element when focus is already where you need it.",
-                parameters = listOf(HostParameter("text", "string", "String(%s)")),
-            ),
-            HostFunction(
-                name = "typeIntoElement",
-                nativeBinding = "__clauneTypeIntoElementJson",
-                returnType = "HostSuccessOutcome",
-                documentation = "Type text into an editable element id from the latest snapshot.",
+                documentation = "Internal locator wait implementation.",
                 parameters = listOf(
-                    HostParameter("elementId", "string", "String(%s)"),
-                    HostParameter("text", "string", "String(%s)"),
+                    HostParameter("spec", "object", "JSON.stringify(%s ?? {})"),
+                    HostParameter("options", "LocatorWaitOptions", "JSON.stringify(%s ?? {})"),
                 ),
+                throwsOnFailure = false,
             ),
             HostFunction(
-                name = "scrollContainer",
-                nativeBinding = "__clauneScrollContainerJson",
+                name = "locatorAssert",
+                nativeBinding = "__clauneLocatorAssertJson",
                 returnType = "HostSuccessOutcome",
-                documentation =
-                "Scroll a scrollable container element id in the given direction. " +
-                    "Prefer scrollRef when you already have a fresh snapshot ref.",
+                documentation = "Internal retrying locator assertion implementation.",
                 parameters = listOf(
-                    HostParameter("elementId", "string", "String(%s)"),
-                    HostParameter("direction", "\"up\" | \"down\"", "String(%s)"),
+                    HostParameter("spec", "object", "JSON.stringify(%s ?? {})"),
+                    HostParameter("assertion", "object", "JSON.stringify(%s ?? {})"),
                 ),
+                throwsOnFailure = false,
             ),
             HostFunction(
-                name = "waitForSelector",
-                nativeBinding = "__clauneWaitForSelectorJson",
+                name = "locatorTextContent",
+                nativeBinding = "__clauneLocatorTextContentJson",
                 returnType = "HostSuccessOutcome",
-                documentation = "Wait for a selector to match a distinctive UI element after navigation or mutation.",
+                documentation = "Internal strict locator text extraction.",
                 parameters = listOf(
-                    HostParameter("selector", "ElementSelector", "JSON.stringify(%s ?? {})"),
-                    HostParameter("timeoutMs", "number", "Number(%s ?? 0)"),
+                    HostParameter("spec", "object", "JSON.stringify(%s ?? {})"),
+                    HostParameter("options", "{ timeoutMs?: number }", "JSON.stringify(%s ?? {})"),
                 ),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "locatorAllTextContents",
+                nativeBinding = "__clauneLocatorAllTextContentsJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Internal multi-target locator text extraction.",
+                parameters = listOf(HostParameter("spec", "object", "JSON.stringify(%s ?? {})")),
+                throwsOnFailure = false,
+            ),
+            HostFunction(
+                name = "locatorPress",
+                nativeBinding = "__clauneLocatorPressJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Internal locator key press implementation.",
+                parameters = listOf(
+                    HostParameter("spec", "object", "JSON.stringify(%s ?? {})"),
+                    HostParameter("key", "string", "String(%s)"),
+                    HostParameter("options", "LocatorPressOptions", "JSON.stringify(%s ?? {})"),
+                ),
+                throwsOnFailure = false,
             ),
             HostFunction(
                 name = "pressBack",
@@ -634,7 +802,21 @@ internal object ClauneHostContract {
                     HostParameter("timeoutMs", "number", "Number(%s ?? 0)"),
                 ),
             ),
+            HostFunction(
+                name = "deviceCurrent",
+                nativeBinding = "__clauneDeviceCurrentJson",
+                returnType = "HostSuccessOutcome",
+                documentation = "Capture compact current foreground package, selected window, keyboard/system UI, and focus state.",
+                parameters = emptyList(),
+                throwsOnFailure = false,
+            ),
         )
+
+    private val debugFunctions: List<HostFunction>
+        get() = hostFunctions.filterNot { it.name == "observeScreen" || it.helpTopic == "locator" }
+
+    private val preferredApiNames: List<String> =
+        listOf("getByText", "getByLabel", "getByRole", "getByTestId", "getByPlaceholder", "locator", "expect", "apps", "device")
 
     private fun topLevelHelp(): String = buildString {
         appendLine("claune-js")
@@ -642,63 +824,85 @@ internal object ClauneHostContract {
         appendLine()
         appendLine("Usage:")
         appendLine("  claune-js - <<'JS'")
-        appendLine("  const screen = claune.observeScreen();")
-        appendLine("  return { foregroundPackage: screen.foregroundPackage };")
+        appendLine("  claune.getByLabel(\"Search\").fill(\"milk\");")
+        appendLine("  claune.getByPlaceholder(\"Search\").press(\"Enter\");")
+        appendLine("  claune.expect(claune.getByText(\"milk\")).toBeVisible();")
+        appendLine("  const visible = claune.locator(\"*\").describe({ limit: 20 });")
+        appendLine("  return { stage: \"verified\" };")
         appendLine("  JS")
         appendLine("  claune-js /work/scripts/task.js [args...]")
         appendLine("  claune-js --help [topic]")
         appendLine()
         appendLine("Globals:")
-        appendLine("  claune   Phone observation/action host object.")
+        appendLine("  claune   Synchronous Playwright-style Android automation host.")
         appendLine("  argv     Script arguments after script path.")
         appendLine("  stdin    Text piped into the script for file-based scripts.")
         appendLine("  print(), console.log(), console.error()")
         appendLine()
         appendLine("Topics:")
-        appendLine("  functions, observe, actions, typing, navigation, raw, selectors, types, all")
+        appendLine("  locators, diagnostics, types, all")
         appendLine()
-        appendLine("Common APIs:")
-        hostFunctions.chunked(4).forEach { chunk ->
-            append("  ")
-            appendLine(chunk.joinToString(", ") { it.name })
-        }
+        appendLine("Preferred APIs:")
+        appendLine("  getByText, getByLabel, getByRole, getByTestId, getByPlaceholder, locator, expect, apps, device")
     }.trim()
 
-    private fun topicHelp(topic: String, description: String): String {
-        val functions = hostFunctions.filter { it.helpTopic == topic }
-        return buildString {
-            appendLine(topic)
-            appendLine(description)
-            appendLine()
-            functions.forEach { function ->
-                appendLine(function.renderPlainSignature())
-                appendLine("  ${function.documentation}")
-            }
-        }.trim()
-    }
+    private fun locatorHelp(): String = buildString {
+        appendLine("locators")
+        appendLine("Preferred synchronous Playwright subset for Android accessibility automation.")
+        appendLine()
+        appendLine("claune.getByText(text, options?)")
+        appendLine("claune.getByLabel(text, options?)")
+        appendLine("claune.getByRole(role, { name?, exact? })")
+        appendLine("claune.getByTestId(testId)")
+        appendLine("claune.getByPlaceholder(text, options?)")
+        appendLine("claune.locator(selector)")
+        appendLine()
+        appendLine("locator.click(options?), locator.tap(options?), locator.fill(text, options?)")
+        appendLine("locator.waitFor({ state?: \"visible\" | \"hidden\", timeoutMs? })")
+        appendLine("locator.isVisible(), locator.isHidden(), locator.describe({ limit? })")
+        appendLine("locator.press(\"Enter\", options?), locator.textContent(options?), locator.allTextContents()")
+        appendLine("Prefer locator.allTextContents() over loops of locator.nth(i).textContent().")
+        appendLine("locator.filter({ hasText?, visible? }), locator.count(), locator.first(), locator.nth(index)")
+        appendLine("claune.locator(\"*\").describe({ limit: 20 }) for supported broad discovery")
+        appendLine("locator.getByText(...), getByLabel(...), getByRole(...), getByTestId(...), getByPlaceholder(...)")
+        appendLine()
+        appendLine("claune.expect(locator).toBeVisible(options?)")
+        appendLine("claune.expect(locator).toBeHidden(options?)")
+        appendLine("claune.expect(locator).toHaveText(textOrRegex, options?)")
+        appendLine("claune.expect(locator).toHaveCount(count, options?)")
+    }.trim()
 
-    private fun functionListHelp(): String = buildString {
-        hostFunctions.forEach { function ->
-            appendLine(function.renderPlainSignature())
+    private fun diagnosticsHelp(): String = buildString {
+        appendLine("diagnostics")
+        appendLine("Android-specific escape hatches live under claune.debug and are not the preferred path.")
+        appendLine()
+        hostFunctions.filterNot { it.helpTopic == "locator" }.forEach { function ->
+            appendLine(
+                "claune.debug.${function.name}${function.parameters.joinToString(prefix = "(", postfix = ")") {
+                    it.renderTypeSignature()
+                }}: ${function.returnType}",
+            )
             appendLine("  ${function.documentation}")
         }
     }.trim()
 
-    private fun selectorHelp(): String = buildString {
-        appendLine("selectors")
-        appendLine(
-            "Use selectors with tapSelector, focusSelector, typeIntoSelector, waitForSelector, " +
-                "findElement, findGroup, and findAction.",
-        )
-        appendLine()
-        appendLine("ElementSelector fields:")
-        appendLine("  ref, label, text, textExact, contentDescription, resourceId, role")
-        appendLine("  clickable, focusable, editable, focused, enabled, checked, selected, scrollable, first")
-        appendLine()
-        appendLine("InteractionSelector fields:")
-        appendLine("  id, ref, text, label, role, kind, enabled, editable, groupId, minConfidence")
-        appendLine()
-        appendLine("Run `claune-js --help types` for full TypeScript definitions.")
+    private fun functionListHelp(): String = buildString {
+        appendLine("Preferred APIs:")
+        appendLine("claune.getByText(text, options?): Locator")
+        appendLine("claune.getByLabel(text, options?): Locator")
+        appendLine("claune.getByRole(role, options?): Locator")
+        appendLine("claune.getByTestId(testId): Locator")
+        appendLine("claune.getByPlaceholder(text, options?): Locator")
+        appendLine("claune.locator(selector): Locator")
+        appendLine("claune.expect(locator): LocatorAssertions")
+        appendLine("claune.apps.list(): InstalledApp[]")
+        appendLine("claune.apps.launch(packageName): HostSuccessOutcome")
+        appendLine("  Idempotently ensures the package is foreground; returns immediately if it already is.")
+        appendLine("claune.device.back(): HostSuccessOutcome")
+        appendLine("claune.device.home(): HostSuccessOutcome")
+        appendLine("claune.device.current(): HostSuccessOutcome")
+        appendLine("claune.device.waitForPackage(packageName, options?): HostSuccessOutcome")
+        appendLine("  Use only when recovering from uncertainty; launch already waits for foreground.")
     }.trim()
 }
 
@@ -723,17 +927,29 @@ private data class HostFunction(
 ) {
     val helpTopic: String
         get() = when (name) {
+            "locatorQuery",
+            "locatorCount",
+            "locatorDescribe",
+            "locatorIsVisible",
+            "locatorIsHidden",
+            "locatorClick",
+            "locatorFill",
+            "locatorWaitFor",
+            "locatorAssert",
+            "locatorTextContent",
+            "locatorAllTextContents",
+            "locatorPress",
+            -> "locator"
             "observeScreen", "diffScreen", "inspectScreen" -> "observe"
             "findRawNodes" -> "raw"
-            "typeIntoSelector", "typeIntoFocused", "typeIntoElement", "focusSelector" -> "typing"
             "listInstalledApps",
             "launchApp",
             "scrollRef",
             "scrollScreen",
-            "scrollContainer",
             "pressBack",
             "pressHome",
             "waitForState",
+            "deviceCurrent",
             -> "navigation"
             else -> "actions"
         }
@@ -743,9 +959,9 @@ private data class HostFunction(
         return "/** $documentation */ $name($args): $returnType;"
     }
 
-    fun renderPlainSignature(): String {
+    fun renderPlainSignature(receiver: String = "claune"): String {
         val args = parameters.joinToString(", ") { it.renderTypeSignature() }
-        return "claune.$name($args): $returnType"
+        return "$receiver.$name($args): $returnType"
     }
 
     fun renderBootstrapFunction(): String {
