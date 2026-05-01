@@ -15,10 +15,10 @@ internal class ToolBudget(private val maxToolCalls: Int? = null, private val max
 
     fun beforeToolCall(context: BeforeToolCallContext): BeforeToolCallResult? {
         if (inReflectionPhase) {
-            if (context.toolCall.name == "execute_script") {
+            if (context.toolCall.name !in MEMORY_REFLECTION_TOOLS) {
                 return BeforeToolCallResult(
                     block = true,
-                    reason = "Phone interaction is not allowed during memory reflection.",
+                    reason = "Only workspace file tools are allowed during memory reflection.",
                 )
             }
             if (usedReflectionToolCalls >= maxReflectionToolCalls) {
@@ -40,5 +40,9 @@ internal class ToolBudget(private val maxToolCalls: Int? = null, private val max
         }
         usedToolCalls += 1
         return null
+    }
+
+    private companion object {
+        val MEMORY_REFLECTION_TOOLS = setOf("read", "write", "edit")
     }
 }

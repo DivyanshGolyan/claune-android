@@ -2,10 +2,11 @@ package com.divyanshgolyan.claune.android.llm.tools
 
 import com.divyanshgolyan.claune.android.BuildConfig
 import com.divyanshgolyan.claune.android.scripting.ClauneHostContract
+import com.divyanshgolyan.claune.android.workspace.AgentWorkspace
 import java.time.LocalDate
 
 internal object SystemPromptBuilder {
-    fun build(memoryContent: String, tools: List<ToolDefinition<*>>): String {
+    fun build(memoryTree: String, tools: List<ToolDefinition<*>>): String {
         val toolSnippets = tools.joinToString(separator = "\n") { "- ${it.name}: ${it.promptSnippet}" }
         val toolGuidelines = tools.flatMap { it.promptGuidelines }.distinct()
 
@@ -45,39 +46,55 @@ internal object SystemPromptBuilder {
                 ),
             )
             section(
-                "Script contract:",
+                "Workspace and bash contract:",
                 listOf(
-                    "Use execute_script for all phone observation and action.",
-                    "The JS runtime exposes a global object named `claune`.",
-                    "The TypeScript contract below is the source of truth. Do not invent APIs or fields.",
-                    "claune APIs are synchronous. Do not use async, await, Promise syntax, or Promise-based patterns.",
-                    "Every claune action except observeScreen throws immediately if the host call fails.",
+                    "The workspace root visible to you is ${AgentWorkspace.MODEL_ROOT}. Keep generated scripts, scratch files, outputs, and edits under that root.",
+                    "Use read before editing existing files, write for new or complete replacement files, and edit for exact unique text replacement.",
+                    "Use bash for local verification and for phone-control scripts. Commands run from ${AgentWorkspace.MODEL_ROOT}.",
+                    "For short one-off phone probes, run inline Claune JS with bash using `claune-js - <<'JS'`; write ${AgentWorkspace.MODEL_ROOT}/scripts files only for reusable or longer scripts.",
+                    "Keep Claune JS script output compact and structured so the next step can reason from stdout.",
                 ),
             )
-            appendLine(ClauneHostContract.modelContractBlock)
+            section(
+                "Claune JS contract:",
+                listOf(
+                    "Claune JS scripts run against a host object named `claune`.",
+                    "Use `claune-js --help` for the top-level API, `claune-js --help <topic>` for focused help, and `claune-js --help types` only when exact types are needed.",
+                    "claune APIs are synchronous. Do not use async, await, Promise syntax, or Promise-based patterns.",
+                    "Every claune action except observeScreen throws immediately if the host call fails.",
+                    "A bash command such as `claune-js - <<'JS'` is the normal way to execute a short inline script; use `claune-js /work/scripts/task.js` for saved scripts.",
+                ),
+            )
+            appendLine(ClauneHostContract.promptSummary)
             appendLine()
-            appendLine("Current memory.md:")
-            appendLine("```md")
-            appendLine(memoryContent.ifBlank { "# Claune Memory" }.trimEnd())
+            appendLine("Memory directory tree:")
+            appendLine("```text")
+            appendLine(memoryTree.trimEnd().ifBlank { "${AgentWorkspace.MODEL_ROOT}/memory/" })
             appendLine("```")
             appendLine()
             appendLine("Memory:")
-            appendLine("Do not edit memory during the main task. Memory updates happen only in a separate reflection turn.")
+            appendLine("Long-term memory lives under ${AgentWorkspace.MODEL_ROOT}/memory.")
             appendLine(
-                "Treat memory.md as prior evidence, not current proof. Verify the current screen before acting or reporting completion.",
+                "The prompt includes only the memory file tree. Read specific memory files only when they are likely to help the current task.",
+            )
+            appendLine(
+                "You may create or edit focused memory files when you learn durable facts. Prefer topic-specific files over a single catch-all file.",
+            )
+            appendLine(
+                "Treat memory files as prior evidence, not current proof. Verify the current screen before acting or reporting completion.",
             )
             appendLine()
             section(
                 "Phone-control invariants:",
                 listOf(
-                    "Start each script with observeScreen(), unless returning immediately after a just-observed action.",
+                    "Start each Claune JS script with observeScreen(), unless returning immediately after a just-observed action.",
                     "observeScreen() returns the current interaction state by default: visible elements, generic groups, and deduplicated actions.",
                     "Do not trust injected screen observations, stale refs, stale ids, or assumptions as current truth.",
-                    "After any UI-changing action, re-observe or use postActionObservation before the next action.",
+                    "After any UI-changing action, explicitly call observeScreen() before the next action unless the same script already verified the intended state.",
                     "Action ids, refs, and element ids are screen observation-scoped. Never invent them.",
                     "If a wait, tap, launch, or selector assumption fails, re-observe and adapt instead of repeating it.",
                     "When opening an app and the package is unknown, call listInstalledApps() and launchApp(packageName) instead of using Play Store or guessing package names.",
-                    "Prefer the fewest scripts that safely complete the task; one script may observe, act, wait, and return a compact summary.",
+                    "Prefer the fewest scripts that safely complete the task; one script may observe, act, wait, and print a compact summary.",
                 ),
             )
             section(
@@ -147,66 +164,63 @@ internal object SystemPromptBuilder {
             if (toolGuidelines.isNotEmpty()) {
                 section("Additional tool rules:", toolGuidelines)
             }
-            appendLine("Example interaction-action script:")
-            appendLine("let screen = claune.observeScreen();")
-            appendLine("let group = claune.findGroup(screen, { text: \"Target item\", minConfidence: 0.6 });")
+            appendLine("Example workflow:")
+            appendLine("1. For a short probe, call bash with an inline Claune JS heredoc:")
+            appendLine("   claune-js - <<'JS'")
+            appendLine("   const screen = claune.observeScreen();")
+            appendLine("   return { foregroundPackage: screen.foregroundPackage, actions: screen.actions?.slice(0, 5) || [] };")
+            appendLine("   JS")
             appendLine(
-                "let action = claune.findAction(group || screen, { label: /^(continue|confirm|add|book)$/i, kind: \"click\", enabled: true });",
+                "2. If the code is long, reusable, or likely to need edits, write " +
+                    "${AgentWorkspace.MODEL_ROOT}/scripts/task.js and run `claune-js " +
+                    "${AgentWorkspace.MODEL_ROOT}/scripts/task.js`.",
             )
-            appendLine("if (!action) return { stage: \"action_not_found\", groups: screen.groups, actions: screen.actions };")
-            appendLine("claune.performAction(action.id);")
-            appendLine("screen = claune.observeScreen();")
-            appendLine("return { stage: \"action_performed\", foregroundPackage: screen.foregroundPackage, summary: screen.summaryText };")
+            appendLine("3. Inspect stdout, then either continue with another compact script or call finish_run.")
             appendLine()
-            appendLine("Example visible-bounds fallback script:")
-            appendLine("let screen = claune.observeScreen();")
-            appendLine("let inspection = claune.inspectScreen({ text: \"Exact visible target\", limit: 5 });")
+            appendLine("Example interaction-action Claune JS:")
+            appendLine("const screen = claune.observeScreen();")
+            appendLine("const group = claune.findGroup(screen, { text: \"Target item\", minConfidence: 0.6 });")
             appendLine(
-                "let target = inspection.visibleElements.find(e => e.text === \"Exact visible target\" || e.label === \"Exact visible target\");",
+                "const action = claune.findAction(group || screen, { label: /^(continue|confirm|add|book)$/i, kind: \"click\", enabled: true });",
+            )
+            appendLine("if (!action) { return { stage: \"action_not_found\", groups: screen.groups, actions: screen.actions }; }")
+            appendLine("claune.performAction(action.id);")
+            appendLine("return { stage: \"action_performed\", screen: claune.observeScreen() };")
+            appendLine()
+            appendLine("Example visible-bounds fallback Claune JS:")
+            appendLine("const screen = claune.observeScreen();")
+            appendLine("const inspection = claune.inspectScreen({ text: \"Exact visible target\", limit: 5 });")
+            appendLine(
+                "const target = inspection.visibleElements.find(e => e.text === \"Exact visible target\" || e.label === \"Exact visible target\");",
             )
             appendLine(
-                "if (!target || !target.tapFallbackEligible) return { stage: \"target_not_tappable_by_bounds\", candidates: inspection.visibleElements };",
+                "if (!target || !target.tapFallbackEligible) { return { stage: \"target_not_tappable_by_bounds\", candidates: inspection.visibleElements }; }",
             )
             appendLine("claune.tapBounds(target.bounds);")
-            appendLine("screen = claune.observeScreen();")
-            appendLine(
-                "return { stage: \"bounds_tap_verified\", foregroundPackage: screen.foregroundPackage, observation: screen.canonicalText || screen.diff };",
-            )
+            appendLine("return { stage: \"bounds_tap_verified\", screen: claune.observeScreen() };")
             appendLine()
-            appendLine("Example raw-tree search fallback script:")
-            appendLine("let screen = claune.observeScreen();")
-            appendLine("let raw = claune.findRawNodes({ pattern: \"book|confirm|request|continue\", limit: 10 });")
-            appendLine("let match = raw.matches.find(m => m.nearestActionable) || raw.matches[0];")
-            appendLine("if (!match) return { stage: \"expected_target_missing\", rawError: raw.error || null };")
-            appendLine("if (match.nearestActionable) claune.tapRef(match.nearestActionable.ref);")
-            appendLine("else claune.tapBounds(match.node.bounds);")
-            appendLine("screen = claune.observeScreen();")
-            appendLine(
-                "return { stage: \"raw_match_tapped\", matched: match.matchedText, " +
-                    "observation: screen.canonicalText || screen.diff };",
-            )
+            appendLine("Example raw-tree search fallback Claune JS:")
+            appendLine("const raw = claune.findRawNodes({ pattern: \"book|confirm|request|continue\", limit: 10 });")
+            appendLine("const match = raw.matches.find(m => m.nearestActionable) || raw.matches[0];")
+            appendLine("if (!match) { return { stage: \"expected_target_missing\", rawError: raw.error || null }; }")
+            appendLine("if (match.nearestActionable) claune.tapRef(match.nearestActionable.ref); else claune.tapBounds(match.node.bounds);")
+            appendLine("return { stage: \"raw_match_tapped\", matched: match.matchedText, screen: claune.observeScreen() };")
             appendLine()
-            appendLine("Example scrolling script:")
-            appendLine("let screen = claune.observeScreen();")
+            appendLine("Example scrolling Claune JS:")
+            appendLine("claune.observeScreen();")
             appendLine("claune.scrollScreen(\"down\");")
-            appendLine("screen = claune.observeScreen();")
-            appendLine(
-                "return { stage: \"scrolled_page\", foregroundPackage: screen.foregroundPackage, observation: screen.canonicalText || screen.diff };",
-            )
+            appendLine("return { stage: \"scrolled_page\", screen: claune.observeScreen() };")
             appendLine()
-            appendLine("Example wrapper-input script:")
-            appendLine("let screen = claune.observeScreen();")
+            appendLine("Example wrapper-input Claune JS:")
+            appendLine("claune.observeScreen();")
             appendLine("claune.focusSelector({ label: \"Search\" }, 2000);")
             appendLine("claune.typeIntoFocused(\"target query\");")
-            appendLine("screen = claune.observeScreen();")
-            appendLine(
-                "return { stage: \"typed_query\", foregroundPackage: screen.foregroundPackage, observation: screen.canonicalText || screen.diff };",
-            )
+            appendLine("return { stage: \"typed_query\", screen: claune.observeScreen() };")
             appendLine()
-            appendLine("Example app launch script:")
+            appendLine("Example app launch Claune JS:")
             appendLine("const apps = claune.listInstalledApps();")
             appendLine("const target = apps.find(app => app.label.toLowerCase() === \"cred\");")
-            appendLine("if (!target) return { stage: \"app_not_found\", knownApps: apps.slice(0, 10) };")
+            appendLine("if (!target) { return { stage: \"app_not_found\", knownApps: apps.slice(0, 10) }; }")
             appendLine("claune.launchApp(target.packageName);")
             appendLine("claune.waitForState(\"package\", target.packageName, 5000);")
             appendLine("return { stage: \"app_launched\", packageName: target.packageName };")

@@ -1,35 +1,22 @@
 package com.divyanshgolyan.claune.android.llm
 
 import com.divyanshgolyan.claune.android.BuildConfig
-import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
-import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.llm.tools.AskUserArguments
 import com.divyanshgolyan.claune.android.llm.tools.AskUserToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.EditMemoryArguments
-import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolResult
 import com.divyanshgolyan.claune.android.llm.tools.FinishRunArguments
 import com.divyanshgolyan.claune.android.llm.tools.FinishRunStatus
 import com.divyanshgolyan.claune.android.llm.tools.FinishRunToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.TerminalOutcomeRecorder
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
-import com.divyanshgolyan.claune.android.runtime.PhoneObserver
 import com.divyanshgolyan.claune.android.runtime.QuestionAnswer
 import com.divyanshgolyan.claune.android.runtime.QuestionAnswerKind
 import com.divyanshgolyan.claune.android.runtime.ScreenNode
 import com.divyanshgolyan.claune.android.runtime.ScreenState
 import com.divyanshgolyan.claune.android.runtime.UserQuestionPrompter
 import com.divyanshgolyan.claune.android.runtime.buildScreenObservation
-import com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest
-import com.divyanshgolyan.claune.android.scripting.ScriptExecutionResult
-import com.divyanshgolyan.claune.android.scripting.ScriptJson
-import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -85,44 +72,53 @@ class PiAgentModelGatewayTest {
         val prompt =
             PiAgentModelGateway.systemPromptForTests(
                 """
-                # Claune Memory
-
-                - The user prefers Wi-Fi tasks to start from Settings.
+                /work/memory/
+                /work/memory/apps/
+                /work/memory/apps/settings.md (52 chars)
                 """.trimIndent(),
             )
 
-        assertTrue(prompt.contains("TypeScript contract for the global `claune` object"))
-        assertTrue(prompt.contains("interface ClauneHost"))
-        assertTrue(prompt.contains("tapText(text: string, options?: boolean | TapTextOptions, first?: boolean): HostSuccessOutcome;"))
-        assertTrue(prompt.contains("tapSelector(selector: ElementSelector): HostSuccessOutcome;"))
-        assertTrue(prompt.contains("focusSelector(selector: ElementSelector, timeoutMs: number): HostSuccessOutcome;"))
-        assertTrue(prompt.contains("scrollScreen(direction: \"up\" | \"down\"): HostSuccessOutcome;"))
-        assertTrue(prompt.contains("typeIntoFocused(text: string): HostSuccessOutcome;"))
-        assertTrue(prompt.contains("- execute_script:"))
+        assertTrue(prompt.contains("Claune JS is available through bash:"))
+        assertTrue(prompt.contains("claune-js --help [topic]"))
+        assertTrue(prompt.contains("Top-level claune APIs:"))
+        assertTrue(prompt.contains("observeScreen"))
+        assertTrue(!prompt.contains("interface ClauneHost"))
+        assertTrue(!prompt.contains("TypeScript contract for the global `claune` object"))
+        assertTrue(prompt.contains("- read:"))
+        assertTrue(prompt.contains("- write:"))
+        assertTrue(prompt.contains("- edit:"))
+        assertTrue(prompt.contains("- bash:"))
         assertTrue(prompt.contains("- finish_run:"))
         assertTrue(prompt.contains("- ask_user:"))
         assertTrue(!prompt.contains("- complete_task:"))
         assertTrue(!prompt.contains("- block_task:"))
         assertTrue(!prompt.contains("- question:"))
-        assertTrue(prompt.contains("- read_memory:"))
-        assertTrue(prompt.contains("- edit_memory:"))
+        assertTrue(!prompt.contains("- execute_script:"))
+        assertTrue(!prompt.contains("- read_memory:"))
+        assertTrue(!prompt.contains("- edit_memory:"))
+        assertTrue(!prompt.contains("- read_file:"))
+        assertTrue(!prompt.contains("- write_file:"))
+        assertTrue(!prompt.contains("- edit_file:"))
         assertTrue(prompt.contains("Run outcome contract:"))
         assertTrue(prompt.contains("User decision contract:"))
         assertTrue(prompt.contains("The finish_run message is shown to the user and must be a final statement, not a question."))
         assertTrue(prompt.contains("Use ask_user only when a user decision is needed before continuing the same run."))
-        assertTrue(prompt.contains("The TypeScript contract below is the source of truth"))
+        assertTrue(prompt.contains("Workspace and bash contract:"))
+        assertTrue(prompt.contains("For short one-off phone probes, run inline Claune JS with bash using `claune-js - <<'JS'`"))
+        assertTrue(prompt.contains("A bash command such as `claune-js - <<'JS'` is the normal way to execute a short inline script"))
+        assertTrue(prompt.contains("Use `claune-js --help` for the top-level API"))
         assertTrue(prompt.contains("Prefer interaction actions from observeScreen()."))
         assertTrue(prompt.contains("Use scrollScreen for the current page."))
         assertTrue(prompt.contains("For state-changing tasks"))
         assertTrue(!prompt.contains("For mutation requests"))
         assertTrue(prompt.contains("Available tools:"))
-        assertTrue(prompt.contains("Current memory.md:"))
-        assertTrue(prompt.contains("The user prefers Wi-Fi tasks to start from Settings."))
-        assertTrue(prompt.contains("Do not edit memory during the main task."))
-        assertTrue(prompt.contains("Treat memory.md as prior evidence, not current proof."))
-        assertTrue(prompt.contains("Example wrapper-input script:"))
-        assertTrue(prompt.contains("Example scrolling script:"))
-        assertTrue(prompt.contains("Example interaction-action script:"))
+        assertTrue(prompt.contains("Memory directory tree:"))
+        assertTrue(prompt.contains("/work/memory/apps/settings.md (52 chars)"))
+        assertTrue(prompt.contains("The prompt includes only the memory file tree."))
+        assertTrue(prompt.contains("Treat memory files as prior evidence, not current proof."))
+        assertTrue(prompt.contains("Example wrapper-input Claune JS:"))
+        assertTrue(prompt.contains("Example scrolling Claune JS:"))
+        assertTrue(prompt.contains("Example interaction-action Claune JS:"))
         assertTrue(prompt.contains("claune.performAction(action.id);"))
         assertTrue(prompt.contains("claune.scrollScreen(\"down\");"))
         assertTrue(prompt.contains("claune.focusSelector({ label: \"Search\" }, 2000);"))
@@ -130,7 +126,7 @@ class PiAgentModelGatewayTest {
     }
 
     @Test
-    fun `memory reflection prompt uses memory tools instead of final json`() {
+    fun `memory reflection prompt uses workspace file tools instead of final json`() {
         val prompt =
             MemoryReflectionPromptBuilder.format(
                 ModelTurnInput(
@@ -144,45 +140,11 @@ class PiAgentModelGatewayTest {
                 ModelTurnOutput.Completion("Opened Settings."),
             )
 
-        assertTrue(prompt.contains("If there is no durable learning, do not call memory tools"))
-        assertTrue(prompt.contains("Use edit_memory for one surgical update"))
+        assertTrue(prompt.contains("If there is no durable learning, do not call tools"))
+        assertTrue(prompt.contains("Use write for a new topic file or edit for one surgical update"))
         assertTrue(prompt.contains("After any memory tool call, you may send a short internal note if useful"))
         assertTrue(!prompt.contains("Return final JSON only"))
         assertTrue(!prompt.contains("Your entire final answer must be exactly the JSON object"))
-    }
-
-    @Test
-    fun `execute script tool returns runtime result plus post action observation`() = runTest {
-        val logStore = InMemorySessionLogStore()
-        val toolSet =
-            ExecuteScriptToolDefinition(
-                scriptRuntime = FakeScriptRuntime(
-                    ScriptExecutionResult(
-                        ok = true,
-                        summary = "Script completed with 1 host call.",
-                        data = buildJsonObject { put("step", "opened_settings") },
-                    ),
-                ),
-                phoneObserver = FakePhoneObserver(snapshot(snapshotId = "after-script")),
-                logStore = logStore,
-            )
-
-        val encoded =
-            toolSet.execute(
-                toolCallId = "tool-call-1",
-                params = "return { ok: true };",
-                signal = null,
-                onUpdate = null,
-            ).content.single().let { textBlock ->
-                (textBlock as pi.ai.core.TextContent).text
-            }
-        val payload = ScriptJson.codec.decodeFromString<ExecuteScriptToolResult>(encoded)
-
-        assertTrue(payload.ok)
-        assertEquals("Script completed with 1 host call.", payload.summary)
-        assertEquals("after-script", payload.postActionObservation.currentSnapshotId)
-        assertEquals("after-script", logStore.recentScreenStates().single().snapshotId)
-        assertEquals("opened_settings", payload.scriptData?.jsonObject?.get("step")?.toString()?.trim('"'))
     }
 
     @Test
@@ -297,40 +259,6 @@ class PiAgentModelGatewayTest {
         assertEquals("1", result.details.jsonObject["optionIndex"]?.jsonPrimitive?.content)
     }
 
-    @Test
-    fun `read memory tool returns current markdown`() = runTest {
-        val tool = ReadMemoryToolDefinition(FakeMemoryStore("# Claune Memory\n\n- Use Settings first.\n"))
-
-        val result = tool.execute("tool-call-1", Unit, null, null)
-        val text = (result.content.single() as pi.ai.core.TextContent).text
-
-        assertTrue(text.contains("Use Settings first."))
-        assertEquals(
-            "# Claune Memory\n\n- Use Settings first.\n",
-            result.details.jsonObject["content"]?.jsonPrimitive?.content,
-        )
-    }
-
-    @Test
-    fun `edit memory tool updates the markdown file by exact match`() = runTest {
-        val store = FakeMemoryStore("# Claune Memory\n\n- Old fact.\n")
-        val tool = EditMemoryToolDefinition(store)
-
-        val result =
-            tool.execute(
-                "tool-call-1",
-                EditMemoryArguments(
-                    oldText = "- Old fact.\n",
-                    newText = "- New durable fact.\n",
-                ),
-                null,
-                null,
-            )
-
-        assertEquals("# Claune Memory\n\n- New durable fact.\n", store.read())
-        assertEquals("Updated memory.md.", (result.content.single() as pi.ai.core.TextContent).text)
-    }
-
     private fun screenObservation(screenState: ScreenState = snapshot()) = buildScreenObservation(null, screenState)
 
     private fun snapshot(snapshotId: String = "snapshot-1", packageName: String = "com.android.settings"): ScreenState {
@@ -365,28 +293,6 @@ class PiAgentModelGatewayTest {
             foregroundPackage = packageName,
             root = root,
         )
-    }
-}
-
-private class FakeScriptRuntime(private val result: ScriptExecutionResult) : ScriptRuntime {
-    override suspend fun execute(request: ScriptExecutionRequest): ScriptExecutionResult = result
-}
-
-private class FakePhoneObserver(private val snapshot: ScreenState) : PhoneObserver {
-    override suspend fun captureScreenState(): ScreenState = snapshot
-}
-
-private class FakeMemoryStore(private var content: String) : MemoryStore {
-    override suspend fun read(): String = content
-
-    override suspend fun edit(oldText: String, newText: String) {
-        val occurrences = content.split(oldText).size - 1
-        check(occurrences == 1)
-        content = content.replace(oldText, newText).trimEnd() + "\n"
-    }
-
-    override suspend fun overwrite(content: String) {
-        this.content = content.trimEnd() + "\n"
     }
 }
 

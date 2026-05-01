@@ -11,9 +11,7 @@ import com.divyanshgolyan.claune.android.data.local.ArtifactSessionLogStore
 import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
 import com.divyanshgolyan.claune.android.data.local.DataStoreSettingsStore
 import com.divyanshgolyan.claune.android.data.local.FileAgentRunArtifactStore
-import com.divyanshgolyan.claune.android.data.local.FileMemoryStore
 import com.divyanshgolyan.claune.android.data.local.InMemorySessionLogStore
-import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
 import com.divyanshgolyan.claune.android.llm.CodexAuthRepository
@@ -24,7 +22,9 @@ import com.divyanshgolyan.claune.android.runtime.QuestionPromptCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.scripting.AndroidInstalledAppRegistry
 import com.divyanshgolyan.claune.android.scripting.QuickJsScriptRuntime
+import com.divyanshgolyan.claune.android.shell.BashkitWorkspaceShell
 import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetry
+import com.divyanshgolyan.claune.android.workspace.AgentWorkspace
 import java.io.File
 
 class ClauneApplication : Application() {
@@ -49,11 +49,11 @@ class ClauneApplication : Application() {
 }
 
 class ClauneContainer(application: Application) {
-    private val agentDir = File(application.filesDir, "pi-agent")
+    val workspace = AgentWorkspace(File(application.filesDir, "work")).also { it.initialize() }
+    private val agentDir = workspace.piAgentDir
     private val memoryLogStore = InMemorySessionLogStore()
-    val artifactStore = FileAgentRunArtifactStore(File(application.filesDir, "agent-runs"))
-    val memoryStore: MemoryStore = FileMemoryStore(File(application.filesDir, "memory.md"))
-    val codingSessionStore = CodingSessionStore(cwd = application.filesDir.absolutePath, agentDir = agentDir)
+    val artifactStore = FileAgentRunArtifactStore(workspace.runsDir)
+    val codingSessionStore = CodingSessionStore(cwd = workspace.rootDir.absolutePath, agentDir = agentDir)
     val codexAuthRepository = CodexAuthRepository(application, agentDir)
     val telemetryRecorder = ClauneTelemetry.createRecorder()
     val settingsStore: SettingsStore =
@@ -81,12 +81,10 @@ class ClauneContainer(application: Application) {
             sessionCoordinator = sessionCoordinator,
             logStore = logStore,
         )
+    val workspaceShell = BashkitWorkspaceShell(workspace, scriptRuntime)
     val modelGateway =
         PiAgentModelGateway(
             settingsStore = settingsStore,
-            memoryStore = memoryStore,
-            scriptRuntime = scriptRuntime,
-            phoneObserver = accessibilityBridge,
             logStore = logStore,
             sessionCoordinator = sessionCoordinator,
             questionPromptCoordinator = questionPromptCoordinator,
@@ -94,6 +92,8 @@ class ClauneContainer(application: Application) {
             codingSessionStore = codingSessionStore,
             agentDir = agentDir,
             codexAuthRepository = codexAuthRepository,
+            workspace = workspace,
+            workspaceShell = workspaceShell,
             telemetryRecorder = telemetryRecorder,
         )
     val agentLoop =

@@ -3,22 +3,21 @@ package com.divyanshgolyan.claune.android.llm
 import com.divyanshgolyan.claune.android.data.local.AgentRunArtifactStore
 import com.divyanshgolyan.claune.android.data.local.AgentTranscriptSerializer
 import com.divyanshgolyan.claune.android.data.local.CodingSessionStore
-import com.divyanshgolyan.claune.android.data.local.MemoryStore
 import com.divyanshgolyan.claune.android.data.local.SerializedAgentEvent
 import com.divyanshgolyan.claune.android.data.local.SessionLogStore
 import com.divyanshgolyan.claune.android.data.local.SettingsStore
 import com.divyanshgolyan.claune.android.llm.tools.AskUserToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.EditMemoryToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.ExecuteScriptToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.BashToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.EditFileToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.FinishRunToolDefinition
-import com.divyanshgolyan.claune.android.llm.tools.ReadMemoryToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.ReadFileToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.SystemPromptBuilder
 import com.divyanshgolyan.claune.android.llm.tools.TerminalOutcomeRecorder
 import com.divyanshgolyan.claune.android.llm.tools.ToolDefinition
+import com.divyanshgolyan.claune.android.llm.tools.WriteFileToolDefinition
 import com.divyanshgolyan.claune.android.llm.tools.toAgentTool
 import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
-import com.divyanshgolyan.claune.android.runtime.PhoneObserver
 import com.divyanshgolyan.claune.android.runtime.QuestionAnswer
 import com.divyanshgolyan.claune.android.runtime.QuestionAnswerKind
 import com.divyanshgolyan.claune.android.runtime.QuestionPromptCoordinator
@@ -26,12 +25,13 @@ import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.SessionStatus
 import com.divyanshgolyan.claune.android.runtime.UserQuestionPrompter
 import com.divyanshgolyan.claune.android.runtime.toStatusMessageJsonString
-import com.divyanshgolyan.claune.android.scripting.ScriptRuntime
+import com.divyanshgolyan.claune.android.shell.WorkspaceShell
 import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetryContext
 import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetryEventType
 import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetryPhase
 import com.divyanshgolyan.claune.android.telemetry.ClauneTelemetryRecorder
 import com.divyanshgolyan.claune.android.telemetry.NoopClauneTelemetryRecorder
+import com.divyanshgolyan.claune.android.workspace.AgentWorkspace
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CancellationException
@@ -85,9 +85,6 @@ interface ModelGateway {
 
 class PiAgentModelGateway(
     private val settingsStore: SettingsStore,
-    private val memoryStore: MemoryStore,
-    private val scriptRuntime: ScriptRuntime,
-    private val phoneObserver: PhoneObserver,
     private val logStore: SessionLogStore,
     private val sessionCoordinator: SessionCoordinator,
     private val questionPromptCoordinator: QuestionPromptCoordinator,
@@ -95,6 +92,8 @@ class PiAgentModelGateway(
     private val codingSessionStore: CodingSessionStore,
     private val agentDir: File,
     private val codexAuthRepository: CodexAuthRepository,
+    private val workspace: AgentWorkspace,
+    private val workspaceShell: WorkspaceShell,
     private val telemetryRecorder: ClauneTelemetryRecorder = NoopClauneTelemetryRecorder,
 ) : ModelGateway {
     private val sessionFactory = ClauneAgentSessionFactory(codingSessionStore, agentDir)
@@ -116,7 +115,7 @@ class PiAgentModelGateway(
         val prompt = PiAgentPromptFormatter.format(input)
         terminalOutcomeRecorder.clear()
         val mainTools = mainToolDefinitions()
-        val systemPrompt = buildSystemPrompt(memoryStore.read(), mainTools)
+        val systemPrompt = buildSystemPrompt(activeWorkspace().memoryTree(), mainTools)
         runCatching {
             artifactStore.writeSystemPrompt(input.runId, systemPrompt)
             artifactStore.writeModelInput(input.runId, prompt)
@@ -387,21 +386,42 @@ class PiAgentModelGateway(
         }
     }
 
-    private fun mainToolDefinitions(): List<ToolDefinition<*>> = listOf(
-        ExecuteScriptToolDefinition(scriptRuntime, phoneObserver, logStore),
-        FinishRunToolDefinition(terminalOutcomeRecorder),
-        AskUserToolDefinition(questionPromptCoordinator),
-        ReadMemoryToolDefinition(memoryStore),
-        EditMemoryToolDefinition(memoryStore),
+    private fun mainToolDefinitions(): List<ToolDefinition<*>> = buildList {
+        addAll(workspaceFileToolDefinitions())
+        add(workspaceBashToolDefinition())
+        add(FinishRunToolDefinition(terminalOutcomeRecorder))
+        add(AskUserToolDefinition(questionPromptCoordinator))
+    }
+
+    private fun workspaceFileToolDefinitions(): List<ToolDefinition<*>> {
+        val activeWorkspace = activeWorkspace()
+        return listOf(
+            ReadFileToolDefinition(activeWorkspace),
+            WriteFileToolDefinition(activeWorkspace),
+            EditFileToolDefinition(activeWorkspace),
+        )
+    }
+
+    private fun memoryFileToolDefinitions(): List<ToolDefinition<*>> = listOf(
+        ReadFileToolDefinition(workspace, workspace::requireMemoryPath),
+        WriteFileToolDefinition(workspace, workspace::requireMemoryPath),
+        EditFileToolDefinition(workspace, workspace::requireMemoryPath),
     )
+
+    private fun activeWorkspace(): AgentWorkspace = workspace
+
+    private fun workspaceBashToolDefinition(): ToolDefinition<*> {
+        val activeWorkspace = activeWorkspace()
+        return BashToolDefinition(shell = workspaceShell, workspace = activeWorkspace)
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun agentTools(definitions: List<ToolDefinition<*>>) = definitions.map { definition ->
         toAgentTool(definition as ToolDefinition<Any?>)
     }
 
-    private fun buildSystemPrompt(memoryContent: String, tools: List<ToolDefinition<*>>): String = SystemPromptBuilder.build(
-        memoryContent = memoryContent,
+    private fun buildSystemPrompt(memoryTree: String, tools: List<ToolDefinition<*>>): String = SystemPromptBuilder.build(
+        memoryTree = memoryTree,
         tools = tools,
     )
 
@@ -439,17 +459,14 @@ class PiAgentModelGateway(
         val reflectionPrompt = MemoryReflectionPromptBuilder.format(input, result)
         runCatching { artifactStore.writeMemoryReflectionPrompt(input.runId, reflectionPrompt) }
         sessionCoordinator.logEvent("Agent memory reflection started.")
-        val memoryBeforeReflection = memoryStore.read()
-        val reflectionTools =
-            listOf(
-                ReadMemoryToolDefinition(memoryStore),
-                EditMemoryToolDefinition(memoryStore),
-            )
+        val memoryBeforeReflection = activeWorkspace().memorySignature()
+        val memoryTreeBeforeReflection = activeWorkspace().memoryTree()
+        val reflectionTools = memoryFileToolDefinitions()
 
         val reflectionSession =
             sessionFactory.create(
                 sessionPath = input.persistentSessionPath,
-                systemPrompt = MemoryReflectionPromptBuilder.systemPrompt(memoryBeforeReflection),
+                systemPrompt = MemoryReflectionPromptBuilder.systemPrompt(memoryTreeBeforeReflection),
                 model = model,
                 tools = agentTools(reflectionTools),
                 authRequirement = authRequirement,
@@ -485,11 +502,11 @@ class PiAgentModelGateway(
             }
             val reflectionOutput = finalAssistantText(reflectionSession.messages)
             runCatching { artifactStore.writeMemoryReflectionOutput(input.runId, reflectionOutput) }
-            val memoryChanged = memoryStore.read() != memoryBeforeReflection
+            val memoryChanged = activeWorkspace().memorySignature() != memoryBeforeReflection
             val note = reflectionOutput.trim().take(180)
             if (memoryChanged) {
                 sessionCoordinator.logEvent(
-                    "Memory reflection updated memory.md.${note.takeIf(String::isNotBlank)?.let { " $it" } ?: ""}",
+                    "Memory reflection updated /work/memory.${note.takeIf(String::isNotBlank)?.let { " $it" } ?: ""}",
                 )
             } else {
                 sessionCoordinator.logEvent(
@@ -737,38 +754,21 @@ class PiAgentModelGateway(
 
     companion object {
         const val PROMPT_VERSION = CLAUNE_PROMPT_VERSION
+        private val TEST_AGENT_WORKSPACE = AgentWorkspace(
+            File(System.getProperty("java.io.tmpdir"), "claune-system-prompt-test-work"),
+        )
 
-        internal fun systemPromptForTests(memoryContent: String = "# Claune Memory\n\n"): String = SystemPromptBuilder.build(
-            memoryContent = memoryContent,
+        internal fun systemPromptForTests(memoryTree: String = "/work/memory/\n"): String = SystemPromptBuilder.build(
+            memoryTree = memoryTree,
             tools = listOf(
-                ExecuteScriptToolDefinition(FailingScriptRuntime, FailingPhoneObserver),
+                ReadFileToolDefinition(TEST_AGENT_WORKSPACE),
+                WriteFileToolDefinition(TEST_AGENT_WORKSPACE),
+                EditFileToolDefinition(TEST_AGENT_WORKSPACE),
+                BashToolDefinition(FailingWorkspaceShell, TEST_AGENT_WORKSPACE),
                 FinishRunToolDefinition(TerminalOutcomeRecorder()),
                 AskUserToolDefinition(FailingQuestionPrompter),
-                ReadMemoryToolDefinition(FailingMemoryStore),
-                EditMemoryToolDefinition(FailingMemoryStore),
             ),
         )
-    }
-}
-
-private object FailingScriptRuntime : ScriptRuntime {
-    override suspend fun execute(request: com.divyanshgolyan.claune.android.scripting.ScriptExecutionRequest) =
-        error("Test helper should not execute scripts")
-}
-
-private object FailingPhoneObserver : PhoneObserver {
-    override suspend fun captureScreenState() = error("Test helper should not capture screen states")
-}
-
-private object FailingMemoryStore : MemoryStore {
-    override suspend fun read(): String = "# Claune Memory\n\n"
-
-    override suspend fun edit(oldText: String, newText: String) {
-        error("Test helper should not edit memory")
-    }
-
-    override suspend fun overwrite(content: String) {
-        error("Test helper should not overwrite memory")
     }
 }
 
@@ -779,4 +779,8 @@ private object FailingQuestionPrompter : UserQuestionPrompter {
         options: List<String>,
         signal: pi.ai.core.AbortSignal?,
     ): QuestionAnswer = QuestionAnswer(options.firstOrNull().orEmpty(), QuestionAnswerKind.Option, optionIndex = 0)
+}
+
+private object FailingWorkspaceShell : WorkspaceShell {
+    override suspend fun execute(command: String, timeoutSeconds: Int?) = error("Workspace shell is unavailable in prompt-only tests.")
 }

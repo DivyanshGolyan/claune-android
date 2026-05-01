@@ -4,18 +4,21 @@ import com.divyanshgolyan.claune.android.runtime.ModelTurnInput
 import com.divyanshgolyan.claune.android.runtime.ModelTurnOutput
 
 internal object MemoryReflectionPromptBuilder {
-    fun systemPrompt(memoryContent: String): String = buildString {
+    fun systemPrompt(memoryTree: String): String = buildString {
         appendLine("You are Claune Android's memory reflection step.")
         appendLine("Your only job is deciding whether to update long-term memory after a completed phone-control run.")
         appendLine()
-        appendLine("Available memory tools:")
-        appendLine("- read_memory: read memory.md before updating it.")
-        appendLine("- edit_memory: replace one exact unique memory.md string with new Markdown.")
+        appendLine("Available tools:")
+        appendLine("- read: read a UTF-8 file under /work.")
+        appendLine("- write: create or replace a UTF-8 file under /work.")
+        appendLine("- edit: exact unique text replacements in a UTF-8 file under /work.")
         appendLine()
-        appendLine("Current memory.md:")
-        appendLine("```md")
-        appendLine(memoryContent.ifBlank { "# Claune Memory" }.trimEnd())
+        appendLine("Memory directory tree:")
+        appendLine("```text")
+        appendLine(memoryTree.trimEnd().ifBlank { "/work/memory/" })
         appendLine("```")
+        appendLine()
+        appendLine("Only read, write, or edit files under /work/memory.")
     }.trim()
 
     fun format(input: ModelTurnInput, result: ModelTurnOutput): String = buildString {
@@ -34,7 +37,7 @@ internal object MemoryReflectionPromptBuilder {
         appendLine("Task:")
         appendLine("Decide whether this run produced one durable learning useful for future phone-control runs.")
         appendLine()
-        appendLine("Do not use execute_script.")
+        appendLine("Do not use bash or claune-js.")
         appendLine()
         appendLine("Durable memory includes only:")
         appendLine("- Stable user preferences.")
@@ -51,11 +54,11 @@ internal object MemoryReflectionPromptBuilder {
         appendLine()
         appendLine("Procedure:")
         appendLine(
-            "1. If there is no durable learning, do not call memory tools. " +
+            "1. If there is no durable learning, do not call tools. " +
                 "You may reply with a short note or no substantive content.",
         )
-        appendLine("2. If there is a durable learning, read memory.md.")
-        appendLine("3. Use edit_memory for one surgical update. Do not rewrite the whole file.")
+        appendLine("2. If there is a durable learning, inspect the memory tree and read only the relevant file if one exists.")
+        appendLine("3. Use write for a new topic file or edit for one surgical update to an existing topic file.")
         appendLine(
             "4. After any memory tool call, you may send a short internal note if useful. " +
                 "Do not use JSON unless it is naturally useful.",
