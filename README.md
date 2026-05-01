@@ -23,9 +23,9 @@ This repo is for local development, live demos, and debugging on a known Android
 - Persistent session history through `pi-agent-kotlin`.
 - One active foreground run at a time. A user can keep a session and send later follow-up tasks into it.
 - Model execution backed by the published `pi-agent-kotlin` `0.1.0` artifacts, with Anthropic and Gemini model options.
-- `execute_script` as the only model-facing phone-control tool.
+- Workspace-backed `read`, `write`, `edit`, and `bash` tools. Phone automation runs through `claune-js` inside bash.
 - Run-outcome and user-decision tools for `finish_run` and `ask_user`.
-- Memory reflection after completed or blocked turns, with `read_memory` and `edit_memory` tools for saved notes.
+- Memory reflection after completed or blocked turns, scoped to focused files under `/work/memory`.
 - Local run artifacts under app storage: prompts, compact screen records, latest raw screen state, script calls, agent messages, events, and memory-reflection output.
 
 ## Boundaries
@@ -76,6 +76,19 @@ claune.langsmith.apiKey=lsv2_pt_...
 Keep the LangSmith key local and rotate it if it has been pasted into chat or logs. This debug path exports directly from the app through LangSmith's native Runs API; use a collector or proxy before treating it as production telemetry.
 
 LangSmith traces use a root `chain` run named from the user prompt, `agent.step` chain children for the incremental story, `llm` children for exact provider calls, and `tool` children for exact tool executions. LLM runs store the full provider context in `inputs.messages`, the step delta in `inputs.delta_messages`, structured assistant output in `outputs.messages`, and token/cost data in `outputs.usage_metadata`. Query conversations through `metadata.thread_id` and individual runs through `metadata.claune_run_id`.
+
+For CLI access, source the repo helper once per shell:
+
+```sh
+. scripts/langsmith-env.sh
+langsmith trace list --limit 1
+```
+
+If you use `direnv`, keep a local ignored `.envrc` with:
+
+```sh
+. scripts/langsmith-env.sh
+```
 
 Install a debug build:
 
@@ -161,7 +174,7 @@ CLAUNE_PROJECTION_FIXTURE=/path/to/latest-screen-state.json CLAUNE_PROJECTION_IT
 
 ## Current agent contract
 
-The model should observe and act through `execute_script`. The JavaScript host exposes the `claune` API for phone observation, targeted screen inspection, tapping, typing, scrolling, back/home, and waiting for UI state. The model should not invent raw Android objects or reuse stale element ids.
+The model works inside `/work` with `read`, `write`, `edit`, and `bash`. It should observe and act on the phone by running `claune-js` from bash, either inline with `claune-js - <<'JS'` for short probes or from `/work/scripts/*.js` for longer reusable scripts. The JavaScript host exposes the `claune` API for phone observation, targeted screen inspection, tapping, typing, scrolling, back/home, and waiting for UI state. The model should not invent raw Android objects or reuse stale element ids.
 
 The normal `observeScreen()` result stays compact. It returns either canonical screen text or a canonical diff from the previous screen state. If a target is visible but `tapText`, `tapSelector`, or `tapRef` cannot match an actionable element, the model should call `inspectScreen({ text: "target text" })`. That inspection returns bounded visible elements, including non-clickable text nodes, with center coordinates, exposed accessibility actions, clickability reasons, and `tapFallbackEligible`.
 
