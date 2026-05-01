@@ -359,6 +359,54 @@ internal object ClauneHostContract {
         "Run JS directly against the embedded runtime using the generated Claune host contract. " +
             "The `claune` global exposes installed-app discovery, app launch, interaction-state observation, raw-node search, selector, action, focused input, tap, typing, scroll, navigation, and wait helpers."
 
+    val promptSummary: String
+        get() = buildString {
+            appendLine("Claune JS is available through bash:")
+            appendLine("  claune-js - <<'JS'      # run inline JavaScript from stdin")
+            appendLine("  claune-js /work/scripts/task.js [args...]")
+            appendLine("  claune-js --help [topic]")
+            appendLine()
+            appendLine("Top-level claune APIs:")
+            hostFunctions.chunked(4).forEach { chunk ->
+                append("  ")
+                appendLine(chunk.joinToString(", ") { it.name })
+            }
+            appendLine()
+            appendLine("Help topics: observe, actions, typing, navigation, raw, selectors, types, all, or any API name.")
+        }.trim()
+
+    fun cliHelp(topic: String? = null): String {
+        val normalizedTopic = topic?.trim().orEmpty()
+        if (normalizedTopic.isBlank()) return topLevelHelp()
+
+        hostFunctions.firstOrNull { it.name.equals(normalizedTopic, ignoreCase = true) }?.let { function ->
+            return buildString {
+                appendLine("claune.${function.name}")
+                appendLine(function.documentation)
+                appendLine()
+                appendLine(function.renderPlainSignature())
+                appendLine("Returns: ${function.returnType}")
+            }.trim()
+        }
+
+        return when (normalizedTopic.lowercase()) {
+            "all" -> modelContractBlock
+            "types" -> typeDefinitions
+            "observe", "observation" -> topicHelp("observe", "Screen observation and inspection APIs.")
+            "actions", "action", "tap" -> topicHelp("actions", "Tap, action, wait, and selector-driven interaction APIs.")
+            "typing", "input" -> topicHelp("typing", "Focused-input and selector-driven typing APIs.")
+            "navigation", "nav" -> topicHelp("navigation", "App launch, Back/Home, scrolling, and state-wait APIs.")
+            "raw" -> topicHelp("raw", "Raw accessibility-tree fallback APIs.")
+            "selectors", "selector" -> selectorHelp()
+            "functions", "apis" -> functionListHelp()
+            else -> buildString {
+                appendLine("Unknown claune-js help topic: $topic")
+                appendLine()
+                append(topLevelHelp())
+            }.trim()
+        }
+    }
+
     private val hostFunctions =
         listOf(
             HostFunction(
@@ -587,6 +635,71 @@ internal object ClauneHostContract {
                 ),
             ),
         )
+
+    private fun topLevelHelp(): String = buildString {
+        appendLine("claune-js")
+        appendLine("Run synchronous JavaScript against the Android phone-control host.")
+        appendLine()
+        appendLine("Usage:")
+        appendLine("  claune-js - <<'JS'")
+        appendLine("  const screen = claune.observeScreen();")
+        appendLine("  return { foregroundPackage: screen.foregroundPackage };")
+        appendLine("  JS")
+        appendLine("  claune-js /work/scripts/task.js [args...]")
+        appendLine("  claune-js --help [topic]")
+        appendLine()
+        appendLine("Globals:")
+        appendLine("  claune   Phone observation/action host object.")
+        appendLine("  argv     Script arguments after script path.")
+        appendLine("  stdin    Text piped into the script for file-based scripts.")
+        appendLine("  print(), console.log(), console.error()")
+        appendLine()
+        appendLine("Topics:")
+        appendLine("  functions, observe, actions, typing, navigation, raw, selectors, types, all")
+        appendLine()
+        appendLine("Common APIs:")
+        hostFunctions.chunked(4).forEach { chunk ->
+            append("  ")
+            appendLine(chunk.joinToString(", ") { it.name })
+        }
+    }.trim()
+
+    private fun topicHelp(topic: String, description: String): String {
+        val functions = hostFunctions.filter { it.helpTopic == topic }
+        return buildString {
+            appendLine(topic)
+            appendLine(description)
+            appendLine()
+            functions.forEach { function ->
+                appendLine(function.renderPlainSignature())
+                appendLine("  ${function.documentation}")
+            }
+        }.trim()
+    }
+
+    private fun functionListHelp(): String = buildString {
+        hostFunctions.forEach { function ->
+            appendLine(function.renderPlainSignature())
+            appendLine("  ${function.documentation}")
+        }
+    }.trim()
+
+    private fun selectorHelp(): String = buildString {
+        appendLine("selectors")
+        appendLine(
+            "Use selectors with tapSelector, focusSelector, typeIntoSelector, waitForSelector, " +
+                "findElement, findGroup, and findAction.",
+        )
+        appendLine()
+        appendLine("ElementSelector fields:")
+        appendLine("  ref, label, text, textExact, contentDescription, resourceId, role")
+        appendLine("  clickable, focusable, editable, focused, enabled, checked, selected, scrollable, first")
+        appendLine()
+        appendLine("InteractionSelector fields:")
+        appendLine("  id, ref, text, label, role, kind, enabled, editable, groupId, minConfidence")
+        appendLine()
+        appendLine("Run `claune-js --help types` for full TypeScript definitions.")
+    }.trim()
 }
 
 private data class HostParameter(
@@ -608,9 +721,31 @@ private data class HostFunction(
     val parameters: List<HostParameter>,
     val throwsOnFailure: Boolean = true,
 ) {
+    val helpTopic: String
+        get() = when (name) {
+            "observeScreen", "diffScreen", "inspectScreen" -> "observe"
+            "findRawNodes" -> "raw"
+            "typeIntoSelector", "typeIntoFocused", "typeIntoElement", "focusSelector" -> "typing"
+            "listInstalledApps",
+            "launchApp",
+            "scrollRef",
+            "scrollScreen",
+            "scrollContainer",
+            "pressBack",
+            "pressHome",
+            "waitForState",
+            -> "navigation"
+            else -> "actions"
+        }
+
     fun renderTypeSignature(): String {
         val args = parameters.joinToString(", ") { it.renderTypeSignature() }
         return "/** $documentation */ $name($args): $returnType;"
+    }
+
+    fun renderPlainSignature(): String {
+        val args = parameters.joinToString(", ") { it.renderTypeSignature() }
+        return "claune.$name($args): $returnType"
     }
 
     fun renderBootstrapFunction(): String {

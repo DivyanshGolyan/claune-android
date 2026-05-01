@@ -6,9 +6,12 @@ import com.divyanshgolyan.claune.android.runtime.PhoneActuator
 import com.divyanshgolyan.claune.android.runtime.PhoneObserver
 import com.divyanshgolyan.claune.android.runtime.SessionCoordinator
 import com.divyanshgolyan.claune.android.runtime.elapsedMs
+import com.divyanshgolyan.claune.android.shell.ClauneJsResult
+import com.divyanshgolyan.claune.android.shell.ClauneJsRunner
 import com.whl.quickjs.android.QuickJSLoader
 import com.whl.quickjs.wrapper.JSCallFunction
 import com.whl.quickjs.wrapper.QuickJSContext
+import java.io.File
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineDispatcher
@@ -16,15 +19,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import org.mozilla.javascript.CompilerEnvirons
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.Parser
 import org.mozilla.javascript.ast.AstNode
 import org.mozilla.javascript.ast.Name
 import org.mozilla.javascript.ast.NodeVisitor
-import org.mozilla.javascript.ast.PropertyGet
 
 class QuickJsScriptRuntime(
     private val phoneObserver: PhoneObserver,
@@ -34,9 +38,88 @@ class QuickJsScriptRuntime(
     private val logStore: SessionLogStore,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val now: () -> Instant = { Instant.now() },
-) : ScriptRuntime {
+) : ScriptRuntime,
+    ClauneJsRunner {
     init {
         ensureQuickJsLoaded()
+    }
+
+    override suspend fun run(scriptPath: String, argv: List<String>, stdin: String): ClauneJsResult = withContext(dispatcher) {
+        val scriptFile = File(scriptPath)
+        val script =
+            runCatching { scriptFile.readText() }
+                .getOrElse { throwable ->
+                    return@withContext ClauneJsResult(
+                        exitCode = 1,
+                        stdout = "",
+                        stderr = "${throwable.message ?: "Unable to read script: $scriptPath"}\n",
+                    )
+                }
+
+        runCliScriptSource(
+            script = script,
+            scriptName = scriptFile.name.ifBlank { "claune-script.js" },
+            argv = argv,
+            stdin = stdin,
+        )
+    }
+
+    override suspend fun runInline(script: String, argv: List<String>, stdin: String): ClauneJsResult = withContext(dispatcher) {
+        runCliScriptSource(
+            script = script,
+            scriptName = "stdin.js",
+            argv = argv,
+            stdin = stdin,
+        )
+    }
+
+    override suspend fun help(topic: String?): ClauneJsResult = withContext(dispatcher) {
+        ClauneJsResult(
+            exitCode = 0,
+            stdout = ClauneHostContract.cliHelp(topic).trimEnd() + "\n",
+            stderr = "",
+        )
+    }
+
+    private fun runCliScriptSource(script: String, scriptName: String, argv: List<String>, stdin: String): ClauneJsResult {
+        val startedAt = now()
+        val scriptExecutionId = "script-${startedAt.toEpochMilli()}"
+        val host =
+            ScriptHost(
+                scriptExecutionId = scriptExecutionId,
+                phoneObserver = phoneObserver,
+                phoneActuator = phoneActuator,
+                installedAppRegistry = installedAppRegistry,
+                sessionCoordinator = sessionCoordinator,
+                logStore = logStore,
+                now = now,
+            )
+
+        val result =
+            ScriptSourceValidator.firstUnsupportedFeature(script)?.let { unsupported ->
+                ClauneJsResult(
+                    exitCode = 1,
+                    stdout = "",
+                    stderr = "${unsupported.error}\n",
+                    hostCalls = emptyList(),
+                )
+            } ?: runCatching {
+                executeCliScript(
+                    script = script,
+                    scriptName = scriptName,
+                    host = host,
+                    argv = argv,
+                    stdin = stdin,
+                )
+            }.getOrElse { throwable ->
+                ClauneJsResult(
+                    exitCode = 1,
+                    stdout = "",
+                    stderr = "${quickJsErrorMessage(throwable)}\n",
+                    hostCalls = host.hostCalls(),
+                )
+            }
+        return result
     }
 
     override suspend fun execute(request: ScriptExecutionRequest): ScriptExecutionResult = withContext(dispatcher) {
@@ -101,7 +184,7 @@ class QuickJsScriptRuntime(
             registerHostFunctions(context, host)
 
             context.evaluate(ClauneHostContract.bootstrapJavascript)
-            val compiledScript = compileUserScript(context, request.script)
+            val compiledScript = compileUserScript(context, request.script, "claune-user-script.js")
 
             val resultJson = context.execute(compiledScript) as? String
 
@@ -129,10 +212,71 @@ class QuickJsScriptRuntime(
         }
     }
 
-    private fun compileUserScript(context: QuickJSContext, script: String): ByteArray = try {
-        context.compile(wrapUserScript(script), "claune-user-script.js")
+    private fun executeCliScript(script: String, scriptName: String, host: ScriptHost, argv: List<String>, stdin: String): ClauneJsResult {
+        val context = QuickJSContext.create()
+        val stdout = StringBuilder()
+        val stderr = StringBuilder()
+        try {
+            registerCliOutputFunctions(context, stdout, stderr)
+            registerCliGlobals(context, argv, stdin)
+            registerHostFunctions(context, host)
+
+            context.evaluate(ClauneHostContract.bootstrapJavascript)
+            val compiledScript = compileUserScript(context, script, scriptName, QuickJsCliContract::wrapScript)
+            context.execute(compiledScript)
+
+            return ClauneJsResult(
+                exitCode = 0,
+                stdout = stdout.toString(),
+                stderr = stderr.toString(),
+                hostCalls = host.hostCalls(),
+            )
+        } catch (throwable: Throwable) {
+            stderr.append(quickJsErrorMessage(throwable)).append('\n')
+            return ClauneJsResult(
+                exitCode = 1,
+                stdout = stdout.toString(),
+                stderr = stderr.toString(),
+                hostCalls = host.hostCalls(),
+            )
+        } finally {
+            context.destroy()
+        }
+    }
+
+    private fun compileUserScript(
+        context: QuickJSContext,
+        script: String,
+        scriptName: String,
+        wrapper: (String) -> String = ::wrapUserScript,
+    ): ByteArray = try {
+        context.compile(wrapper(script), scriptName)
     } catch (throwable: Throwable) {
         throw ScriptValidationException(mapSyntaxError(script, throwable))
+    }
+
+    private fun registerCliOutputFunctions(context: QuickJSContext, stdout: StringBuilder, stderr: StringBuilder) {
+        context.getGlobalObject().setProperty(
+            "__clauneWriteStdoutLine",
+            JSCallFunction { args: Array<out Any?> ->
+                stdout.append(args.stringArg(0)).append('\n')
+                null
+            },
+        )
+        context.getGlobalObject().setProperty(
+            "__clauneWriteStderrLine",
+            JSCallFunction { args: Array<out Any?> ->
+                stderr.append(args.stringArg(0)).append('\n')
+                null
+            },
+        )
+        context.evaluate(
+            QuickJsCliContract.outputBootstrapJavascript,
+        )
+    }
+
+    private fun registerCliGlobals(context: QuickJSContext, argv: List<String>, stdin: String) {
+        context.evaluate(QuickJsCliContract.globalsBootstrapJavascript(argv, stdin))
     }
 
     private fun registerHostFunctions(context: QuickJSContext, host: ScriptHost) {
@@ -289,6 +433,10 @@ class QuickJsScriptRuntime(
         })()
         """.trimIndent()
 
+    private fun quickJsErrorMessage(throwable: Throwable): String = throwable.message?.trim()?.takeIf(String::isNotBlank)
+        ?: throwable::class.simpleName
+        ?: "Unknown QuickJS failure."
+
     private companion object {
         private val QUICK_JS_LOADED = AtomicBoolean(false)
 
@@ -300,8 +448,62 @@ class QuickJsScriptRuntime(
     }
 }
 
+internal object QuickJsCliContract {
+    val outputBootstrapJavascript: String =
+        """
+        (() => {
+          function __clauneFormatCliValue(value) {
+            if (typeof value === "string") return value;
+            if (typeof value === "undefined") return "undefined";
+            try {
+              const json = JSON.stringify(value);
+              return typeof json === "undefined" ? String(value) : json;
+            } catch (error) {
+              return String(value);
+            }
+          }
+          function __clauneJoinCliArgs(args) {
+            return Array.prototype.map.call(args, __clauneFormatCliValue).join(" ");
+          }
+          globalThis.print = function() {
+            __clauneWriteStdoutLine(__clauneJoinCliArgs(arguments));
+          };
+          globalThis.console = Object.freeze({
+            log: function() { __clauneWriteStdoutLine(__clauneJoinCliArgs(arguments)); },
+            error: function() { __clauneWriteStderrLine(__clauneJoinCliArgs(arguments)); }
+          });
+          globalThis.__clauneWriteCliReturn = function(value) {
+            __clauneWriteStdoutLine(__clauneFormatCliValue(value));
+          };
+        })()
+        """.trimIndent()
+
+    fun globalsBootstrapJavascript(argv: List<String>, stdin: String): String {
+        val argvJson = ScriptJson.codec.encodeToString(ListSerializer(String.serializer()), argv)
+        val stdinJson = ScriptJson.codec.encodeToString(JsonPrimitive(stdin))
+        return """
+            globalThis.argv = $argvJson;
+            globalThis.stdin = $stdinJson;
+        """.trimIndent()
+    }
+
+    fun wrapScript(script: String): String =
+        """
+        (() => {
+          const __clauneCliResult = (() => {
+        $script
+          })();
+          if (__clauneCliResult !== undefined) {
+            __clauneWriteCliReturn(__clauneCliResult);
+          }
+        })()
+        """.trimIndent()
+}
+
 internal object ScriptSourceValidator {
     fun firstUnsupportedFeature(script: String): UnsupportedScriptFeature? {
+        unsupportedKeywordFeature(script)?.let { return it }
+
         val ast =
             runCatching {
                 Parser(
@@ -325,12 +527,6 @@ internal object ScriptSourceValidator {
     }
 
     private fun unsupportedFeatureForNode(node: AstNode): UnsupportedScriptFeature? = when {
-        node is PropertyGet && (node.left as? Name)?.identifier == "console" ->
-            UnsupportedScriptFeature(
-                name = "console",
-                error = "unsupported_api: console is not available in Claune scripts; return compact data instead",
-            )
-
         node is Name && node.identifier == "Promise" ->
             UnsupportedScriptFeature(
                 name = "promise",
@@ -346,6 +542,80 @@ internal object ScriptSourceValidator {
         $script
         }
         """.trimIndent()
+
+    private fun unsupportedKeywordFeature(script: String): UnsupportedScriptFeature? {
+        for (identifier in scriptIdentifiers(script)) {
+            when (identifier) {
+                "async" ->
+                    return UnsupportedScriptFeature(
+                        name = "async",
+                        error = "unsupported_syntax: async functions are not supported; write synchronous scripts only",
+                    )
+
+                "await" ->
+                    return UnsupportedScriptFeature(
+                        name = "await",
+                        error = "unsupported_syntax: top-level await is not supported; claune APIs are synchronous plain function calls",
+                    )
+
+                "import", "export" ->
+                    return UnsupportedScriptFeature(
+                        name = "module",
+                        error = "unsupported_syntax: import/export modules are not supported in Claune scripts",
+                    )
+            }
+        }
+        return null
+    }
+
+    private fun scriptIdentifiers(script: String): Sequence<String> = sequence {
+        var index = 0
+        while (index < script.length) {
+            val char = script[index]
+            val next = script.getOrNull(index + 1)
+            when {
+                char == '/' && next == '/' -> {
+                    index += 2
+                    while (index < script.length && script[index] != '\n') index += 1
+                }
+
+                char == '/' && next == '*' -> {
+                    index += 2
+                    while (index < script.length && !(script[index] == '*' && script.getOrNull(index + 1) == '/')) index += 1
+                    index = (index + 2).coerceAtMost(script.length)
+                }
+
+                char == '\'' || char == '"' || char == '`' -> {
+                    val quote = char
+                    index += 1
+                    while (index < script.length) {
+                        when {
+                            script[index] == '\\' -> index += 2
+                            script[index] == quote -> {
+                                index += 1
+                                break
+                            }
+
+                            else -> index += 1
+                        }
+                    }
+                }
+
+                char.isJavaScriptIdentifierStart() -> {
+                    val start = index
+                    index += 1
+                    while (index < script.length && script[index].isJavaScriptIdentifierPart()) index += 1
+                    yield(script.substring(start, index))
+                }
+
+                else -> index += 1
+            }
+        }
+    }
+
+    private fun Char.isJavaScriptIdentifierStart(): Boolean = this == '_' || this == '$' || isLetter()
+
+    private fun Char.isJavaScriptIdentifierPart(): Boolean = isJavaScriptIdentifierStart() || isDigit()
 }
 
 private class ScriptValidationException(message: String) : IllegalArgumentException(message)

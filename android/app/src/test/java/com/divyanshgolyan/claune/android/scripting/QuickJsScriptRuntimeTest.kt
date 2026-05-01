@@ -7,7 +7,7 @@ import org.junit.Test
 
 class QuickJsScriptRuntimeTest {
     @Test
-    fun `script source validator rejects console usage through the AST`() {
+    fun `script source validator allows console usage`() {
         val unsupported =
             ScriptSourceValidator.firstUnsupportedFeature(
                 """
@@ -17,11 +17,7 @@ class QuickJsScriptRuntimeTest {
                 """.trimIndent(),
             )
 
-        assertEquals("console", unsupported?.name)
-        assertEquals(
-            "unsupported_api: console is not available in Claune scripts; return compact data instead",
-            unsupported?.error,
-        )
+        assertNull(unsupported)
     }
 
     @Test
@@ -29,6 +25,30 @@ class QuickJsScriptRuntimeTest {
         assertEquals(
             "promise",
             ScriptSourceValidator.firstUnsupportedFeature("return Promise.resolve({ ok: true });")?.name,
+        )
+    }
+
+    @Test
+    fun `script source validator rejects async await and module syntax outside comments and strings`() {
+        assertEquals(
+            "async",
+            ScriptSourceValidator.firstUnsupportedFeature("async function main() { return {}; }")?.name,
+        )
+        assertEquals(
+            "await",
+            ScriptSourceValidator.firstUnsupportedFeature("const value = await read(); return value;")?.name,
+        )
+        assertEquals(
+            "module",
+            ScriptSourceValidator.firstUnsupportedFeature("import value from './value.js'; return value;")?.name,
+        )
+        assertNull(
+            ScriptSourceValidator.firstUnsupportedFeature(
+                """
+                // async await import export Promise
+                return "async await import export Promise";
+                """.trimIndent(),
+            ),
         )
     }
 
@@ -64,6 +84,42 @@ class QuickJsScriptRuntimeTest {
             )
 
         assertNull(unsupported)
+    }
+
+    @Test
+    fun `quickjs cli contract exposes argv stdin output functions and return printing`() {
+        val globals = QuickJsCliContract.globalsBootstrapJavascript(listOf("first", "two"), "typed input")
+        val output = QuickJsCliContract.outputBootstrapJavascript
+        val wrapped = QuickJsCliContract.wrapScript("return { ok: true };")
+
+        assertTrue(globals.contains("""globalThis.argv = ["first","two"];"""))
+        assertTrue(globals.contains("""globalThis.stdin = "typed input";"""))
+        assertTrue(output.contains("globalThis.print = function()"))
+        assertTrue(output.contains("globalThis.console = Object.freeze"))
+        assertTrue(output.contains("log: function()"))
+        assertTrue(output.contains("error: function()"))
+        assertTrue(output.contains("""if (typeof value === "string") return value;"""))
+        assertTrue(output.contains("JSON.stringify(value)"))
+        assertTrue(wrapped.contains("const __clauneCliResult"))
+        assertTrue(wrapped.contains("__clauneCliResult !== undefined"))
+        assertTrue(wrapped.contains("__clauneWriteCliReturn(__clauneCliResult);"))
+    }
+
+    @Test
+    fun `claune host contract exposes compact prompt summary and detailed help`() {
+        val summary = ClauneHostContract.promptSummary
+        val topLevelHelp = ClauneHostContract.cliHelp()
+        val functionHelp = ClauneHostContract.cliHelp("observeScreen")
+        val typeHelp = ClauneHostContract.cliHelp("types")
+
+        assertTrue(summary.contains("claune-js --help [topic]"))
+        assertTrue(summary.contains("observeScreen"))
+        assertTrue(!summary.contains("interface ClauneHost"))
+        assertTrue(topLevelHelp.contains("Usage:"))
+        assertTrue(topLevelHelp.contains("claune-js - <<'JS'"))
+        assertTrue(functionHelp.contains("claune.observeScreen"))
+        assertTrue(functionHelp.contains("Capture the latest screen interaction state"))
+        assertTrue(typeHelp.contains("interface ClauneHost"))
     }
 
     @Test
